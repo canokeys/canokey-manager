@@ -795,7 +795,7 @@ class PivSession:
             raise
         return BioMetadata(
             1 == data.get(TAG_METADATA_BIO_CONFIGURED, b"\x00")[0],
-            data[TAG_METADATA_RETRIES][0],
+            data.get(TAG_METADATA_RETRIES, b'\x00')[0],
             1 == data.get(TAG_METADATA_TEMPORARY_PIN, b"\x00")[0],
         )
 
