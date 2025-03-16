@@ -16,7 +16,7 @@ import os
 def _device(pytestconfig):
     serial = pytestconfig.getoption("device")
     no_serial = pytestconfig.getoption("no_serial")
-    if not serial:
+    if serial is None:
         if no_serial:
             serial = None
         else:
