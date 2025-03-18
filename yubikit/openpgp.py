@@ -475,9 +475,9 @@ class RsaAttributes(AlgorithmAttributes):
     def create(
         cls,
         n_len: RSA_SIZE,
-        import_format: RSA_IMPORT_FORMAT = RSA_IMPORT_FORMAT.STANDARD,
+        import_format: RSA_IMPORT_FORMAT = RSA_IMPORT_FORMAT.CRT,
     ) -> "RsaAttributes":
-        return cls(0x01, n_len, 17, import_format)
+        return cls(0x01, n_len, 32, import_format)
 
     @classmethod
     def _parse_data(cls, alg, encoded) -> "RsaAttributes":
@@ -510,9 +510,9 @@ class OID(CurveOid, Enum):
     SECP256K1 = CurveOid(b"\x2b\x81\x04\x00\x0a")
     SECP384R1 = CurveOid(b"\x2b\x81\x04\x00\x22")
     SECP521R1 = CurveOid(b"\x2b\x81\x04\x00\x23")
-    BrainpoolP256R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x07")
-    BrainpoolP384R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x0b")
-    BrainpoolP512R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x0d")
+    # BrainpoolP256R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x07")
+    # BrainpoolP384R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x0b")
+    # BrainpoolP512R1 = CurveOid(b"\x2b\x24\x03\x03\x02\x08\x01\x01\x0d")
     X25519 = CurveOid(b"\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01")
     Ed25519 = CurveOid(b"\x2b\x06\x01\x04\x01\xda\x47\x0f\x01")
 
@@ -896,9 +896,7 @@ def _get_key_attributes(
         return RsaAttributes.create(
             RSA_SIZE(private_key.key_size),
             (
-                RSA_IMPORT_FORMAT.CRT_W_MOD
-                if 0 < version[0] < 4
-                else RSA_IMPORT_FORMAT.STANDARD
+                RSA_IMPORT_FORMAT.CRT
             ),
         )
     return EcAttributes.create(key_ref, OID._from_key(private_key))
@@ -1533,7 +1531,7 @@ class OpenPgpSession:
             import_format = (
                 RSA_IMPORT_FORMAT.CRT_W_MOD
                 if 0 < self.version[0] < 4  # Use CRT for NEO
-                else RSA_IMPORT_FORMAT.STANDARD
+                else RSA_IMPORT_FORMAT.CRT
             )
             attributes = RsaAttributes.create(key_size, import_format)
             self.set_algorithm_attributes(key_ref, attributes)
@@ -1591,7 +1589,7 @@ class OpenPgpSession:
             ):
                 raise NotSupportedError("This YubiKey only supports RSA 2048 keys")
 
-        template = _get_key_template(private_key, key_ref, 0 < self.version[0] < 4)
+        template = _get_key_template(private_key, key_ref, True)
         self.protocol.send_apdu(0, INS.PUT_DATA_ODD, 0x3F, 0xFF, bytes(template))
         logger.info(f"Private key imported for {key_ref.name}")
 
