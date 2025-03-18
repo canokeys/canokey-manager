@@ -1,6 +1,6 @@
 from ykman.device import list_all_devices, read_info
 from ykman.pcsc import list_devices
-from yubikit.core import TRANSPORT, Version
+from yubikit.core import TRANSPORT, Version, PID
 from yubikit.core.otp import OtpConnection
 from yubikit.core.fido import FidoConnection
 from yubikit.core.smartcard import SmartCardConnection
@@ -28,7 +28,7 @@ def _device(pytestconfig):
             pytest.exit("No/Multiple readers matched")
         dev = readers[0]
         with dev.open_connection(SmartCardConnection) as conn:
-            info = read_info(conn)
+            info = read_info(conn, PID(PID.CK_FIDO_CCID))
     else:
         devices = list_all_devices()
         if len(devices) != 1:

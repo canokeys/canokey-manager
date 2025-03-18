@@ -1373,19 +1373,23 @@ class OpenPgpSession:
             )
 
         if self.version < (5, 6, 1) and self.version[0] > 0:
-            # Fix for invalid Curve25519 entries:
-            # Remove X25519 with EdDSA from all keys
-            invalid_x25519 = EcAttributes(0x16, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
-            for values in data.values():
-                values.remove(invalid_x25519)
-            x25519 = EcAttributes(0x12, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
-            # Add X25519 ECDH for DEC
-            if x25519 not in data[KEY_REF.DEC]:
-                data[KEY_REF.DEC].append(x25519)
-            # Remove EdDSA from DEC, ATT
-            ed25519_attr = EcAttributes(0x16, OID.Ed25519, EC_IMPORT_FORMAT.STANDARD)
-            data[KEY_REF.DEC].remove(ed25519_attr)
-            data[KEY_REF.ATT].remove(ed25519_attr)
+            try:
+                # Fix for invalid Curve25519 entries:
+                # Remove X25519 with EdDSA from all keys
+                invalid_x25519 = EcAttributes(0x16, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
+                for values in data.values():
+                    values.remove(invalid_x25519)
+                x25519 = EcAttributes(0x12, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
+                # Add X25519 ECDH for DEC
+                if x25519 not in data[KEY_REF.DEC]:
+                    data[KEY_REF.DEC].append(x25519)
+                # Remove EdDSA from DEC, ATT
+                ed25519_attr = EcAttributes(0x16, OID.Ed25519, EC_IMPORT_FORMAT.STANDARD)
+                data[KEY_REF.DEC].remove(ed25519_attr)
+                data[KEY_REF.ATT].remove(ed25519_attr)
+            except ValueError:
+                # invalid_x25519 does not exist in values
+                pass
 
         return data
 
