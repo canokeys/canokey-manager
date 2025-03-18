@@ -34,7 +34,7 @@ def _device(pytestconfig):
         if len(devices) != 1:
             pytest.exit("Device tests require a single YubiKey")
         dev, info = devices[0]
-    if info.serial != serial:
+    if serial is not None and info.serial != serial:
         pytest.exit("Device serial does not match: %d != %r" % (serial, info.serial))
     version = pytestconfig.getoption("use_version")
     if version:
