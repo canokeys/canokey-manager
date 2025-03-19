@@ -198,6 +198,7 @@ def test_generate_x25519(session):
 
 
 @condition.min_version(5, 2)
+@condition.capability(CAPABILITY.OTP) # Yubico only
 def test_kdf(session):
     with pytest.raises(ApduError):
         session.set_kdf(KdfIterSaltedS2k.create())
@@ -218,6 +219,7 @@ def test_kdf(session):
 
 
 @condition.min_version(5, 2)
+@condition.capability(CAPABILITY.OTP) # Yubico only
 def test_attestation(session):
     if not session.get_key_information()[KEY_REF.ATT]:
         pytest.skip("No attestation key")

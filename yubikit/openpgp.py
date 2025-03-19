@@ -870,7 +870,7 @@ class RsaCrtKeyTemplate(RsaKeyTemplate):
             Tlv(0x94, self.iqmp),
             Tlv(0x95, self.dmp1),
             Tlv(0x96, self.dmq1),
-            Tlv(0x97, self.n),
+            # Tlv(0x97, self.n),
         )
 
 
@@ -909,7 +909,7 @@ def _get_key_template(
         rsa_numbers = private_key.private_numbers()
         ln = (private_key.key_size // 8) // 2
 
-        e = b"\x01\x00\x01"  # e=65537
+        e = b"\x00\x01\x00\x01"  # e=65537
         p = int2bytes(rsa_numbers.p, ln)
         q = int2bytes(rsa_numbers.q, ln)
         if not use_crt:
