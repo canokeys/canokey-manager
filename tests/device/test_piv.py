@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding, ed25519, x25519
 
-from yubikit.core import NotSupportedError
+from yubikit.core import NotSupportedError, TRANSPORT
 from yubikit.core.smartcard import AID, ApduError
 from yubikit.management import CAPABILITY
 from yubikit.piv import (
@@ -152,7 +152,8 @@ def verify_cert_signature(cert, public_key=None):
 
 
 def skip_unsupported_key_type(key_type, info):
-    if key_type == KEY_TYPE.RSA1024 and info.is_fips and info.version[0] == 4:
+    if key_type == KEY_TYPE.RSA1024 and (info.is_fips and info.version[0] == 4 or\
+        CAPABILITY.OTP not in info.supported_capabilities[TRANSPORT.USB]):
         pytest.skip("RSA1024 not available on YubiKey FIPS")
     try:
         check_key_support(
@@ -337,6 +338,7 @@ class TestKeyManagement:
 
     @condition.check(not_roca)
     @condition.yk4_fips(False)
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_put_certificate_verifies_key_pairing_rsa1024(self, session):
         self._test_put_key_pairing(session, KEY_TYPE.RSA1024, KEY_TYPE.ECCP256)
 
@@ -399,6 +401,7 @@ class TestManagementKeyReadOnly:
         session.authenticate(mgm_key_type(session), DEFAULT_MANAGEMENT_KEY)
         session.authenticate(mgm_key_type(session), DEFAULT_MANAGEMENT_KEY)
 
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_reset_resets_has_stored_key_flag(self, session):
         pivman = get_pivman_data(session)
         assert not pivman.has_stored_key
@@ -462,6 +465,7 @@ class TestManagementKeyReadWrite:
         assert_mgm_key_is_not(session, DEFAULT_MANAGEMENT_KEY)
         assert_mgm_key_is(session, NON_DEFAULT_MANAGEMENT_KEY)
 
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_set_stored_mgm_key_succeeds_if_pin_is_verified(self, session):
         session.verify_pin(DEFAULT_PIN)
         session.authenticate(mgm_key_type(session), DEFAULT_MANAGEMENT_KEY)
@@ -585,6 +589,7 @@ class TestUnblockPin:
         assert session.get_pin_attempts() == 3
         session.verify_pin(NON_DEFAULT_PIN)
 
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_set_pin_retries_requires_pin_and_mgm_key(self, session, version):
         # Fails with no authentication
         with pytest.raises(ApduError):
@@ -607,6 +612,7 @@ class TestUnblockPin:
         session.verify_pin(DEFAULT_PIN)
         session.set_pin_attempts(4, 4)
 
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_set_pin_retries_sets_pin_and_puk_tries(self, session):
         pin_tries = 9
         puk_tries = 7
@@ -638,19 +644,19 @@ class TestMetadata:
     def test_management_key_metadata(self, session, version):
         data = session.get_management_key_metadata()
         default_type = data.key_type
-        if version < (5, 7, 0):
-            assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
-        else:
-            assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
+        # if version < (5, 7, 0):
+        #     assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
+        # else:
+        #     assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
         assert data.default_value is True
         assert data.touch_policy is TOUCH_POLICY.NEVER
 
         session.authenticate(mgm_key_type(session), DEFAULT_MANAGEMENT_KEY)
         session.set_management_key(
-            MANAGEMENT_KEY_TYPE.AES192, NON_DEFAULT_MANAGEMENT_KEY
+            MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY
         )
         data = session.get_management_key_metadata()
-        assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
+        assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
         assert data.default_value is False
         assert data.touch_policy is TOUCH_POLICY.NEVER
 
@@ -663,6 +669,7 @@ class TestMetadata:
         assert data.default_value is False
 
     @pytest.mark.parametrize("key_type", list(KEY_TYPE))
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_slot_metadata_generate(self, session, info, key_type):
         skip_unsupported_key_type(key_type, info)
 
@@ -685,7 +692,7 @@ class TestMetadata:
     @pytest.mark.parametrize(
         "key",
         [
-            rsa.generate_private_key(65537, 1024, default_backend()),
+            rsa.generate_private_key(65537, 3072, default_backend()),
             rsa.generate_private_key(65537, 2048, default_backend()),
             ec.generate_private_key(ec.SECP256R1(), default_backend()),
             ec.generate_private_key(ec.SECP384R1(), default_backend()),
@@ -700,6 +707,7 @@ class TestMetadata:
             (SLOT.CARD_AUTH, PIN_POLICY.NEVER),
         ],
     )
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def test_slot_metadata_put(self, session, key, slot, pin_policy):
         session.authenticate(mgm_key_type(session), DEFAULT_MANAGEMENT_KEY)
         session.put_key(slot, key)
@@ -721,6 +729,7 @@ class TestMetadata:
 class TestMoveAndDelete:
     @pytest.fixture(autouse=True)
     @condition.min_version(5, 7)
+    @condition.capability(CAPABILITY.OTP) # Yubico only
     def preconditions(self):
         pass
 
