@@ -6,6 +6,7 @@ from yubikit.openpgp import (
     KEY_REF,
     RSA_SIZE,
     OID,
+    EcAttributes,
     KdfIterSaltedS2k,
     KdfNone,
 )
@@ -36,6 +37,14 @@ def not_roca(version):
     """ROCA affected"""
     return not ((4, 2, 0) <= version < (4, 3, 5))
 
+def skip_unsupported_oid(session, oid, key_ref):
+    attr_list = session.get_algorithm_information()[key_ref]
+    for attr in attr_list:
+        if isinstance(attr, EcAttributes) and attr.oid == oid:
+            break
+    else:
+        pytest.skip(f"{oid} not supported")
+
 
 def test_import_requires_admin(session):
     priv = rsa.generate_private_key(E, RSA_SIZE.RSA2048, default_backend())
@@ -52,6 +61,7 @@ def test_generate_requires_admin(session):
 @condition.min_version(5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_import_sign_ecdsa(session, oid):
+    skip_unsupported_oid(session, oid, KEY_REF.SIG)
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(DEFAULT_ADMIN_PIN)
     session.put_key(KEY_REF.SIG, priv)
@@ -75,6 +85,7 @@ def test_import_sign_eddsa(session):
 @condition.min_version(5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_import_ecdh(session, oid):
+    skip_unsupported_oid(session, oid, KEY_REF.DEC)
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(DEFAULT_ADMIN_PIN)
     session.put_key(KEY_REF.DEC, priv)
@@ -166,6 +177,7 @@ def test_generate_rsa(session, key_size, info):
 @condition.min_version(5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_generate_ecdsa(session, oid):
+    skip_unsupported_oid(session, oid, KEY_REF.SIG)
     session.verify_admin(DEFAULT_ADMIN_PIN)
     pub = session.generate_ec_key(KEY_REF.SIG, oid)
     message = b"Hello world"
