@@ -403,6 +403,29 @@ def set_touch(ctx, key, policy, admin_pin, force):
             raise CliFail("Failed to set touch policy.")
 
 
+@keys.command("set-touch-cache-time")
+@click.argument("cache-time", type=click.IntRange(0, 255))
+@click.option("-a", "--admin-pin", help="Admin PIN for OpenPGP")
+@click.pass_context
+def set_touch_cache_time(ctx, cache_time, admin_pin):
+    """
+    Set the touch cache time for OpenPGP keys.
+
+    The value of touch cache time ranges from 0 to 255 seconds (0 means no cache).
+    """
+    session = ctx.obj["session"]
+
+    if admin_pin is None:
+        admin_pin = click_prompt("Enter Admin PIN", hide_input=True)
+
+    try:
+        session.verify_admin(admin_pin)
+        session.set_uif_cache_time(cache_time)
+        logger.info("Touch cache time set")
+    except Exception:
+        raise CliFail("Failed to set touch cache time.")
+
+
 @keys.command("import")
 @click.option("-a", "--admin-pin", help="Admin PIN for OpenPGP")
 @click.pass_context

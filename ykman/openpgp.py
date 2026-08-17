@@ -56,5 +56,6 @@ def get_openpgp_info(session: OpenPgpSession):
         if discretionary.attributes_att is not None:
             touch["Attestation key"] = session.get_uif(KEY_REF.ATT)
         info["Touch policies"] = touch
+    info["Touch cache time"] = "%d" % session.get_uif_cache_time()
 
     return info

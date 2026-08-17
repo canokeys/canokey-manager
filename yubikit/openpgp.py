@@ -165,7 +165,7 @@ class PW(IntEnum):
 @unique
 class DO(IntEnum):
     PRIVATE_USE_1 = 0x0101
-    PRIVATE_USE_2 = 0x0102
+    # PRIVATE_USE_2 = 0x0102
     PRIVATE_USE_3 = 0x0103
     PRIVATE_USE_4 = 0x0104
     AID = 0x4F
@@ -201,6 +201,7 @@ class DO(IntEnum):
     UIF_DEC = 0xD7
     UIF_AUT = 0xD8
     UIF_ATT = 0xD9
+    UIF_CACHE_TIME = 0x102
     SECURITY_SUPPORT_TEMPLATE = 0x7A
     CARDHOLDER_CERTIFICATE = 0x7F21
     KDF = 0xF9
@@ -1456,6 +1457,12 @@ class OpenPgpSession:
 
         self.put_data(key_ref.uif_do, uif)
         logger.info(f"UIF changed for {key_ref.name}")
+
+    def get_uif_cache_time(self) -> int:
+        return struct.unpack(">B", self.get_data(DO.UIF_CACHE_TIME))[0]
+
+    def set_uif_cache_time(self, cache_time: int) -> None:
+        self.put_data(DO.UIF_CACHE_TIME, struct.pack(">B", cache_time))
 
     def get_key_information(self) -> KeyInformation:
         """Get the status of the keys."""
