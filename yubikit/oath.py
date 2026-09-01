@@ -14,6 +14,7 @@ from time import time
 from typing import Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 
+from . import canokey
 from .core import (
     BadResponseError,
     NotSupportedError,
@@ -313,9 +314,21 @@ class OathSession:
         """If True, the OATH application is currently locked via an access key."""
         return self._challenge is not None
 
-    def reset(self) -> None:
-        """Perform a factory reset on the OATH application."""
-        self.protocol.send_apdu(0, INS_RESET, 0xDE, 0xAD)
+    def reset(self, admin_pin: str | None = None) -> None:
+        """Perform a factory reset on the OATH application.
+
+        On CanoKey the OATH applet has no reset instruction (all firmware
+        versions); the reset is performed via the CanoKey admin applet,
+        which requires its own PIN (the default is tried when admin_pin
+        is not given).
+        """
+        if canokey.is_canokey(self.protocol.connection):
+            # CanoKey: reset the OATH applet via the admin applet
+            canokey.CanoKeyAdminSession(
+                self.protocol.connection, admin_pin
+            ).reset_oath()
+        else:
+            self.protocol.send_apdu(0, INS_RESET, 0xDE, 0xAD)
         _, self._salt, self._challenge = _parse_select(self.protocol.select(AID.OATH))
         if self._scp_params:
             self.protocol.init_scp(self._scp_params)

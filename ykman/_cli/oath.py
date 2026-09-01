@@ -35,6 +35,7 @@ from cryptography.x509 import NameOID
 from pskc import PSKC
 
 from ykman.piv import parse_rfc4514_string
+from yubikit import canokey
 from yubikit.core import TRANSPORT
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import CAPABILITY
@@ -134,7 +135,13 @@ def info(ctx):
 @oath.command()
 @click.pass_context
 @click_force_option
-def reset(ctx, force):
+@click.option(
+    "--admin-pin",
+    help="CanoKey admin PIN (required to reset OATH on a CanoKey with a "
+    "non-default admin PIN)",
+    metavar="PIN",
+)
+def reset(ctx, force, admin_pin):
     """
     Reset all OATH data.
 
@@ -153,7 +160,13 @@ def reset(ctx, force):
     session = ctx.obj["session"]
     click.echo("Resetting OATH data...")
     old_id = session.device_id
-    session.reset()
+    try:
+        session.reset(admin_pin)
+    except canokey.AdminPinRequired:
+        # CanoKey: the admin applet PIN is needed to reset OATH
+        session.reset(click_prompt("CanoKey admin PIN", hide_input=True))
+    except canokey.AdminPinError as e:
+        raise CliFail(str(e))
 
     keys = ctx.obj["oath_keys"]
     if old_id in keys:

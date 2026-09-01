@@ -1,7 +1,6 @@
 """Unit tests for yubikit.canokey (fork-only module)."""
 
 import pytest
-
 from yubikit import canokey
 from yubikit.canokey import (
     ADMIN_AID,
@@ -13,7 +12,7 @@ from yubikit.canokey import (
     AdminPinRequired,
     CanoKeyAdminSession,
 )
-from yubikit.core import TRANSPORT, PID, NotSupportedError, Version
+from yubikit.core import PID, TRANSPORT, NotSupportedError, Version
 from yubikit.core.smartcard import SmartCardConnection
 
 
@@ -168,3 +167,55 @@ def test_reset_ctap_supported():
         pid=PID.CK_FIDO_CCID,
     )
     CanoKeyAdminSession(conn).reset_ctap()
+
+
+def test_oath_reset_falls_back_to_admin():
+    from yubikit.oath import OathSession
+
+    select_oath = bytes([0, 0xA4, 0x04, 0, 7]) + bytes.fromhex("A0000005272101")
+    oath_select_resp = bytes.fromhex("7903") + b"\x05\x05\x05" + bytes.fromhex(
+        "7108"
+    ) + b"12345678"
+    # The fork's OATH chaining workaround sends INS_SEND_REMAINING (0xA5)
+    # after every successful APDU; the card answers 6985 when done.
+    a5_done = (bytes([0, 0xA5, 0, 0]), (b"", 0x6985))
+    conn = FakeConnection(
+        [
+            (select_oath, (oath_select_resp, 0x9000)),  # OathSession init
+            a5_done,
+            (select_apdu(), (b"", 0x9000)),  # select admin applet
+            (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x9000)),  # default admin PIN
+            (bytes([0, INS_RESET_OATH, 0, 0]), (b"", 0x9000)),
+            (select_oath, (oath_select_resp, 0x9000)),  # re-select OATH
+            a5_done,
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    OathSession(conn).reset()
+    assert not conn._script  # All scripted APDUs consumed
+
+
+def test_oath_select_when_locked():
+    """A5 workaround must not fail when OATH is password-protected (6982)."""
+    from yubikit.oath import OathSession
+
+    select_oath = bytes([0, 0xA4, 0x04, 0, 7]) + bytes.fromhex("A0000005272101")
+    # Locked: response includes a challenge (tag 0x74) and algorithm (0x7B)
+    locked_resp = (
+        bytes.fromhex("7903")
+        + b"\x05\x05\x05"
+        + bytes.fromhex("7108")
+        + b"12345678"
+        + bytes.fromhex("7408")
+        + b"87654321"
+        + bytes.fromhex("7B0101")
+    )
+    conn = FakeConnection(
+        [
+            (select_oath, (locked_resp, 0x9000)),
+            (bytes([0, 0xA5, 0, 0]), (b"", 0x6982)),  # locked: no more data
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    session = OathSession(conn)
+    assert session.locked

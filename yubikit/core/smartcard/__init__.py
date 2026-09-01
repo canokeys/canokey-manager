@@ -249,7 +249,8 @@ class ResponseChainingProcessor(ApduProcessor):
             response, sw_n = self.delegate.send_apdu(
                 0, self.ins_send_remaining, 0, 0, b"", 0
             )
-            if sw_n == SW.CONDITIONS_NOT_SATISFIED:
+            if sw_n >> 8 != SW1_HAS_MORE_DATA and sw_n != SW.OK:
+                # CanoKey: 6985 = no more data, 6982 = OATH applet locked
                 break
             sw = sw_n
 
