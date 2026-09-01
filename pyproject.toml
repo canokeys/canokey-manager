@@ -1,6 +1,6 @@
 [project]
 name = "canokey-manager"
-version = "5.9.2"
+version = "5.9.2.post1"
 description = "Tool for managing your CanoKey configuration."
 authors = [
   { name = "Dain Nilsson", email = "<dain@yubico.com>" },
