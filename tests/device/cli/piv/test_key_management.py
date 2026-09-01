@@ -6,7 +6,6 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-
 from yubikit.core import NotSupportedError
 from yubikit.management import CAPABILITY
 
@@ -145,6 +144,7 @@ class TestKeyExport:
         ykman_cli("piv", "keys", "export", "9a", "--verify", "-P", keys.pin, "-")
 
     @condition.max_version(5, 2, 9)
+    @condition.canokey(False)  # CanoKey PIV has metadata, so --verify is a no-op
     def test_from_cert_verify_fails(self, ykman_cli, keys):
         private_key_pem = generate_pem_eccp256_keypair()[0]
         public_key_pem = generate_pem_eccp256_keypair()[1]
@@ -189,6 +189,7 @@ class TestKeyManagement:
 
     @condition.check(not_roca)
     @condition.yk4_fips(False)
+    @condition.canokey(False)  # CanoKey does not support RSA1024
     def test_generate_key_rsa1024(self, ykman_cli, info, keys):
         if CAPABILITY.PIV in info.fips_capable:
             pytest.skip("RSA1024 not available on FIPS")
@@ -404,6 +405,7 @@ class TestKeyManagement:
 
     @condition.yk4_fips(False)
     @condition.check(not_roca)
+    @condition.canokey(False)  # CanoKey does not support RSA1024
     def test_generate_csr_rsa1024(self, ykman_cli, keys, info, tmp_file):
         if CAPABILITY.PIV in info.fips_capable:
             pytest.skip("RSA1024 not available on FIPS")

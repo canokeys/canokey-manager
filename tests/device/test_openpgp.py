@@ -125,6 +125,7 @@ def test_change_admin(session, keys):
     session.verify_admin(keys.admin)
 
 
+@condition.canokey(False)  # CanoKey does not support SET PIN RETRIES
 def test_change_pin_retries(session, keys, version):
     with pytest.raises(ApduError):
         session.set_pin_attempts(5, 0, 25)

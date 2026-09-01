@@ -7,9 +7,11 @@ from yubikit.core import Tlv
 from yubikit.piv import OBJECT_ID, SLOT
 
 from ....util import generate_self_signed_certificate
+from ... import condition
 
 
 class TestReadWriteObject:
+    @condition.canokey(False)  # CanoKey does not support arbitrary PIV objects
     def test_write_read_preserves_ansi_escapes(self, ykman_cli, keys):
         red = b"\x00\x1b[31m"
         blue = b"\x00\x1b[34m"

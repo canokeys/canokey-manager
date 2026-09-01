@@ -5,6 +5,8 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from yubikit.core import TRANSPORT
+from yubikit.management import CAPABILITY
 
 from ... import condition
 from .util import NON_DEFAULT_MANAGEMENT_KEY
@@ -182,7 +184,9 @@ class TestNonDefaultMgmKey:
 
 class TestProtectedMgmKey:
     @pytest.fixture(autouse=True)
-    def protect_mgmt_key(self, ykman_cli, keys):
+    def protect_mgmt_key(self, ykman_cli, keys, info):
+        if CAPABILITY.OTP not in info.supported_capabilities[TRANSPORT.USB]:
+            pytest.skip("CanoKey does not support PIN-protected management key")
         ykman_cli(
             "piv",
             "access",

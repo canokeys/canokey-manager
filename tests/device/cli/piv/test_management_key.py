@@ -2,6 +2,7 @@ import re
 
 import pytest
 
+from ... import condition
 from .util import NON_DEFAULT_MANAGEMENT_KEY, old_new_new
 
 
@@ -19,6 +20,7 @@ class TestManagementKey:
                 "-f",
             )
 
+    @condition.canokey(False)  # CanoKey does not support PIN-protected mgmt key
     def test_change_management_key_protect_random(self, ykman_cli, keys):
         ykman_cli(
             "piv",
@@ -49,6 +51,7 @@ class TestManagementKey:
         # Should succeed - PIN as key
         ykman_cli("piv", "access", "change-management-key", "-p", "-P", keys.pin)
 
+    @condition.canokey(False)  # CanoKey does not support PIN-protected mgmt key
     def test_change_management_key_protect_prompt(self, ykman_cli, keys):
         ykman_cli(
             "piv",

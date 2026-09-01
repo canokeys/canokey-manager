@@ -105,6 +105,8 @@ class TestSetRetries:
         if info.form_factor in (FORM_FACTOR.USB_A_BIO, FORM_FACTOR.USB_C_BIO):
             if info.supported_capabilities[TRANSPORT.USB] & CAPABILITY.PIV:
                 pytest.skip("Bio MPE does not support PUK")
+        if CAPABILITY.OTP not in info.supported_capabilities[TRANSPORT.USB]:
+            pytest.skip("CanoKey does not support setting PIN retries")
 
     def test_set_retries(self, ykman_cli, default_keys, version):
         ykman_cli(

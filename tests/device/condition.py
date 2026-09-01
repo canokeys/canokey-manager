@@ -3,6 +3,9 @@ from inspect import Parameter, isgeneratorfunction, signature
 import pytest
 from makefun import wraps
 
+from yubikit.core import TRANSPORT
+from yubikit.management import CAPABILITY
+
 
 def check(check, message="Condition not satisfied"):
     check_sig = signature(check)
@@ -84,3 +87,14 @@ def yk4_fips(status=True):
         lambda info: status == (info.is_fips and info.version[0] == 4),
         f"Requires YK4 FIPS = {status}",
     )
+
+
+def is_canokey(info) -> bool:
+    """CanoKey devices are identified by the lack of the OTP application."""
+    return CAPABILITY.OTP not in (
+        info.supported_capabilities.get(TRANSPORT.USB) or 0
+    )
+
+
+def canokey(status=True):
+    return check(lambda info: status == is_canokey(info), f"Requires CanoKey = {status}")

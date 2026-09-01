@@ -161,6 +161,8 @@ class TestHmacVectors:
             if info.version[0] <= 4:
                 if info.is_fips or info.version < (4, 3, 1):
                     pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
+        if condition.is_canokey(info) and len(challenge) > 8:
+            pytest.skip("CanoKey OATH rejects challenges longer than 8 bytes")
         cred = session.put_credential(
             CredentialData("test", OATH_TYPE.TOTP, hash_algorithm, key)
         )
@@ -236,8 +238,11 @@ class TestHotpVectors:
     @pytest.mark.parametrize(
         "params", HOTP_VECTORS.items(), ids=lambda x: "{0}".format(*x)
     )
-    def test_vector(self, session, params, digits):
+    def test_vector(self, session, params, digits, info):
         key, values = params
+        if condition.is_canokey(info):
+            # CanoKey computes HOTP starting at counter 1
+            values = values[1:]
 
         cred = session.put_credential(
             CredentialData("test", OATH_TYPE.HOTP, HASH_ALGORITHM.SHA1, key, digits)

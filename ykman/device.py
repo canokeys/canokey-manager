@@ -201,9 +201,13 @@ class _PidGroup:
                         logger.debug(f"Resolved device {info.serial}")
                         if dev_key == key:
                             return conn
-                    elif self._pid.yubikey_type == YUBIKEY.NEO and not devs:
+                    elif (
+                        # CanoKey: no serial is readable over CTAP
+                        self._pid.yubikey_type in (YUBIKEY.NEO, YUBIKEY.CK)
+                        and not devs
+                    ):
                         self._resolved.setdefault(key, {})[iface] = dev
-                        logger.debug("Resolved last NEO device without serial")
+                        logger.debug("Resolved last NEO/CanoKey device without serial")
                         return conn
                     conn.close()
                 except Exception:

@@ -137,7 +137,7 @@ class TestOATH:
         output = ykman_cli("oath", "reset", "-f").output
         assert "Reset complete" in output
 
-    def test_oath_hotp_vectors_6(self, accounts_cli):
+    def test_oath_hotp_vectors_6(self, accounts_cli, info):
         accounts_cli(
             "add",
             "-o",
@@ -145,11 +145,15 @@ class TestOATH:
             "testvector",
             b32encode(b"12345678901234567890").decode(),
         )
-        for code in ["755224", "287082", "359152", "969429", "338314"]:
+        codes = ["755224", "287082", "359152", "969429", "338314"]
+        if condition.is_canokey(info):
+            # CanoKey computes HOTP starting at counter 1
+            codes = codes[1:]
+        for code in codes:
             words = accounts_cli("code", "testvector").output.split()
             assert code in words
 
-    def test_oath_hotp_vectors_8(self, accounts_cli):
+    def test_oath_hotp_vectors_8(self, accounts_cli, info):
         accounts_cli(
             "add",
             "-o",
@@ -159,19 +163,25 @@ class TestOATH:
             "testvector8",
             b32encode(b"12345678901234567890").decode(),
         )
-        for code in ["84755224", "94287082", "37359152", "26969429", "40338314"]:
+        codes = ["84755224", "94287082", "37359152", "26969429", "40338314"]
+        if condition.is_canokey(info):
+            # CanoKey computes HOTP starting at counter 1
+            codes = codes[1:]
+        for code in codes:
             words = accounts_cli("code", "testvector8").output.split()
             assert code in words
 
-    def test_oath_hotp_code(self, accounts_cli):
+    def test_oath_hotp_code(self, accounts_cli, info):
         accounts_cli("add", "-o", "HOTP", "hotp-cred", "abba")
         words = accounts_cli("code", "hotp-cred").output.split()
-        assert "659165" in words
+        # CanoKey computes HOTP starting at counter 1
+        assert ("459992" if condition.is_canokey(info) else "659165") in words
 
-    def test_oath_hotp_code_single(self, accounts_cli):
+    def test_oath_hotp_code_single(self, accounts_cli, info):
         accounts_cli("add", "-o", "HOTP", "hotp-cred", "abba")
         words = accounts_cli("code", "hotp-cred", "--single").output.split()
-        assert "659165" in words
+        # CanoKey computes HOTP starting at counter 1
+        assert ("459992" if condition.is_canokey(info) else "659165") in words
 
     def test_oath_totp_steam_code(self, accounts_cli):
         accounts_cli("add", "Steam:steam-cred", "abba")
