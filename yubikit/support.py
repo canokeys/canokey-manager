@@ -219,6 +219,10 @@ def _read_info_ctap(conn, key_type, interfaces):
             version = Version(3, 0, 0)
 
         supported_apps = {TRANSPORT.USB: CAPABILITY.U2F}
+        if key_type == YUBIKEY.CK:
+            # CanoKey: FIDO2 is always available, but no version/serial is
+            # readable over CTAP
+            supported_apps[TRANSPORT.USB] |= CAPABILITY.FIDO2
         if key_type == YUBIKEY.NEO:
             supported_apps[TRANSPORT.USB] |= _BASE_NEO_APPS
             supported_apps[TRANSPORT.NFC] = supported_apps[TRANSPORT.USB]
