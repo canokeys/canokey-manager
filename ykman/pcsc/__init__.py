@@ -93,6 +93,7 @@ class ScardSmartCardConnection(SmartCardConnection):
         self._pid = pid
 
         atr = self.connection.getATR()
+        self._atr = bytes(atr) if atr else None
         self._transport = (
             TRANSPORT.USB if atr and atr[1] & 0xF0 == 0xF0 else TRANSPORT.NFC
         )
@@ -104,6 +105,10 @@ class ScardSmartCardConnection(SmartCardConnection):
     @property
     def pid(self):
         return self._pid
+
+    @property
+    def atr(self):
+        return self._atr
 
     def close(self):
         self.connection.disconnect()

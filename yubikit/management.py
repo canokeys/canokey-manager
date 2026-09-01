@@ -37,6 +37,7 @@ from typing import Mapping
 
 from fido2.hid import CAPABILITY as CTAP_CAPABILITY
 
+from . import canokey
 from .core import (
     TRANSPORT,
     USB_INTERFACE,
@@ -518,11 +519,6 @@ class _ManagementOtpBackend(_Backend):
         self.protocol.send_and_receive(SLOT_YK4_SET_DEVICE_INFO, config)
 
 
-ADMIN_INS_NFC_ENABLE = 0x14
-ADMIN_INS_READ_VERSION = 0x31
-ADMIN_INS_READ_SERIAL = 0x32
-ADMIN_INS_READ_CONFIG = 0x40
-
 INS_SET_MODE = 0x16
 INS_READ_CONFIG = 0x1D
 INS_WRITE_CONFIG = 0x1C
@@ -533,6 +529,7 @@ P1_DEVICE_CONFIG = 0x11
 class _ManagementSmartCardBackend(_Backend):
     def __init__(self, smartcard_connection, scp_key_params):
         self.protocol = SmartCardProtocol(smartcard_connection)
+        self._canokey_admin: canokey.CanoKeyAdminSession | None = None
         try:
             select_bytes = self.protocol.select(AID.MANAGEMENT)
             if select_bytes[-2:] == b"\x90\x00":
@@ -565,16 +562,14 @@ class _ManagementSmartCardBackend(_Backend):
             self.protocol.init_scp(scp_key_params)
 
     def try_canokey_admin(self):
+        # CanoKey: read the real firmware version from the admin applet
         try:
-            # For CanoKey
-            self.protocol.select(b"\xF0\x00\x00\x00\x00")
-            select_bytes, _ = self.protocol.connection.send_and_receive(
-                b"\x00\x31\x00\x00\x20"
+            self._canokey_admin = canokey.CanoKeyAdminSession(
+                self.protocol.connection
             )
-            select_str = select_bytes.decode()
-            self.version = Version.from_string(select_str)
+            self.version = self._canokey_admin.read_version()
             self.is_cano = True
-            logger.debug(f"select_str={select_str} self.version={self.version}")
+            logger.debug(f"CanoKey firmware version={self.version}")
             return True
         except CommandError:
             return False
@@ -595,16 +590,13 @@ class _ManagementSmartCardBackend(_Backend):
         self.protocol.send_apdu(0, INS_WRITE_CONFIG, 0, 0, config)
 
     def read_serial(self):
-        sn, _ = self.protocol.connection.send_and_receive(b"\x00\x32\x00\x00\x04")
-        return bytes2int(sn)
+        return self._canokey_admin.read_serial()
 
     def read_product_string(self):
-        sn, _ = self.protocol.connection.send_and_receive(b"\x00\x31\x01\x00\x20")
-        return sn.decode()
+        return self._canokey_admin.read_product_string()
 
     def read_nfc_enable(self):
-        st, _ = self.protocol.connection.send_and_receive(b"\x00\x14\x00\x00\x01")
-        return bytes2int(st)
+        return self._canokey_admin.read_nfc_enable()
 
     def device_reset(self):
         self.protocol.send_apdu(0, INS_DEVICE_RESET, 0, 0)
