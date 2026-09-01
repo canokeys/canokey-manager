@@ -44,7 +44,9 @@ from typing import (
 logger = logging.getLogger(__name__)
 
 
-_VERSION_STRING_PATTERN = re.compile(r"\b(?P<major>\d+).(?P<minor>\d).(?P<patch>\d)\b")
+_VERSION_STRING_PATTERN = re.compile(
+    r"[^\d]*(?P<major>\d+).(?P<minor>\d+).(?P<patch>\d+)\b"
+)
 
 
 class Version(NamedTuple):
@@ -71,6 +73,8 @@ class Version(NamedTuple):
             return cls(
                 int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
             )
+        else:
+            return cls(9, 9, 9)
         raise ValueError("No version found in string")
 
 
@@ -98,6 +102,7 @@ class USB_INTERFACE(IntFlag):
 class YUBIKEY(Enum):
     """YubiKey hardware platforms."""
 
+    CK = "CanoKey"
     YKS = "YubiKey Standard"
     NEO = "YubiKey NEO"
     SKY = "Security Key by Yubico"
@@ -124,6 +129,7 @@ class Connection(abc.ABC):
 class PID(IntEnum):
     """USB Product ID values for YubiKey devices."""
 
+    CK_FIDO_CCID = 0x42D4
     YKS_OTP = 0x0010
     NEO_OTP = 0x0110
     NEO_OTP_CCID = 0x0111

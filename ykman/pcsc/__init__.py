@@ -49,12 +49,16 @@ logger = logging.getLogger(__name__)
 
 
 YK_READER_NAME = "yubico yubikey"
+CK_READER_NAME = "canokey"
 _YKMAN_NO_EXCLUSIVE = "YKMAN_NO_EXLUSIVE"
 
 
 # Figure out what the PID should be based on the reader name
 def _pid_from_name(name):
-    if YK_READER_NAME not in name.lower():
+    if (
+        YK_READER_NAME not in name.lower()
+        and CK_READER_NAME not in name.lower()
+    ):
         return None
 
     interfaces = USB_INTERFACE(0)
@@ -64,8 +68,16 @@ def _pid_from_name(name):
 
     if "U2F" in name:
         interfaces |= USB_INTERFACE.FIDO
+    if CK_READER_NAME in name.lower():
+        interfaces |= USB_INTERFACE.FIDO | USB_INTERFACE.CCID
 
-    key_type = YUBIKEY.NEO if "NEO" in name else YUBIKEY.YK4
+    key_type = (
+        YUBIKEY.CK
+        if CK_READER_NAME in name.lower()
+        else YUBIKEY.NEO
+        if "NEO" in name
+        else YUBIKEY.YK4
+    )
     return PID.of(key_type, interfaces)
 
 
@@ -107,7 +119,10 @@ class ScardYubiKeyDevice(YkmanDevice):
 
     def __init__(self, reader):
         # Base transport on reader name: NFC readers will have a different name
-        if YK_READER_NAME in reader.name.lower():
+        if (
+            YK_READER_NAME in reader.name.lower()
+            or CK_READER_NAME in reader.name.lower()
+        ):
             transport = TRANSPORT.USB
         else:
             transport = TRANSPORT.NFC
@@ -276,9 +291,8 @@ def list_readers():
 
 
 def list_devices(name_filter=None):
-    name_filter = YK_READER_NAME if name_filter is None else name_filter
     devices = []
     for reader in list_readers():
-        if name_filter.lower() in reader.name.lower():
+        if name_filter is None or name_filter.lower() in reader.name.lower():
             devices.append(ScardYubiKeyDevice(reader))
     return devices
