@@ -13,6 +13,7 @@ from yubikit.openpgp import (
     KEY_REF,
     OID,
     RSA_SIZE,
+    EcAttributes,
     KdfIterSaltedS2k,
     KdfNone,
     OpenPgpSession,
@@ -46,6 +47,15 @@ class Keys(NamedTuple):
 def not_roca(version):
     """ROCA affected"""
     return not ((4, 2, 0) <= version < (4, 3, 5))
+
+
+def skip_unsupported_oid(session, oid, key_ref):
+    attr_list = session.get_algorithm_information()[key_ref]
+    for attr in attr_list:
+        if isinstance(attr, EcAttributes) and attr.oid == oid:
+            break
+    else:
+        pytest.skip(f"{oid} not supported")
 
 
 def fips_capable(info):
@@ -154,6 +164,7 @@ def test_generate_requires_admin(session):
 def test_import_sign_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
+    skip_unsupported_oid(session, oid, KEY_REF.SIG)
 
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(keys.admin)
@@ -180,6 +191,7 @@ def test_import_sign_eddsa(session, keys):
 def test_import_ecdh(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
+    skip_unsupported_oid(session, oid, KEY_REF.DEC)
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.DEC, priv)
@@ -275,6 +287,7 @@ def test_generate_rsa(session, keys, key_size, info):
 def test_generate_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
+    skip_unsupported_oid(session, oid, KEY_REF.SIG)
 
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.SIG, oid)
@@ -309,6 +322,7 @@ def test_generate_x25519(session, keys):
 
 
 @condition.min_version(5, 2)
+@condition.capability(CAPABILITY.OTP)  # Yubico only
 def test_kdf(session, keys):
     with pytest.raises(ApduError):
         session.set_kdf(KdfIterSaltedS2k.create())
@@ -329,6 +343,7 @@ def test_kdf(session, keys):
 
 
 @condition.min_version(5, 2)
+@condition.capability(CAPABILITY.OTP)  # Yubico only
 def test_attestation(session, keys):
     if not session.get_key_information()[KEY_REF.ATT]:
         pytest.skip("No attestation key")
