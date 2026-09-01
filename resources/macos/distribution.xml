@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <installer-gui-script minSpecVersion="1">
-    <title>yubikey-manager</title>
-    <pkg-ref id="com.yubico.yubikey-manager"/>
+    <title>canokey-manager</title>
+    <pkg-ref id="org.canokeys.canokey-manager"/>
     <options hostArchitectures="x86_64,arm64" customize="never" require-scripts="false"/>
     <choices-outline>
         <line choice="default">
-            <line choice="com.yubico.yubikey-manager"/>
+            <line choice="org.canokeys.canokey-manager"/>
         </line>
     </choices-outline>
     <choice id="default"/>
-    <choice id="com.yubico.yubikey-manager" visible="false">
-        <pkg-ref id="com.yubico.yubikey-manager"/>
+    <choice id="org.canokeys.canokey-manager" visible="false">
+        <pkg-ref id="org.canokeys.canokey-manager"/>
     </choice>
-    <pkg-ref id="com.yubico.yubikey-manager" version="0" onConclusion="none">ykman.pkg</pkg-ref>
+    <pkg-ref id="org.canokeys.canokey-manager" version="0" onConclusion="none">ckman.pkg</pkg-ref>
 </installer-gui-script>

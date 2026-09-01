@@ -1,14 +1,15 @@
 [project]
-name = "yubikey-manager"
+name = "canokey-manager"
 version = "5.9.2"
-description = "Library and CLI for managing your YubiKey configuration."
+description = "Tool for managing your CanoKey configuration."
 authors = [
-  { name = "Dain Nilsson", email = "<dain@yubico.com>" }
+  { name = "Dain Nilsson", email = "<dain@yubico.com>" },
+  { name = "Yuxiang Zhang", email = "yuxiang.zhang@tuna.tsinghua.edu.cn" }
 ]
 readme = "README.adoc"
 requires-python = ">=3.10, <4"
 license = { file = "COPYING" }
-keywords = ["yubikey", "yubiotp", "piv", "fido"]
+keywords = ["canokey", "piv", "fido"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: End Users/Desktop",
@@ -36,10 +37,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Yubico/yubikey-manager"
+Homepage = "https://github.com/canokeys/yubikey-manager"
 
 [project.scripts]
-ykman = "ykman._cli.__main__:main"
+ckman = "ykman._cli.__main__:main"
 
 [build-system]
 requires = ["poetry-core>=2.0"]

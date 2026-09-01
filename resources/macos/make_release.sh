@@ -14,13 +14,13 @@ CWD=`pwd`
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 echo "Script dir: $SCRIPT_DIR"
 
-SOURCE_DIR="$CWD/ykman"
+SOURCE_DIR="$CWD/ckman"
 
 # Ensure executable, since we may have unpacked from zip
-chmod +x $SOURCE_DIR/ykman
+chmod +x $SOURCE_DIR/ckman
 
-RELEASE_VERSION=`$SOURCE_DIR/ykman --version | awk '{print $(NF)}'`
-PKG="yubikey-manager-$RELEASE_VERSION-mac.pkg"
+RELEASE_VERSION=`$SOURCE_DIR/ckman --version | awk '{print $(NF)}'`
+PKG="canokey-manager-$RELEASE_VERSION-mac.pkg"
 
 echo "This will sign and notarize the app. Please make sure you have the code signing YubiKey connected."
 echo ""
@@ -31,18 +31,18 @@ echo ""
 read -p "Press enter to continue..."
 
 # Sign binaries
-codesign -f --timestamp --options runtime --entitlements $SCRIPT_DIR/ykman.entitlements --sign 'Application' $SOURCE_DIR/ykman
+codesign -f --timestamp --options runtime --entitlements $SCRIPT_DIR/ykman.entitlements --sign 'Application' $SOURCE_DIR/ckman
 codesign -f --timestamp --options runtime --sign 'Application' $(find $SOURCE_DIR/_internal -name "*.dylib" -o -name "*.so")
 codesign -f --timestamp --options runtime --sign 'Application' $SOURCE_DIR/_internal/Python
 
 # Build pkg
-sh $SCRIPT_DIR/make_pkg.sh ykman-unsigned.pkg
+sh $SCRIPT_DIR/make_pkg.sh ckman-unsigned.pkg
 
 # Sign the installer
-productsign --sign 'Installer' ykman-unsigned.pkg $PKG
+productsign --sign 'Installer' ckman-unsigned.pkg $PKG
 
 # Clean up
-rm ykman-unsigned.pkg
+rm ckman-unsigned.pkg
 
 echo "Installer signed, submitting for Notarization..."
 

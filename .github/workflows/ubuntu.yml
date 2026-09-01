@@ -40,13 +40,13 @@ jobs:
       - name: PyInstaller
         run: |
           uv run pyinstaller ykman.spec
-          dist/ykman/ykman --version
-          [[ -z "$(dist/ykman/ykman --version | grep -E "not found|missing")" ]]
+          dist/ckman/ckman --version
+          [[ -z "$(dist/ckman/ckman --version | grep -E "not found|missing")" ]]
           export REF=$(echo ${GITHUB_REF} | cut -d '/' -f 3)
-          mv dist/ykman dist/ykman-$REF
+          mv dist/ckman dist/ckman-$REF
 
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ykman-builds-ubuntu
+          name: ckman-builds-ubuntu
           path: dist

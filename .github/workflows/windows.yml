@@ -41,24 +41,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install dist/*.tar.gz
-          ykman --version
-          [[ -z "$(ykman --version | grep -E "not found|missing")" ]]
-          pip uninstall -y yubikey-manager
+          ckman --version
+          [[ -z "$(ckman --version | grep -E "not found|missing")" ]]
+          pip uninstall -y canokey-manager
 
       - name: Install from wheel
         shell: bash
         run: |
           pip install dist/*.whl
-          ykman --version
-          [[ -z "$(ykman --version | grep -E "not found|missing")" ]]
-          pip uninstall -y yubikey-manager
+          ckman --version
+          [[ -z "$(ckman --version | grep -E "not found|missing")" ]]
+          pip uninstall -y canokey-manager
 
       - name: PyInstaller
         shell: bash
         run: |
           uv run pyinstaller ykman.spec
-          dist/ykman/ykman.exe --version
-          [[ -z "$(dist/ykman/ykman.exe --version | grep -E "not found|missing")" ]]
+          dist/ckman/ckman.exe --version
+          [[ -z "$(dist/ckman/ckman.exe --version | grep -E "not found|missing")" ]]
 
       - name: Copy scripts
         shell: bash
@@ -71,7 +71,7 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ykman-builds-windows
+          name: ckman-builds-windows
           path: dist
 
   sign-exe-dll:
@@ -93,7 +93,7 @@ jobs:
       - name: download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ykman-builds-windows
+          path: ckman-builds-windows
 
       - name: docker login
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -132,15 +132,15 @@ jobs:
           unzip -j 1.zip || true
           rm 1.zip
           cd ..
-          cp signed/ykman.exe ykman-builds-windows/ykman/ykman.exe
-          cp signed/pythoncom314.dll ykman-builds-windows/ykman/_internal/pywin32_system32/pythoncom314.dll
-          cp signed/pywintypes314.dll ykman-builds-windows/ykman/_internal/pywin32_system32/pywintypes314.dll
+          cp signed/ckman.exe ckman-builds-windows/ckman/ckman.exe
+          cp signed/pythoncom314.dll ckman-builds-windows/ckman/_internal/pywin32_system32/pythoncom314.dll
+          cp signed/pywintypes314.dll ckman-builds-windows/ckman/_internal/pywin32_system32/pywintypes314.dll
 
       - name: upload signed artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signed-files
-          path: ykman-builds-windows
+          path: ckman-builds-windows
 
   build-msi:
     needs: [sign-exe-dll]
@@ -151,17 +151,17 @@ jobs:
       - name: download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ykman-builds-windows
+          path: ckman-builds-windows
 
       - name: Build installer
-        working-directory: .\ykman-builds-windows\signed-files\
+        working-directory: .\ckman-builds-windows\signed-files\
         run: .\scripts\make_msi.ps1
 
       - name: Upload installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ykman-installer-windows
-          path: .\ykman-builds-windows\signed-files\
+          name: ckman-installer-windows
+          path: .\ckman-builds-windows\signed-files\
 
   sign-msi:
     needs: [build-msi]
@@ -173,7 +173,7 @@ jobs:
     - name: download artifacts
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
-        path: ykman-builds-windows
+        path: ckman-builds-windows
 
     - name: docker login
       uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -212,13 +212,13 @@ jobs:
         unzip -j 1.zip || true
         rm 1.zip
         cd ..
-        cp signed/ykman.msi ykman-builds-windows/ykman-installer-windows/ykman.msi
+        cp signed/ckman.msi ckman-builds-windows/ckman-installer-windows/ckman.msi
 
     - name: upload signed artifacts
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: signed-files-and-msi
-        path: ykman-builds-windows/ykman-installer-windows
+        path: ckman-builds-windows/ckman-installer-windows
 
   verify-signatures:
     needs: [sign-msi]
@@ -228,8 +228,8 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: signed-files-and-msi
-          path: ykman-builds-windows/ykman-installer-windows
+          path: ckman-builds-windows/ckman-installer-windows
 
       - name: Check for unsigned DLLs
-        working-directory: .\ykman-builds-windows\ykman-installer-windows
+        working-directory: .\ckman-builds-windows\ckman-installer-windows
         run: .\scripts\verify_dll.ps1

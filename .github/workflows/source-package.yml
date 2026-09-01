@@ -43,13 +43,13 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git show --no-patch --format=%ct)
           uv build
           mkdir artifacts
-          mv dist/yubikey_manager-*.tar.gz artifacts/
-          mv dist/yubikey_manager-*.whl artifacts/
+          mv dist/canokey_manager-*.tar.gz artifacts/
+          mv dist/canokey_manager-*.whl artifacts/
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: yubikey-manager-source-package
+          name: canokey-manager-source-package
           path: artifacts
 
   docs:

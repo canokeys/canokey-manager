@@ -56,11 +56,11 @@ jobs:
       - name: PyInstaller
         run: |
           uv run --no-sync pyinstaller ykman.spec
-          dist/ykman/ykman --version
-          [[ -z "$(dist/ykman/ykman --version | grep -E "not found|missing")" ]]
+          dist/ckman/ckman --version
+          [[ -z "$(dist/ckman/ckman --version | grep -E "not found|missing")" ]]
 
       - name: Simplify Python bundle
-        working-directory: ./dist/ykman/_internal
+        working-directory: ./dist/ckman/_internal
         run: |
           mv $(readlink Python) Python
           rm -rf Python.framework
@@ -76,5 +76,5 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ykman-builds-macos
+          name: ckman-builds-macos
           path: dist
