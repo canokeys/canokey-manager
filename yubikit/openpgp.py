@@ -1369,7 +1369,8 @@ class OpenPgpSession:
         try:
             buf = Tlv.unpack(DO.ALGORITHM_INFORMATION, buf)
         except ValueError:
-            buf = Tlv.unpack(DO.ALGORITHM_INFORMATION, buf + b"\0\0")[:-2]
+            # CanoKey returns the bare TLV list, without the outer DO tag
+            pass
 
         slots = {slot.algorithm_attributes_do: slot for slot in KEY_REF}
         data: dict[KEY_REF, list[AlgorithmAttributes]] = {}
