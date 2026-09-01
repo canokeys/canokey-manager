@@ -87,9 +87,10 @@ def _release(connection):
 
 
 class ScardSmartCardConnection(SmartCardConnection):
-    def __init__(self, connection):
+    def __init__(self, connection, pid=None):
         connection.connect()
         self.connection = connection
+        self._pid = pid
 
         atr = self.connection.getATR()
         self._transport = (
@@ -99,6 +100,10 @@ class ScardSmartCardConnection(SmartCardConnection):
     @property
     def transport(self):
         return self._transport
+
+    @property
+    def pid(self):
+        return self._pid
 
     def close(self):
         self.connection.disconnect()
@@ -149,14 +154,14 @@ class ScardYubiKeyDevice(YkmanDevice):
             if os.environ.get(_YKMAN_NO_EXCLUSIVE) is None:
                 excl_connection = ExclusiveConnectCardConnection(connection)
                 try:
-                    scard_conn = ScardSmartCardConnection(excl_connection)
+                    scard_conn = ScardSmartCardConnection(excl_connection, self.pid)
                     logger.debug("Using exclusive CCID connection")
                     return scard_conn
                 except CardConnectionException:
                     logger.info("Failed to get exclusive CCID access")
 
             # Try a shared connection
-            return ScardSmartCardConnection(connection)
+            return ScardSmartCardConnection(connection, self.pid)
         except CardConnectionException:
             _release(connection)
             # Neither connection worked, maybe we need to kill stuff

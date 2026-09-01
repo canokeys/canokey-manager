@@ -35,6 +35,7 @@ from time import time
 from yubikit.logging import LOG_LEVEL
 
 from .. import (
+    PID,
     TRANSPORT,
     USB_INTERFACE,
     ApplicationNotAvailableError,
@@ -411,6 +412,12 @@ class SmartCardProtocol:
 
     def configure(self, version: Version, force_short: bool = False) -> None:
         """Configure the connection optimally for the given YubiKey version."""
+        if getattr(self.connection, "pid", None) == PID.CK_FIDO_CCID:
+            # CanoKey treats APDUs without Le as case-1 commands and answers
+            # 61xx, but its GET RESPONSE requires an explicit Le, which would
+            # loop forever. Use short APDUs (with explicit Le) instead.
+            force_short = True
+
         if self._do_enable_touch_workaround(version, force_short):
             # Devices that require the touch workaround don't support additional options
             return
