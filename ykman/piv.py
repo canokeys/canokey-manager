@@ -442,7 +442,7 @@ def _list_keys(session: PivSession) -> Mapping[SLOT, SlotMetadata]:
             keys[slot] = session.get_slot_metadata(slot)
         except ApduError as e:
             if e.sw != SW.REFERENCE_DATA_NOT_FOUND:
-                raise
+                raise NotSupportedError
     return keys
 
 
@@ -488,7 +488,11 @@ def check_key(
         return True
 
     except ApduError as e:
-        if e.sw in (SW.INCORRECT_PARAMETERS, SW.WRONG_PARAMETERS_P1P2):
+        if e.sw in (
+            SW.INCORRECT_PARAMETERS,
+            SW.WRONG_PARAMETERS_P1P2,
+            SW.INCORRECT_P1P2,
+        ):
             logger.debug(f"Couldn't create signature: SW={e.sw:04x}")
             return False
         raise
@@ -600,12 +604,16 @@ def get_piv_info(session: PivSession):
     except ApduError as e:
         if e.sw == SW.FILE_NOT_FOUND:
             objects["CHUID"] = "No data available"
+    except Exception:
+        objects["CHUID"] = "No data available."
 
     try:
         objects["CCC"] = session.get_object(OBJECT_ID.CAPABILITY)
     except ApduError as e:
         if e.sw == SW.FILE_NOT_FOUND:
             objects["CCC"] = "No data available"
+    except Exception:
+        objects["CCC"] = "No data available"
 
     certs = list_certificates(session)
     try:

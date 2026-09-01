@@ -909,7 +909,8 @@ def export(ctx, slot, public_key_output, format, verify, pin):
     )
 
 
-@keys.command("move")
+# Disable unsupported command
+# @keys.command("move")
 @click.pass_context
 @click_management_key_option
 @click_pin_option
