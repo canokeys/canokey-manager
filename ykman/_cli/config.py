@@ -31,7 +31,7 @@ import re
 
 import click
 
-from yubikit.core import TRANSPORT, YUBIKEY
+from yubikit.core import PID, TRANSPORT, YUBIKEY
 from yubikit.core.fido import FidoConnection
 from yubikit.core.otp import OtpConnection
 from yubikit.core.smartcard import SmartCardConnection
@@ -105,6 +105,11 @@ def config(ctx):
 
 def _require_config(ctx):
     info = ctx.obj["info"]
+    # CanoKey: application configuration is not supported (and there is no
+    # `mode` command to point at)
+    dev = ctx.obj.get("device")
+    if dev is not None and dev.pid == PID.CK_FIDO_CCID:
+        raise CliFail("Configuring applications is not supported on CanoKey.")
     if (1, 0, 0) < info.version < (5, 0, 0):
         raise CliFail(
             "Configuring applications is not supported on this YubiKey. "

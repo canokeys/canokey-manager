@@ -33,6 +33,7 @@ import click
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 
+from yubikit import canokey
 from yubikit.core import TRANSPORT, NotSupportedError
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import CAPABILITY
@@ -338,6 +339,8 @@ def set_pin_retries(ctx, management_key, pin, pin_retries, puk_retries, force):
         click.echo("Default PINs have been restored:")
         click.echo("\tPIN:\t123456")
         click.echo("\tPUK:\t12345678")
+    except NotSupportedError:
+        raise CliFail("Setting PIN retries is not supported on this device.")
     except Exception:
         raise CliFail("Setting PIN retries failed.")
 
@@ -530,6 +533,13 @@ def change_management_key(
     info = ctx.obj["info"]
     if CAPABILITY.PIV in info.fips_capable and algorithm in (MANAGEMENT_KEY_TYPE.TDES,):
         raise CliFail(f"{algorithm.name} not supported on YubiKey FIPS.")
+
+    # CanoKey: the pivman objects (5fff00/5fc109) don't exist, so storing
+    # the management key on-device is impossible; reject before setting a
+    # (possibly random) new key that we could not store nor recover.
+    if protect and canokey.is_canokey(session.protocol.connection):
+        raise CliFail("Storing the management key on device (--protect) "
+                      "is not supported on CanoKey.")
 
     pin_verified = _ensure_authenticated(
         ctx,

@@ -1143,13 +1143,21 @@ class OpenPgpSession:
 
         attempts = (user_attempts, reset_attempts, admin_attempts)
         logger.debug(f"Setting PIN attempts to {attempts}")
-        self.protocol.send_apdu(
-            0,
-            INS.SET_PIN_RETRIES,
-            0,
-            0,
-            struct.pack(">BBB", *attempts),
-        )
+        try:
+            self.protocol.send_apdu(
+                0,
+                INS.SET_PIN_RETRIES,
+                0,
+                0,
+                struct.pack(">BBB", *attempts),
+            )
+        except ApduError as e:
+            # CanoKey: SET_PIN_RETRIES is not implemented (6d00)
+            if e.sw == SW.INVALID_INSTRUCTION:
+                raise NotSupportedError(
+                    "Setting PIN retries is not supported on this device"
+                )
+            raise
         logger.info("Number of PIN attempts has been changed")
 
     def get_kdf(self) -> Kdf:
