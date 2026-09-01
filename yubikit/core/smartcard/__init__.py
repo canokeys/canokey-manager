@@ -121,6 +121,7 @@ class SW(IntEnum):
     FILE_NOT_FOUND = 0x6A82
     RECORD_NOT_FOUND = 0x6A83
     NO_SPACE = 0x6A84
+    INCORRECT_P1P2 = 0x6A86
     REFERENCE_DATA_NOT_FOUND = 0x6A88
     APPLET_SELECT_FAILED = 0x6999
     WRONG_PARAMETERS_P1P2 = 0x6B00
@@ -240,11 +241,16 @@ class ResponseChainingProcessor(ApduProcessor):
 
         # Read chained response
         buf = b""
-        while sw >> 8 == SW1_HAS_MORE_DATA:
+        while sw >> 8 == SW1_HAS_MORE_DATA or (
+            self.ins_send_remaining == 0xA5 and sw == SW.OK
+        ):  # workaround for CanoKey OATH
             buf += response
-            response, sw = self.delegate.send_apdu(
+            response, sw_n = self.delegate.send_apdu(
                 0, self.ins_send_remaining, 0, 0, b"", 0
             )
+            if sw_n == SW.CONDITIONS_NOT_SATISFIED:
+                break
+            sw = sw_n
 
         buf += response
         return buf, sw
