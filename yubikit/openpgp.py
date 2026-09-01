@@ -469,9 +469,9 @@ class RsaAttributes(AlgorithmAttributes):
     def create(
         cls,
         n_len: RSA_SIZE,
-        import_format: RSA_IMPORT_FORMAT = RSA_IMPORT_FORMAT.STANDARD,
+        import_format: RSA_IMPORT_FORMAT = RSA_IMPORT_FORMAT.CRT,
     ) -> RsaAttributes:
-        return cls(0x01, n_len, 17, import_format)
+        return cls(0x01, n_len, 32, import_format)
 
     @classmethod
     def _parse_data(cls, alg, encoded) -> RsaAttributes:
@@ -503,9 +503,6 @@ class OID(CurveOid, Enum):
     SECP256K1 = CurveOid.from_string("1.3.132.0.10")
     SECP384R1 = CurveOid.from_string("1.3.132.0.34")
     SECP521R1 = CurveOid.from_string("1.3.132.0.35")
-    BrainpoolP256R1 = CurveOid.from_string("1.3.36.3.3.2.8.1.1.7")
-    BrainpoolP384R1 = CurveOid.from_string("1.3.36.3.3.2.8.1.1.11")
-    BrainpoolP512R1 = CurveOid.from_string("1.3.36.3.3.2.8.1.1.13")
     X25519 = CurveOid.from_string("1.3.6.1.4.1.3029.1.5.1")
     Ed25519 = CurveOid.from_string("1.3.6.1.4.1.11591.15.1")
 
@@ -863,7 +860,6 @@ class RsaCrtKeyTemplate(RsaKeyTemplate):
             Tlv(0x94, self.iqmp),
             Tlv(0x95, self.dmp1),
             Tlv(0x96, self.dmq1),
-            Tlv(0x97, self.n),
         ]
 
 
@@ -888,11 +884,7 @@ def _get_key_attributes(
             raise ValueError("RSA keys with e != 65537 are not supported!")
         return RsaAttributes.create(
             RSA_SIZE(private_key.key_size),
-            (
-                RSA_IMPORT_FORMAT.CRT_W_MOD
-                if 0 < version[0] < 4
-                else RSA_IMPORT_FORMAT.STANDARD
-            ),
+            RSA_IMPORT_FORMAT.CRT,
         )
     return EcAttributes.create(key_ref, OID._from_key(private_key))
 
@@ -904,7 +896,7 @@ def _get_key_template(
         rsa_numbers = private_key.private_numbers()
         ln = (private_key.key_size // 8) // 2
 
-        e = b"\x01\x00\x01"  # e=65537
+        e = b"\x00\x01\x00\x01"  # e=65537
         p = int2bytes(rsa_numbers.p, ln)
         q = int2bytes(rsa_numbers.q, ln)
         if not use_crt:
@@ -1021,11 +1013,9 @@ class OpenPgpSession:
         try:
             bcd = self.protocol.send_apdu(0, INS.GET_VERSION, 0, 0)
             return _override_version.patch(Version(*(_bcd(x) for x in bcd)))
-        except ApduError as e:
-            # Pre 1.0.2 versions don't support reading the version
-            if e.sw == SW.CONDITIONS_NOT_SATISFIED:
-                return Version(1, 0, 0)
-            raise
+        except ApduError:
+            # CanoKey doesn't have a dedicated version of OpenPGP
+            return Version(5, 5, 5)
 
     @property
     def aid(self) -> OpenPgpAid:
@@ -1389,19 +1379,27 @@ class OpenPgpSession:
             )
 
         if self.version < (5, 6, 1) and self.version[0] > 0:
-            # Fix for invalid Curve25519 entries:
-            # Remove X25519 with EdDSA from all keys
-            invalid_x25519 = EcAttributes(0x16, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
-            for values in data.values():
-                values.remove(invalid_x25519)
-            x25519 = EcAttributes(0x12, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
-            # Add X25519 ECDH for DEC
-            if x25519 not in data[KEY_REF.DEC]:
-                data[KEY_REF.DEC].append(x25519)
-            # Remove EdDSA from DEC, ATT
-            ed25519_attr = EcAttributes(0x16, OID.Ed25519, EC_IMPORT_FORMAT.STANDARD)
-            data[KEY_REF.DEC].remove(ed25519_attr)
-            data[KEY_REF.ATT].remove(ed25519_attr)
+            try:
+                # Fix for invalid Curve25519 entries:
+                # Remove X25519 with EdDSA from all keys
+                invalid_x25519 = EcAttributes(
+                    0x16, OID.X25519, EC_IMPORT_FORMAT.STANDARD
+                )
+                for values in data.values():
+                    values.remove(invalid_x25519)
+                x25519 = EcAttributes(0x12, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
+                # Add X25519 ECDH for DEC
+                if x25519 not in data[KEY_REF.DEC]:
+                    data[KEY_REF.DEC].append(x25519)
+                # Remove EdDSA from DEC, ATT
+                ed25519_attr = EcAttributes(
+                    0x16, OID.Ed25519, EC_IMPORT_FORMAT.STANDARD
+                )
+                data[KEY_REF.DEC].remove(ed25519_attr)
+                data[KEY_REF.ATT].remove(ed25519_attr)
+            except ValueError:
+                # invalid_x25519 does not exist in values
+                pass
 
         return data
 
@@ -1435,7 +1433,13 @@ class OpenPgpSession:
         :param key_ref: The key slot.
         """
         if self.version >= (4, 2, 0):
-            return UIF.parse(self.get_data(key_ref.uif_do))
+            try:
+                return UIF.parse(self.get_data(key_ref.uif_do))
+            except ApduError as e:
+                if e.sw in (SW.WRONG_PARAMETERS_P1P2, SW.REFERENCE_DATA_NOT_FOUND):
+                    # Not supported
+                    return UIF.OFF
+                raise
 
         # Not supported
         return UIF.OFF
@@ -1543,7 +1547,7 @@ class OpenPgpSession:
             import_format = (
                 RSA_IMPORT_FORMAT.CRT_W_MOD
                 if 0 < self.version[0] < 4  # Use CRT for NEO
-                else RSA_IMPORT_FORMAT.STANDARD
+                else RSA_IMPORT_FORMAT.CRT
             )
             attributes = RsaAttributes.create(key_size, import_format)
             self.set_algorithm_attributes(key_ref, attributes)
@@ -1601,7 +1605,7 @@ class OpenPgpSession:
             ):
                 raise NotSupportedError("This YubiKey only supports RSA 2048 keys")
 
-        template = _get_key_template(private_key, key_ref, 0 < self.version[0] < 4)
+        template = _get_key_template(private_key, key_ref, True)
         self.protocol.send_apdu(0, INS.PUT_DATA_ODD, 0x3F, 0xFF, bytes(template))
         logger.info(f"Private key imported for {key_ref.name}")
 
