@@ -115,28 +115,31 @@ jobs:
             exit 1
           fi
 
+          echo "=== HID kernel configuration ==="
+          grep -E 'CONFIG_(USB_HID|HIDRAW|HID_GENERIC)' \
+            "/boot/config-${kernel_release}" || true
           if modinfo usbhid >/dev/null 2>&1; then
             if ! sudo modprobe usbhid; then
-              diagnose_kernel
-              echo "ERROR: GitHub-hosted kernel ${kernel_release} cannot load usbhid"
-              exit 1
+              echo "WARNING: ${kernel_release} provides usbhid but it could not be loaded."
+              echo "canokey-usbip readiness will determine whether HID is usable."
             fi
           elif grep -q '^CONFIG_USB_HID=y' "/boot/config-${kernel_release}"; then
             echo "usbhid is built into ${kernel_release}."
           else
-            diagnose_kernel
-            echo "ERROR: GitHub-hosted kernel ${kernel_release} does not provide usbhid"
-            exit 1
+            echo "WARNING: GitHub-hosted kernel ${kernel_release} does not expose usbhid."
+            echo "canokey-usbip readiness will determine whether HID is usable."
           fi
           if modinfo hid_generic >/dev/null 2>&1; then
-            sudo modprobe hid_generic
+            sudo modprobe hid_generic || \
+              echo "WARNING: hid_generic is present but could not be loaded."
           fi
 
-          if ! lsmod | grep -E 'vhci|usbip|usbhid|hid_generic'; then
+          if ! lsmod | grep -E 'vhci|usbip'; then
             diagnose_kernel
-            echo "ERROR: required USB/IP and HID modules are not loaded"
+            echo "ERROR: required USB/IP modules are not loaded"
             exit 1
           fi
+          lsmod | grep -E 'vhci|usbip|hid' || true
           if ! compgen -G '/sys/devices/platform/vhci_hcd*' >/dev/null; then
             diagnose_kernel
             echo "ERROR: vhci_hcd is loaded but its platform sysfs interface is unavailable"
