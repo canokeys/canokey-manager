@@ -21,6 +21,8 @@ end.
 
 ## Expected CanoKey rejections
 
+- `piv access set-retries`: the catalog CanoKey core does not implement PIV
+  retry counter configuration.
 - `openpgp access set-retries`: CanoKey does not implement SET PIN RETRIES.
 - `openpgp keys attest`: `ckman` cannot provision a normal OpenPGP signing key,
   and the catalog firmware starts without one. The command is exercised and
