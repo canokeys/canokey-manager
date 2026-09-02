@@ -26,7 +26,9 @@ echo "=== ckman openpgp info ==="
 "${CKMAN[@]}" openpgp info
 
 echo "=== ckman piv reset ==="
-"${CKMAN[@]}" piv reset --force
+piv_reset_output="$("${CKMAN[@]}" piv reset --force)"
+grep -Fq "Reset complete." <<<"$piv_reset_output"
+echo "PIV reset complete."
 
 echo "=== ckman piv P-256 key generation ==="
 "${CKMAN[@]}" piv keys generate \

@@ -1,10 +1,11 @@
 [project]
 name = "canokey-manager"
 version = "5.9.2.post1"
-description = "Tool for managing your CanoKey configuration."
+description = "Library and CLI for managing your CanoKey configuration."
 authors = [
-  { name = "Dain Nilsson", email = "<dain@yubico.com>" },
-  { name = "Yuxiang Zhang", email = "yuxiang.zhang@tuna.tsinghua.edu.cn" }
+  { name = "Dain Nilsson", email = "dain@yubico.com" },
+  { name = "Yuxiang Zhang", email = "yuxiang.zhang@tuna.tsinghua.edu.cn" },
+  { name = "Fan Dang", email = "dangfan@canokeys.org" }
 ]
 readme = "README.adoc"
 requires-python = ">=3.10, <4"
@@ -37,7 +38,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/canokeys/yubikey-manager"
+Homepage = "https://github.com/canokeys/canokey-manager"
 
 [project.scripts]
 ckman = "ykman._cli.__main__:main"
