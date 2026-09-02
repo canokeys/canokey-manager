@@ -19,6 +19,13 @@ OpenPGP test changes and recovers PINs and, when supported, imports an
 attestation key and certificate and verifies the certificate round trip. It
 resets the applet at the end.
 
+After the executable smoke lifecycle, `device-tests.sh` runs the reusable
+upstream CLI and protocol device tests for each applet against the same real
+PC/SC reader. The suite covers prompt and error paths, OATH vectors and PSKC,
+PIV certificate and cryptographic operations, and OpenPGP signing, decryption,
+and key agreement. Pytest reports capability exclusions with their skip
+reasons; an ordinary test failure remains fatal.
+
 ## Firmware-dependent commands
 
 The test follows the upstream device-test model: known device exclusions are
@@ -35,6 +42,11 @@ firmware is probed at runtime. A runtime rejection is accepted only when it
 matches the feature's explicit unsupported error. Hardware provisioning state,
 including attestation certificates and preinstalled keys, is always probed at
 runtime rather than inferred from firmware.
+
+YubiKey release gates and CanoKey firmware gates are independent. Tests retain
+their upstream YubiKey version predicates. On CanoKey, the same test body uses
+the admin firmware version and the feature matrix instead; synthetic versions
+reported by individual applets are never compared to CanoKey firmware.
 
 - PIV retry counter configuration and attestation
 - OpenPGP retry counter configuration

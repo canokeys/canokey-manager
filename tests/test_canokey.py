@@ -149,12 +149,37 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             FeatureStatus.SUPPORTED,
         ),
         (
+            CanoKeyFeature.PIV_ECCP384,
+            Version(1, 3, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_GENERATE_POLICIES,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_GENERATE_POLICIES,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
             CanoKeyFeature.CTAP_RESET,
             Version(2, 0, 1),
             FeatureStatus.UNSUPPORTED,
         ),
         (
             CanoKeyFeature.CTAP_RESET,
+            Version(3, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_GET_CHALLENGE,
+            Version(2, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_GET_CHALLENGE,
             Version(3, 0, 0),
             FeatureStatus.SUPPORTED,
         ),

@@ -56,7 +56,9 @@ class CanoKeyFeature(str, Enum):
     OATH_MODERN_COMMANDS = "oath-modern-commands"
     OPENPGP_ALGORITHM_INFORMATION = "openpgp-algorithm-information"
     PIV_METADATA = "piv-metadata"
+    PIV_ECCP384 = "piv-eccp384"
     PIV_EXTENDED_ALGORITHMS = "piv-extended-algorithms"
+    PIV_GENERATE_POLICIES = "piv-generate-policies"
     CTAP_RESET = "ctap-reset"
     PIV_STANDARD_ALGORITHM_IDS = "piv-standard-algorithm-ids"
     NFC_STATUS_WITHOUT_PIN = "nfc-status-without-pin"
@@ -64,6 +66,7 @@ class CanoKeyFeature(str, Enum):
     OATH_RESPONSE_CHAINING_FIX = "oath-response-chaining-fix"
     PIV_SET_RETRIES = "piv-set-retries"
     OPENPGP_SET_RETRIES = "openpgp-set-retries"
+    OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
 
 
 class FeatureStatus(str, Enum):
@@ -120,7 +123,13 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     CanoKeyFeature.PIV_METADATA: FeatureRule(
         (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
     ),
+    CanoKeyFeature.PIV_ECCP384: FeatureRule(
+        (FirmwareRange(Version(1, 3, 0)),), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.PIV_EXTENDED_ALGORITHMS: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_GENERATE_POLICIES: FeatureRule(
         (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
     ),
     CanoKeyFeature.CTAP_RESET: FeatureRule(
@@ -140,6 +149,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     ),
     CanoKeyFeature.PIV_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.OPENPGP_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.OPENPGP_GET_CHALLENGE: FeatureRule(
+        (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
 }
 
 

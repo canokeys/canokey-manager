@@ -31,8 +31,8 @@ def _verify_cert(cert, pubkey):
         raise ValueError("Unsupported public key value")
 
 
-def not_roca(version):
-    return not ((4, 2, 0) <= version < (4, 3, 5))
+def not_roca(version, info):
+    return condition.is_canokey(info) or not ((4, 2, 0) <= version < (4, 3, 5))
 
 
 class TestNonDefaultMgmKey:

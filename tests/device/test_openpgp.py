@@ -6,6 +6,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
+from yubikit.canokey import CanoKeyFeature
 from yubikit.core import TRANSPORT, InvalidPinError
 from yubikit.core.smartcard import AID, ApduError
 from yubikit.management import CAPABILITY
@@ -17,6 +18,7 @@ from yubikit.openpgp import (
     KdfIterSaltedS2k,
     KdfNone,
     OpenPgpSession,
+    RsaAttributes,
 )
 
 from . import condition
@@ -44,9 +46,9 @@ class Keys(NamedTuple):
     admin: str
 
 
-def not_roca(version):
+def not_roca(version, info):
     """ROCA affected"""
-    return not ((4, 2, 0) <= version < (4, 3, 5))
+    return condition.is_canokey(info) or not ((4, 2, 0) <= version < (4, 3, 5))
 
 
 def skip_unsupported_oid(session, oid, key_ref):
@@ -56,6 +58,14 @@ def skip_unsupported_oid(session, oid, key_ref):
             break
     else:
         pytest.skip(f"{oid} not supported")
+
+
+def skip_unsupported_rsa_size(session, key_size, key_ref):
+    for attr in session.get_algorithm_information()[key_ref]:
+        if isinstance(attr, RsaAttributes) and attr.n_len == key_size:
+            break
+    else:
+        pytest.skip(f"RSA {key_size} not supported")
 
 
 def fips_capable(info):
@@ -160,7 +170,7 @@ def test_generate_requires_admin(session):
         session.generate_rsa_key(KEY_REF.SIG, RSA_SIZE.RSA2048)
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_import_sign_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
@@ -176,8 +186,9 @@ def test_import_sign_ecdsa(session, info, keys, oid):
     priv.public_key().verify(sig, message, ec.ECDSA(hashes.SHA256()))
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 def test_import_sign_eddsa(session, keys):
+    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG)
     priv = ed25519.Ed25519PrivateKey.generate()
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.SIG, priv)
@@ -187,7 +198,7 @@ def test_import_sign_eddsa(session, keys):
     priv.public_key().verify(sig, message)
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_import_ecdh(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
@@ -205,8 +216,9 @@ def test_import_ecdh(session, info, keys, oid):
 
 
 @condition.check(not_fips_capable)
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 def test_import_ecdh_x25519(session, keys):
+    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC)
     priv = x25519.X25519PrivateKey.generate()
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.DEC, priv)
@@ -220,7 +232,9 @@ def test_import_ecdh_x25519(session, keys):
 
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_import_sign_rsa(session, keys, key_size, info):
-    if key_size != 2048:
+    if condition.is_canokey(info):
+        skip_unsupported_rsa_size(session, key_size, KEY_REF.SIG)
+    elif key_size != 2048:
         if info.version[0] < 4:
             pytest.skip(f"RSA {key_size} requires YubiKey 4 or later")
         elif info.version[0] == 4 and info.is_fips:
@@ -228,7 +242,8 @@ def test_import_sign_rsa(session, keys, key_size, info):
     priv = rsa.generate_private_key(E, key_size, default_backend())
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.SIG, priv)
-    if 0 < info.version[0] < 5:
+    protocol_version = session.version if condition.is_canokey(info) else info.version
+    if 0 < protocol_version[0] < 5:
         # Keys don't work without a generation time (or fingerprint)
         session.set_generation_time(KEY_REF.SIG, int(time.time()))
 
@@ -241,7 +256,9 @@ def test_import_sign_rsa(session, keys, key_size, info):
 @condition.check(not_fips_capable)
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_import_decrypt_rsa(session, keys, key_size, info):
-    if key_size != 2048:
+    if condition.is_canokey(info):
+        skip_unsupported_rsa_size(session, key_size, KEY_REF.DEC)
+    elif key_size != 2048:
         if info.version[0] < 4:
             pytest.skip(f"RSA {key_size} requires YubiKey 4 or later")
         elif info.version[0] == 4 and info.is_fips:
@@ -249,7 +266,8 @@ def test_import_decrypt_rsa(session, keys, key_size, info):
     priv = rsa.generate_private_key(E, key_size, default_backend())
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.DEC, priv)
-    if info.version[0] < 5:
+    protocol_version = session.version if condition.is_canokey(info) else info.version
+    if protocol_version[0] < 5:
         # Keys don't work without a generation time (or fingerprint)
         session.set_generation_time(KEY_REF.DEC, int(time.time()))
 
@@ -264,14 +282,17 @@ def test_import_decrypt_rsa(session, keys, key_size, info):
 @condition.check(not_roca)
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_generate_rsa(session, keys, key_size, info):
-    if key_size != 2048:
+    if condition.is_canokey(info):
+        skip_unsupported_rsa_size(session, key_size, KEY_REF.SIG)
+    elif key_size != 2048:
         if info.version[0] < 4:
             pytest.skip(f"RSA {key_size} requires YubiKey 4 or later")
         elif info.version[0] == 4 and info.is_fips:
             pytest.skip(f"RSA {key_size} not supported on YubiKey 4 FIPS")
     session.verify_admin(keys.admin)
     pub = session.generate_rsa_key(KEY_REF.SIG, RSA_SIZE(key_size))
-    if info.version[0] < 5:
+    protocol_version = session.version if condition.is_canokey(info) else info.version
+    if protocol_version[0] < 5:
         # Keys don't work without a generation time (or fingerprint)
         session.set_generation_time(KEY_REF.SIG, int(time.time()))
 
@@ -283,7 +304,7 @@ def test_generate_rsa(session, keys, key_size, info):
     pub.verify(sig, message, padding.PKCS1v15(), hashes.SHA256())
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("oid", [x for x in OID if "25519" not in x.name])
 def test_generate_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
@@ -298,8 +319,9 @@ def test_generate_ecdsa(session, info, keys, oid):
     pub.verify(sig, message, ec.ECDSA(hashes.SHA256()))
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 def test_generate_ed25519(session, keys):
+    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG)
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.SIG, OID.Ed25519)
     message = b"Hello world"
@@ -308,9 +330,10 @@ def test_generate_ed25519(session, keys):
     pub.verify(sig, message)
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @condition.check(not_fips_capable)
 def test_generate_x25519(session, keys):
+    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC)
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.DEC, OID.X25519)
 
@@ -322,8 +345,8 @@ def test_generate_x25519(session, keys):
     assert shared1 == shared2
 
 
-@condition.min_version(5, 2)
 @condition.capability(CAPABILITY.OTP)  # Yubico only
+@condition.min_version(5, 2)
 def test_kdf(session, keys):
     with pytest.raises(ApduError):
         session.set_kdf(KdfIterSaltedS2k.create())
@@ -343,8 +366,8 @@ def test_kdf(session, keys):
     session.verify_pin(DEFAULT_PIN)
 
 
-@condition.min_version(5, 2)
 @condition.capability(CAPABILITY.OTP)  # Yubico only
+@condition.min_version(5, 2)
 def test_attestation(session, keys):
     if not session.get_key_information()[KEY_REF.ATT]:
         pytest.skip("No attestation key")
@@ -358,7 +381,7 @@ def test_attestation(session, keys):
     assert cert.public_key() == pub
 
 
-@condition.min_version(5, 2)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_GET_CHALLENGE, 5, 2)
 def test_get_challenge(session):
     for ln in (1, 4, 8, 100):
         x = session.get_challenge(ln)

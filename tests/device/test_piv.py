@@ -9,6 +9,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
+from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
 from ykman.piv import (
     check_key,
     generate_csr,
@@ -115,8 +116,8 @@ def keys(session, info, default_keys, scp):
         yield default_keys
 
 
-def not_roca(version):
-    return not ((4, 2, 0) <= version < (4, 3, 5))
+def not_roca(version, info):
+    return condition.is_canokey(info) or not ((4, 2, 0) <= version < (4, 3, 5))
 
 
 def reset_state(session, scp_params):
@@ -193,11 +194,34 @@ def verify_cert_signature(cert, public_key=None):
     public_key.verify(*args)
 
 
-def skip_unsupported_key_type(key_type, info, pin_policy=PIN_POLICY.DEFAULT):
-    if key_type == KEY_TYPE.RSA1024 and (
-        CAPABILITY.OTP not in info.supported_capabilities[TRANSPORT.USB]
-    ):
-        pytest.skip("RSA1024 not supported")  # CanoKey
+def skip_unsupported_key_type(session, key_type, info, pin_policy=PIN_POLICY.DEFAULT):
+    if condition.is_canokey(info):
+        if key_type == KEY_TYPE.RSA1024:
+            pytest.skip("CanoKey does not support RSA1024")
+        if key_type in (KEY_TYPE.RSA3072, KEY_TYPE.RSA4096):
+            feature = CanoKeyFeature.PIV_STANDARD_ALGORITHM_IDS
+        elif key_type in (KEY_TYPE.ED25519, KEY_TYPE.X25519):
+            feature = CanoKeyFeature.PIV_ED25519_X25519_FIXES
+        elif key_type == KEY_TYPE.ECCP384:
+            feature = CanoKeyFeature.PIV_ECCP384
+        else:
+            feature = None
+
+        if (
+            feature
+            and get_feature_status(info.version, feature) == FeatureStatus.UNSUPPORTED
+        ):
+            pytest.skip(f"CanoKey firmware {info.version} does not support {key_type}")
+        if (
+            pin_policy != PIN_POLICY.DEFAULT
+            and get_feature_status(info.version, CanoKeyFeature.PIV_GENERATE_POLICIES)
+            == FeatureStatus.UNSUPPORTED
+        ):
+            pytest.skip(
+                f"CanoKey firmware {info.version} does not support PIV PIN policies"
+            )
+        return
+
     try:
         _do_check_key_support(
             info.version,
@@ -218,7 +242,7 @@ class TestCertificateSignatures:
     def test_generate_self_signed_certificate(
         self, info, session, key_type, hash_algorithm, keys, scp
     ):
-        skip_unsupported_key_type(key_type, info)
+        skip_unsupported_key_type(session, key_type, info)
 
         slot = SLOT.SIGNATURE
         public_key = import_key(session, scp, keys, slot, key_type)
@@ -241,7 +265,7 @@ class TestDecrypt:
         [KEY_TYPE.RSA1024, KEY_TYPE.RSA2048, KEY_TYPE.RSA3072, KEY_TYPE.RSA4096],
     )
     def test_import_decrypt(self, session, info, key_type, keys, scp):
-        skip_unsupported_key_type(key_type, info)
+        skip_unsupported_key_type(session, key_type, info)
 
         public_key = import_key(
             session, scp, keys, SLOT.KEY_MANAGEMENT, key_type=key_type
@@ -257,7 +281,7 @@ class TestDecrypt:
 class TestKeyAgreement:
     @pytest.mark.parametrize("key_type", ECDH_KEY_TYPES)
     def test_generate_ecdh(self, session, info, key_type, keys, scp):
-        skip_unsupported_key_type(key_type, info)
+        skip_unsupported_key_type(session, key_type, info)
 
         e_priv = generate_sw_key(key_type)
         public_key = generate_key(
@@ -275,7 +299,7 @@ class TestKeyAgreement:
 
     @pytest.mark.parametrize("key_type", ECDH_KEY_TYPES)
     def test_import_ecdh(self, session, info, key_type, keys, scp):
-        skip_unsupported_key_type(key_type, info)
+        skip_unsupported_key_type(session, key_type, info)
 
         e_priv = generate_sw_key(key_type)
         public_key = import_key(
@@ -412,13 +436,13 @@ class TestKeyManagement:
             session, scp, keys, KEY_TYPE.ECCP256, KEY_TYPE.RSA2048
         )
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_ECCP384, 4)
     def test_put_certificate_verifies_key_pairing_eccp256_b(self, session, keys, scp):
         self._test_put_key_pairing(
             session, scp, keys, KEY_TYPE.ECCP256, KEY_TYPE.ECCP384
         )
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_ECCP384, 4)
     def test_put_certificate_verifies_key_pairing_eccp384(self, session, keys, scp):
         self._test_put_key_pairing(
             session, scp, keys, KEY_TYPE.ECCP384, KEY_TYPE.ECCP256
@@ -504,6 +528,7 @@ class TestManagementKeyReadOnly:
             )
         assert_mgm_key_is(session, keys.mgmt)
 
+    @condition.canokey(False)  # CanoKey has no PIN-protected pivman object
     @condition.min_version(3, 5)
     def test_set_stored_mgm_key_does_not_destroy_key_if_pin_not_verified(
         self, session, keys
@@ -561,7 +586,7 @@ def sign(session, slot, key_type, message):
 
 
 class TestOperations:
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_sign_with_pin_policy_always_requires_pin_every_time(
         self, session, keys, scp
     ):
@@ -583,7 +608,7 @@ class TestOperations:
 
     @condition.yk4_fips(False)
     @condition.check(lambda info: CAPABILITY.PIV not in info.fips_capable)
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_sign_with_pin_policy_never_does_not_require_pin(self, session, keys, scp):
         generate_key(session, scp, keys, pin_policy=PIN_POLICY.NEVER)
         sig = sign(session, SLOT.AUTHENTICATION, KEY_TYPE.ECCP256, b"foo")
@@ -594,7 +619,7 @@ class TestOperations:
         with pytest.raises(NotSupportedError):
             generate_key(session, scp, keys, pin_policy=PIN_POLICY.NEVER)
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_sign_with_pin_policy_once_requires_pin_once_per_session(
         self, session, keys, scp
     ):
@@ -718,7 +743,7 @@ class TestUnblockPin:
 
 class TestMetadata:
     @pytest.fixture(autouse=True)
-    @condition.min_version(5, 3)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_METADATA, 5, 3)
     def preconditions(self):
         pass
 
@@ -731,19 +756,24 @@ class TestMetadata:
     def test_management_key_metadata(self, session, info):
         data = session.get_management_key_metadata()
         default_type = data.key_type
-        # if info.version < (5, 7, 0):
-        #     assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
-        # else:
-        #     assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
+        if condition.is_canokey(info) or info.version < (5, 7, 0):
+            assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
+        else:
+            assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
         assert data.default_value is True
         assert data.touch_policy is TOUCH_POLICY.NEVER
 
         session.authenticate(DEFAULT_MANAGEMENT_KEY)
-        session.set_management_key(MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY)
-        assert session.management_key_type == MANAGEMENT_KEY_TYPE.TDES
+        new_type = (
+            MANAGEMENT_KEY_TYPE.TDES
+            if condition.is_canokey(info)
+            else MANAGEMENT_KEY_TYPE.AES192
+        )
+        session.set_management_key(new_type, NON_DEFAULT_MANAGEMENT_KEY)
+        assert session.management_key_type == new_type
 
         data = session.get_management_key_metadata()
-        assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
+        assert data.key_type == new_type
         assert data.default_value is False
         assert data.touch_policy is TOUCH_POLICY.NEVER
 
@@ -762,9 +792,8 @@ class TestMetadata:
         assert session.management_key_type == default_type
 
     @pytest.mark.parametrize("key_type", list(KEY_TYPE))
-    @condition.capability(CAPABILITY.OTP)  # Yubico only
     def test_slot_metadata_generate(self, session, info, keys, key_type, scp):
-        skip_unsupported_key_type(key_type, info)
+        skip_unsupported_key_type(session, key_type, info)
 
         slot = SLOT.SIGNATURE
         key = generate_key(session, scp, keys, slot, key_type)
@@ -785,7 +814,7 @@ class TestMetadata:
     @pytest.mark.parametrize(
         "key",
         [
-            rsa.generate_private_key(65537, 3072, default_backend()),
+            rsa.generate_private_key(65537, 1024, default_backend()),
             rsa.generate_private_key(65537, 2048, default_backend()),
             ec.generate_private_key(ec.SECP256R1(), default_backend()),
             ec.generate_private_key(ec.SECP384R1(), default_backend()),
@@ -800,10 +829,9 @@ class TestMetadata:
             (SLOT.CARD_AUTH, PIN_POLICY.NEVER),
         ],
     )
-    @condition.capability(CAPABILITY.OTP)  # Yubico only
     def test_slot_metadata_put(self, session, info, keys, key, slot, pin_policy):
         key_type = KEY_TYPE.from_public_key(key.public_key())
-        skip_unsupported_key_type(key_type, info, pin_policy)
+        skip_unsupported_key_type(session, key_type, info, pin_policy)
         session.authenticate(keys.mgmt)
         session.put_key(slot, key)
         data = session.get_slot_metadata(slot)
@@ -823,8 +851,8 @@ class TestMetadata:
 
 class TestMoveAndDelete:
     @pytest.fixture(autouse=True)
+    @condition.canokey(False)  # CanoKey PIV has no MOVE KEY instruction
     @condition.min_version(5, 7)
-    @condition.capability(CAPABILITY.OTP)  # Yubico only
     def preconditions(self):
         pass
 

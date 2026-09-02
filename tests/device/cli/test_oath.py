@@ -5,6 +5,7 @@ from base64 import b32encode
 
 import pytest
 from ykman.oath import STEAM_CHAR_TABLE
+from yubikit.canokey import CanoKeyFeature
 from yubikit.management import CAPABILITY
 
 from .. import condition
@@ -37,6 +38,7 @@ PASSWORD = "aaaa"
 
 @pytest.fixture(autouse=True)
 @condition.capability(CAPABILITY.OATH)
+@condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
 def preconditions(ykman_cli):
     ykman_cli("oath", "reset", "-f")
 
@@ -219,7 +221,7 @@ class TestOATH:
         assert 6 == len(code)
         int(code)
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 4)
     def test_oath_code_output(self, accounts_cli):
         accounts_cli("add", "TOTP:normal", "aaaa")
         accounts_cli("add", "--touch", "TOTP:touch", "aaab")
@@ -243,7 +245,7 @@ class TestOATH:
         assert 6 == len(code)
         int(code)
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 4)
     def test_oath_totp_steam_touch_not_in_code_output(self, accounts_cli):
         accounts_cli("add", "--touch", "Steam:steam-cred", "abba")
         accounts_cli("add", "TOTP:totp-cred", "abba")
@@ -262,12 +264,13 @@ class TestOATH:
         accounts_cli("delete", "😃", "-f")
 
     @condition.yk4_fips(False)
-    @condition.min_version(4, 3, 1)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 4, 3, 1)
     def test_oath_sha512(self, accounts_cli):
         accounts_cli("add", "abba", "abba", "--algorithm", "SHA512")
         accounts_cli("delete", "abba", "-f")
 
     # NEO credential capacity may vary based on configuration
+    @condition.canokey(False)  # CanoKey capacity is not a YubiKey version property
     @condition.min_version(4)
     def test_add_max_creds(self, accounts_cli, version):
         n_creds = 32 if version < (5, 7, 0) else 64
@@ -280,7 +283,7 @@ class TestOATH:
         with pytest.raises(SystemExit):
             accounts_cli("add", "testx", "abba")
 
-    @condition.min_version(5, 3, 1)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 5, 3, 1)
     def test_rename(self, accounts_cli):
         accounts_cli("uri", URI_TOTP_EXAMPLE)
         accounts_cli("rename", "john.doe", "Example:user@example.com", "-f")

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture()
-def ykman_cli(capsys, device, info):
+def ykman_cli(capsys, device, info, pytestconfig):
     def _ykman_cli(*argv, **kwargs):
         runner = CliRunner()
         with capsys.disabled():
@@ -23,6 +23,9 @@ def ykman_cli(capsys, device, info):
             raise result.exception  # ty:ignore[invalid-raise]
         return result
 
+    reader = pytestconfig.getoption("reader")
+    if reader:
+        return partial(_ykman_cli, "--reader", reader)
     if device.transport == TRANSPORT.NFC:
         return partial(_ykman_cli, "--reader", device.reader.name)
     elif info.serial is not None:

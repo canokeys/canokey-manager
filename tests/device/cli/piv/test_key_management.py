@@ -6,6 +6,7 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from yubikit.canokey import CanoKeyFeature
 from yubikit.core import NotSupportedError
 from yubikit.management import CAPABILITY
 
@@ -27,14 +28,14 @@ def generate_pem_eccp256_keypair():
     )
 
 
-def roca(version):
+def roca(version, info):
     """Not ROCA affected"""
-    return (4, 2, 0) <= version < (4, 3, 5)
+    return not condition.is_canokey(info) and (4, 2, 0) <= version < (4, 3, 5)
 
 
-def not_roca(version):
+def not_roca(version, info):
     """ROCA affected"""
-    return not roca(version)
+    return condition.is_canokey(info) or not ((4, 2, 0) <= version < (4, 3, 5))
 
 
 @pytest.fixture()
@@ -46,7 +47,7 @@ def tmp_file():
 
 
 class TestKeyExport:
-    @condition.min_version(5, 3)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_METADATA, 5, 3)
     def test_from_metadata(self, ykman_cli, keys):
         pair = generate_pem_eccp256_keypair()
 
@@ -63,7 +64,7 @@ class TestKeyExport:
         exported = ykman_cli("piv", "keys", "export", "9a", "-").stdout_bytes
         assert exported == pair[1]
 
-    @condition.min_version(4, 3)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_METADATA, 4, 3)
     def test_from_metadata_or_attestation(self, ykman_cli, keys):
         der = ykman_cli(
             "piv",
@@ -115,6 +116,7 @@ class TestKeyExport:
         assert public_key_pem == exported
 
     @condition.max_version(5, 2, 9)
+    @condition.canokey(False)  # CanoKey 2.0.0+ exports keys from metadata
     def test_from_cert_verify(self, ykman_cli, keys):
         private_key_pem, public_key_pem = generate_pem_eccp256_keypair()
         ykman_cli(
@@ -279,7 +281,7 @@ class TestKeyManagement:
             input=generate_pem_eccp256_keypair()[0],
         )
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_ECCP384, 4)
     def test_generate_key_eccp384(self, ykman_cli, keys):
         output = ykman_cli(
             "piv",
@@ -294,7 +296,7 @@ class TestKeyManagement:
         ).output
         assert "BEGIN PUBLIC KEY" in output
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_generate_key_pin_policy_always(self, ykman_cli, keys):
         output = ykman_cli(
             "piv",
@@ -311,7 +313,7 @@ class TestKeyManagement:
         ).output
         assert "BEGIN PUBLIC KEY" in output
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_import_key_pin_policy_always(self, ykman_cli, keys):
         for pin_policy in ["ALWAYS", "always"]:
             ykman_cli(
@@ -327,7 +329,7 @@ class TestKeyManagement:
                 input=generate_pem_eccp256_keypair()[0],
             )
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_generate_key_touch_policy_always(self, ykman_cli, keys):
         output = ykman_cli(
             "piv",
@@ -344,7 +346,7 @@ class TestKeyManagement:
         ).output
         assert "BEGIN PUBLIC KEY" in output
 
-    @condition.min_version(4)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_GENERATE_POLICIES, 4)
     def test_import_key_touch_policy_always(self, ykman_cli, keys):
         for touch_policy in ["ALWAYS", "always"]:
             ykman_cli(
@@ -360,6 +362,7 @@ class TestKeyManagement:
                 input=generate_pem_eccp256_keypair()[0],
             )
 
+    @condition.canokey(False)  # CanoKey attestation depends on provisioning
     @condition.min_version(4, 3)
     def test_attest_key(self, ykman_cli, keys):
         ykman_cli(
@@ -617,6 +620,7 @@ class TestKeyManagement:
             input=cert_pem,
         )
 
+    @condition.canokey(False)  # CanoKey attestation depends on provisioning
     @condition.min_version(4, 3)
     def test_export_attestation_certificate(self, ykman_cli):
         output = ykman_cli("piv", "certificates", "export", "f9", "-").output

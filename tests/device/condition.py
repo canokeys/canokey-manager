@@ -4,6 +4,7 @@ import pytest
 from makefun import wraps
 
 from yubikit.core import TRANSPORT
+from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
 from yubikit.management import CAPABILITY
 
 
@@ -80,6 +81,35 @@ def max_version(major, minor=0, micro=0):
     else:
         vers = (major, minor, micro)
     return check(lambda version: version <= vers, f"Version > {vers}")
+
+
+def min_version_or_canokey(canokey_feature: CanoKeyFeature, major, minor=0, micro=0):
+    """Use a YubiKey version gate or the independent CanoKey firmware matrix."""
+    if isinstance(major, tuple):
+        vers = major
+    else:
+        vers = (major, minor, micro)
+
+    return check(
+        lambda version, info: (
+            get_feature_status(info.version, canokey_feature)
+            != FeatureStatus.UNSUPPORTED
+            if is_canokey(info)
+            else version >= vers
+        ),
+        f"Requires YubiKey >= {vers} or CanoKey feature {canokey_feature.value}",
+    )
+
+
+def canokey_feature(feature: CanoKeyFeature):
+    """Require a CanoKey feature while leaving non-CanoKey devices unchanged."""
+    return check(
+        lambda info: (
+            not is_canokey(info)
+            or get_feature_status(info.version, feature) != FeatureStatus.UNSUPPORTED
+        ),
+        f"CanoKey firmware does not support {feature.value}",
+    )
 
 
 def yk4_fips(status=True):
