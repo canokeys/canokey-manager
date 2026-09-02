@@ -564,9 +564,7 @@ class _ManagementSmartCardBackend(_Backend):
     def try_canokey_admin(self):
         # CanoKey: read the real firmware version from the admin applet
         try:
-            self._canokey_admin = canokey.CanoKeyAdminSession(
-                self.protocol.connection
-            )
+            self._canokey_admin = canokey.CanoKeyAdminSession(self.protocol.connection)
             self.version = self._canokey_admin.read_version()
             self.is_cano = True
             logger.debug(f"CanoKey firmware version={self.version}")
@@ -589,14 +587,19 @@ class _ManagementSmartCardBackend(_Backend):
     def write_config(self, config):
         self.protocol.send_apdu(0, INS_WRITE_CONFIG, 0, 0, config)
 
+    def _get_canokey_admin(self) -> canokey.CanoKeyAdminSession:
+        if self._canokey_admin is None:
+            raise NotSupportedError("CanoKey admin applet is not active")
+        return self._canokey_admin
+
     def read_serial(self):
-        return self._canokey_admin.read_serial()
+        return self._get_canokey_admin().read_serial()
 
     def read_product_string(self):
-        return self._canokey_admin.read_product_string()
+        return self._get_canokey_admin().read_product_string()
 
     def read_nfc_enable(self):
-        return self._canokey_admin.read_nfc_enable()
+        return self._get_canokey_admin().read_nfc_enable()
 
     def device_reset(self):
         self.protocol.send_apdu(0, INS_DEVICE_RESET, 0, 0)
@@ -678,6 +681,9 @@ class ManagementSession:
         return self.backend.version
 
     def build_device_info(self) -> DeviceInfo:
+        if not isinstance(self.backend, _ManagementSmartCardBackend):
+            raise NotSupportedError("CanoKey device info requires a smart card session")
+        backend = self.backend
         capabilities = (
             CAPABILITY.U2F
             | CAPABILITY.FIDO2
@@ -685,7 +691,7 @@ class ManagementSession:
             | CAPABILITY.OPENPGP
             | CAPABILITY.OATH
         )
-        name = self.backend.read_product_string()
+        name = backend.read_product_string()
         info = DeviceInfo(
             config=DeviceConfig(
                 enabled_capabilities={
@@ -696,7 +702,7 @@ class ManagementSession:
                 challenge_response_timeout=0,
                 device_flags=DEVICE_FLAG(0),
             ),
-            serial=self.backend.read_serial(),
+            serial=backend.read_serial(),
             version=self.version,
             form_factor=FORM_FACTOR.from_str(name),
             supported_capabilities={
@@ -707,7 +713,7 @@ class ManagementSession:
             version_qualifier=VersionQualifier(self.version, RELEASE_TYPE.FINAL, 0),
         )
         try:
-            is_nfc_en = self.backend.read_nfc_enable()
+            is_nfc_en = backend.read_nfc_enable()
             logger.debug(f"is_nfc_en={is_nfc_en}")
             if not is_nfc_en:
                 info.config.enabled_capabilities[TRANSPORT.NFC] = CAPABILITY(0)

@@ -173,9 +173,9 @@ def test_oath_reset_falls_back_to_admin():
     from yubikit.oath import OathSession
 
     select_oath = bytes([0, 0xA4, 0x04, 0, 7]) + bytes.fromhex("A0000005272101")
-    oath_select_resp = bytes.fromhex("7903") + b"\x05\x05\x05" + bytes.fromhex(
-        "7108"
-    ) + b"12345678"
+    oath_select_resp = (
+        bytes.fromhex("7903") + b"\x05\x05\x05" + bytes.fromhex("7108") + b"12345678"
+    )
     # The fork's OATH chaining workaround sends INS_SEND_REMAINING (0xA5)
     # after every successful APDU; the card answers 6985 when done.
     a5_done = (bytes([0, 0xA5, 0, 0]), (b"", 0x6985))

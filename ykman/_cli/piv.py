@@ -538,8 +538,10 @@ def change_management_key(
     # the management key on-device is impossible; reject before setting a
     # (possibly random) new key that we could not store nor recover.
     if protect and canokey.is_canokey(session.protocol.connection):
-        raise CliFail("Storing the management key on device (--protect) "
-                      "is not supported on CanoKey.")
+        raise CliFail(
+            "Storing the management key on device (--protect) "
+            "is not supported on CanoKey."
+        )
 
     pin_verified = _ensure_authenticated(
         ctx,

@@ -57,6 +57,7 @@ jobs:
             libpcsclite-dev \
             linux-tools-common \
             ninja-build \
+            openssl \
             pcsc-tools \
             pcscd \
             pkg-config \
@@ -208,10 +209,9 @@ jobs:
             exit 1
           fi
 
+      # This job covers read-only applet smoke plus PIV and OATH lifecycles.
       # Follow-up stages, intentionally not implemented here:
       # Stage 2: oldest/latest/core-master firmware smoke matrix.
-      # Stage 3: fresh-device PIV reset/generate/certificate/info/export lifecycle.
-      # Stage 4: fresh-device OATH add/list/calculate/delete lifecycle.
       # Stage 5: destructive OpenPGP lifecycle coverage.
       - name: Run ckman against a virtual CanoKey
         shell: bash

@@ -55,10 +55,7 @@ _YKMAN_NO_EXCLUSIVE = "YKMAN_NO_EXLUSIVE"
 
 # Figure out what the PID should be based on the reader name
 def _pid_from_name(name):
-    if (
-        YK_READER_NAME not in name.lower()
-        and CK_READER_NAME not in name.lower()
-    ):
+    if YK_READER_NAME not in name.lower() and CK_READER_NAME not in name.lower():
         return None
 
     interfaces = USB_INTERFACE(0)

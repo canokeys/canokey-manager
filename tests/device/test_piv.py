@@ -739,9 +739,7 @@ class TestMetadata:
         assert data.touch_policy is TOUCH_POLICY.NEVER
 
         session.authenticate(DEFAULT_MANAGEMENT_KEY)
-        session.set_management_key(
-            MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY
-        )
+        session.set_management_key(MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY)
         assert session.management_key_type == MANAGEMENT_KEY_TYPE.TDES
 
         data = session.get_management_key_metadata()

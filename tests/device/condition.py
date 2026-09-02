@@ -91,10 +91,13 @@ def yk4_fips(status=True):
 
 def is_canokey(info) -> bool:
     """CanoKey devices are identified by the lack of the OTP application."""
-    return CAPABILITY.OTP not in (
-        info.supported_capabilities.get(TRANSPORT.USB) or 0
+    capabilities = CAPABILITY(
+        info.supported_capabilities.get(TRANSPORT.USB) or CAPABILITY(0)
     )
+    return not bool(capabilities & CAPABILITY.OTP)
 
 
 def canokey(status=True):
-    return check(lambda info: status == is_canokey(info), f"Requires CanoKey = {status}")
+    return check(
+        lambda info: status == is_canokey(info), f"Requires CanoKey = {status}"
+    )
