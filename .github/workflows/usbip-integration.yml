@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: 68d8fd8d9b7bfe1e969497c8c9926ee74db73045
+  CANOKEY_USBIP_SHA: 0a13feb59fc35b4008813f5aea25366ce65c8458
   CANOKEY_CORE_ID: 3.0.1
   CANOKEY_CORE_REF: 69e562bcb07eedda015aae6064870c8548571e2b
 
@@ -264,6 +264,9 @@ jobs:
           set +e
           external/canokey-usbip/compat/run \
             --core-ref "$CANOKEY_CORE_REF" \
+            --require usb \
+            --require ccid \
+            --require pcsc \
             --test-command "./tests/integration/usbip/smoke.sh" \
             --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
           run_status=$?
