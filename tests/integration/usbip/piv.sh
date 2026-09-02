@@ -19,9 +19,15 @@ capture_without_secrets \
 echo "PIV reset complete."
 
 section "ckman piv access set-retries"
-unsupported_feature \
+run_versioned_feature \
   "ckman piv access set-retries" \
-  "CanoKey does not implement PIV retry counter configuration."
+  "piv-set-retries" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" piv access set-retries \
+  --management-key "$PIV_DEFAULT_MANAGEMENT_KEY" \
+  --pin "$PIV_DEFAULT_PIN" \
+  --force \
+  3 3
 
 section "ckman piv access change-pin"
 "${CKMAN[@]}" piv access change-pin \

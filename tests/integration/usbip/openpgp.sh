@@ -21,9 +21,14 @@ section "ckman openpgp info"
 "${CKMAN[@]}" openpgp info
 
 section "ckman openpgp access set-retries"
-unsupported_feature \
+run_versioned_feature \
   "ckman openpgp access set-retries" \
-  "CanoKey does not implement OpenPGP SET PIN RETRIES."
+  "openpgp-set-retries" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" openpgp access set-retries \
+  --admin-pin "$OPENPGP_DEFAULT_ADMIN_PIN" \
+  --force \
+  5 5 5
 
 section "ckman openpgp access change-pin"
 "${CKMAN[@]}" openpgp access change-pin \

@@ -11,8 +11,11 @@ all versions, CTAP from 3.0.0) behind its own PIN (default "123456").
 """
 
 import logging
+import re
+from dataclasses import dataclass
+from enum import Enum
 
-from .core import PID, CommandError, NotSupportedError, Version
+from .core import PID, BadResponseError, CommandError, NotSupportedError, Version
 from .core.smartcard import SW, ApduError, SmartCardProtocol
 
 logger = logging.getLogger(__name__)
@@ -40,8 +43,138 @@ INS_FACTORY_RESET = 0x50
 
 DEFAULT_ADMIN_PIN = "123456"
 
-# Firmware 3.0.0 added Reset CTAP and NFC enable
-_VERSION_CTAP_RESET = (3, 0, 0)
+_FIRMWARE_VERSION_PATTERN = re.compile(
+    r"^v?(?P<major>\d+)\.(?P<minor>\d+)"
+    r"(?:\.(?P<patch>\d+))?"
+    r"(?:[-+][0-9A-Za-z][0-9A-Za-z.+-]*)?$"
+)
+
+
+class CanoKeyFeature(str, Enum):
+    """Host-visible features whose support depends on CanoKey firmware."""
+
+    OATH_MODERN_COMMANDS = "oath-modern-commands"
+    OPENPGP_ALGORITHM_INFORMATION = "openpgp-algorithm-information"
+    PIV_METADATA = "piv-metadata"
+    PIV_EXTENDED_ALGORITHMS = "piv-extended-algorithms"
+    CTAP_RESET = "ctap-reset"
+    PIV_STANDARD_ALGORITHM_IDS = "piv-standard-algorithm-ids"
+    NFC_STATUS_WITHOUT_PIN = "nfc-status-without-pin"
+    PIV_ED25519_X25519_FIXES = "piv-ed25519-x25519-fixes"
+    OATH_RESPONSE_CHAINING_FIX = "oath-response-chaining-fix"
+    PIV_SET_RETRIES = "piv-set-retries"
+    OPENPGP_SET_RETRIES = "openpgp-set-retries"
+
+
+class FeatureStatus(str, Enum):
+    """Support state for a feature at a particular firmware version."""
+
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class FirmwareRange:
+    """Inclusive firmware interval where a feature is supported."""
+
+    minimum: Version
+    maximum: Version | None = None
+
+    def contains(self, version: Version) -> bool:
+        return version >= self.minimum and (
+            self.maximum is None or version <= self.maximum
+        )
+
+
+@dataclass(frozen=True)
+class FeatureRule:
+    """Known support ranges and the newest firmware audited for a feature."""
+
+    supported: tuple[FirmwareRange, ...]
+    known_through: Version
+
+
+CATALOG_VERSIONS = (
+    Version(1, 3, 0),
+    Version(1, 5, 2),
+    Version(1, 6, 1),
+    Version(1, 6, 2),
+    Version(2, 0, 0),
+    Version(2, 0, 1),
+    Version(3, 0, 0),
+    Version(3, 0, 1),
+)
+CATALOG_LATEST_VERSION = CATALOG_VERSIONS[-1]
+
+# This is the single source of truth for firmware-dependent CanoKey behavior.
+# Hardware provisioning state, such as the presence of attestation material, is
+# intentionally not listed here and must be detected with a runtime probe.
+FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
+    CanoKeyFeature.OATH_MODERN_COMMANDS: FeatureRule(
+        (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION: FeatureRule(
+        (FirmwareRange(Version(1, 6, 1)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_METADATA: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_EXTENDED_ALGORITHMS: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.CTAP_RESET: FeatureRule(
+        (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_STANDARD_ALGORITHM_IDS: FeatureRule(
+        (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.NFC_STATUS_WITHOUT_PIN: FeatureRule(
+        (FirmwareRange(Version(3, 0, 1)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_ED25519_X25519_FIXES: FeatureRule(
+        (FirmwareRange(Version(3, 0, 1)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX: FeatureRule(
+        (FirmwareRange(Version(3, 0, 1)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.OPENPGP_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
+}
+
+
+def parse_firmware_version(value: str) -> Version:
+    """Parse a CanoKey admin firmware version without accepting arbitrary text."""
+    match = _FIRMWARE_VERSION_PATTERN.fullmatch(value.strip())
+    if not match:
+        raise ValueError(f"Invalid CanoKey firmware version: {value!r}")
+    return Version(
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(match.group("patch") or 0),
+    )
+
+
+def get_feature_status(version: Version, feature: CanoKeyFeature) -> FeatureStatus:
+    """Return the audited support status for a firmware-dependent feature."""
+    rule = FEATURE_MATRIX[feature]
+    if any(version_range.contains(version) for version_range in rule.supported):
+        return FeatureStatus.SUPPORTED
+    if version <= rule.known_through:
+        return FeatureStatus.UNSUPPORTED
+    return FeatureStatus.UNKNOWN
+
+
+def require_feature(version: Version, feature: CanoKeyFeature) -> None:
+    """Reject a feature known to be unavailable on the given firmware.
+
+    Unknown newer firmware is allowed to continue so the protocol operation can
+    probe support at runtime.
+    """
+    if get_feature_status(version, feature) == FeatureStatus.UNSUPPORTED:
+        raise NotSupportedError(
+            f"{feature.value} is not supported by CanoKey firmware {version}"
+        )
 
 
 def is_canokey(connection) -> bool:
@@ -90,9 +223,13 @@ class CanoKeyAdminSession:
 
     def read_version(self) -> Version:
         """Read the CanoKey firmware version."""
-        return Version.from_string(
-            self.protocol.send_apdu(0, INS_READ_VERSION, 0, 0, le=0x20).decode()
-        )
+        raw_version = self.protocol.send_apdu(0, INS_READ_VERSION, 0, 0, le=0x20)
+        try:
+            return parse_firmware_version(raw_version.decode("ascii"))
+        except (UnicodeDecodeError, ValueError) as e:
+            raise BadResponseError(
+                f"Invalid CanoKey admin firmware version: {raw_version.hex()}"
+            ) from e
 
     def read_product_string(self) -> str:
         """Read the hardware variant string."""
@@ -105,6 +242,7 @@ class CanoKeyAdminSession:
 
     def read_nfc_enable(self) -> bool:
         """Read whether NFC is enabled (firmware 3.0.0+)."""
+        require_feature(self.read_version(), CanoKeyFeature.NFC_STATUS_WITHOUT_PIN)
         data = self.protocol.send_apdu(0, INS_NFC_ENABLE, 0, 0, le=1)
         return data != b"\0"
 
@@ -153,6 +291,5 @@ class CanoKeyAdminSession:
 
     def reset_ctap(self) -> None:
         """Factory reset the CTAP (FIDO) applet. Requires firmware 3.0.0+."""
-        if self.read_version() < _VERSION_CTAP_RESET:
-            raise NotSupportedError("CTAP reset requires CanoKey firmware 3.0.0+")
+        require_feature(self.read_version(), CanoKeyFeature.CTAP_RESET)
         self._reset_applet(INS_RESET_CTAP, "CTAP")

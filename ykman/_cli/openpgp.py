@@ -30,6 +30,7 @@ from enum import IntEnum
 
 import click
 
+from yubikit import canokey
 from yubikit.core import TRANSPORT
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import CAPABILITY
@@ -195,6 +196,11 @@ def set_pin_retries(
     Set the number of retry attempts for the User PIN, Reset Code, and Admin PIN.
     """
     session = ctx.obj["session"]
+    if canokey.is_canokey(session.protocol.connection):
+        canokey.require_feature(
+            ctx.obj["info"].version,
+            canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
+        )
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)

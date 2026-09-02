@@ -8,6 +8,14 @@ OATH_SECRET="JBSWY3DPEHPK3PXP"
 OATH_PASSWORD="usbip-oath-password"
 OATH_NEW_PASSWORD="usbip-oath-password-2"
 
+if [[ "$(firmware_feature_status oath-modern-commands)" == "unsupported" ]]; then
+  section "ckman oath command lifecycle"
+  unsupported_feature \
+    "the modern ckman OATH command lifecycle" \
+    "Firmware before 1.5.2 uses the legacy CanoKey OATH instruction set."
+  exit 0
+fi
+
 section "ckman oath reset"
 "${CKMAN[@]}" oath reset --force
 

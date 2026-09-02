@@ -23,9 +23,18 @@ resets the applet at the end.
 
 The test follows the upstream device-test model: known device exclusions are
 reported before execution, and discoverable capabilities are probed before a
-dependent command runs. CanoKey core ID/ref, rather than an applet protocol
-version, identifies the tested firmware. Unsupported features are reported and
-do not stop the rest of the lifecycle. Ordinary command failures remain fatal.
+dependent command runs. The CanoKey admin applet firmware version, rather than
+a core ref or an applet protocol version, selects the feature rules. The test
+also requires that the admin version matches `CANOKEY_FIRMWARE_VERSION` from
+`canokey-usbip`. Unsupported features are reported and do not stop the rest of
+the lifecycle. Ordinary command failures remain fatal.
+
+Feature rules have three states. Supported commands must succeed, known
+unsupported commands are reported without execution, and unknown newer
+firmware is probed at runtime. A runtime rejection is accepted only when it
+matches the feature's explicit unsupported error. Hardware provisioning state,
+including attestation certificates and preinstalled keys, is always probed at
+runtime rather than inferred from firmware.
 
 - PIV retry counter configuration and attestation
 - OpenPGP retry counter configuration

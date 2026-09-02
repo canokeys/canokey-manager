@@ -43,7 +43,6 @@ from .core import (
     USB_INTERFACE,
     ApplicationNotAvailableError,
     BadResponseError,
-    CommandError,
     NotSupportedError,
     Tlv,
     Version,
@@ -565,12 +564,12 @@ class _ManagementSmartCardBackend(_Backend):
         # CanoKey: read the real firmware version from the admin applet
         try:
             self._canokey_admin = canokey.CanoKeyAdminSession(self.protocol.connection)
-            self.version = self._canokey_admin.read_version()
-            self.is_cano = True
-            logger.debug(f"CanoKey firmware version={self.version}")
-            return True
-        except CommandError:
+        except ApplicationNotAvailableError:
             return False
+        self.version = self._canokey_admin.read_version()
+        self.is_cano = True
+        logger.debug(f"CanoKey firmware version={self.version}")
+        return True
 
     def close(self):
         self.protocol.close()

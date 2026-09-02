@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${CANOKEY_USBIP:?This test must run under canokey-usbip}"
 : "${CANOKEY_PCSC_READER:?canokey-usbip did not expose a PC/SC reader}"
+: "${CANOKEY_FIRMWARE_VERSION:?canokey-usbip did not expose a firmware version}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 work_dir="$(mktemp -d)"
@@ -17,7 +18,30 @@ export PYTHON_KEYRING_BACKEND="tests.integration.usbip.keyring_backend.Keyring"
 source "$script_dir/lib.sh"
 
 section "ckman info"
-"${CKMAN[@]}" info
+device_info="$("${CKMAN[@]}" info)"
+printf '%s\n' "$device_info"
+
+export CANOKEY_FIRMWARE_VERSION_NORMALIZED
+CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
+  uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_VERSION"
+)"
+reported_firmware="$(
+  sed -n 's/^Firmware version:[[:space:]]*//p' <<<"$device_info"
+)"
+if [[ "$reported_firmware" != "$CANOKEY_FIRMWARE_VERSION_NORMALIZED" ]]; then
+  echo "ERROR: admin applet reported firmware ${reported_firmware:-missing}, but canokey-usbip selected ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+  exit 1
+fi
+if [[ -n "${CANOKEY_FIRMWARE_ID:-}" ]]; then
+  workflow_firmware="$(
+    uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_ID"
+  )"
+  if [[ "$reported_firmware" != "$workflow_firmware" ]]; then
+    echo "ERROR: workflow expected firmware ${workflow_firmware}, but the device reported ${reported_firmware}" >&2
+    exit 1
+  fi
+fi
+echo "CanoKey firmware identity verified: ${reported_firmware}."
 
 section "ckman apdu"
 apdu_output="$("${CKMAN[@]}" apdu --app openpgp --no-pretty 84/08=)"

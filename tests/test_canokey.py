@@ -4,16 +4,24 @@ import pytest
 from yubikit import canokey
 from yubikit.canokey import (
     ADMIN_AID,
+    CATALOG_LATEST_VERSION,
+    CATALOG_VERSIONS,
+    FEATURE_MATRIX,
     INS_READ_VERSION,
     INS_RESET_CTAP,
     INS_RESET_OATH,
     INS_VERIFY,
     AdminPinError,
     AdminPinRequired,
+    CanoKeyFeature,
     CanoKeyAdminSession,
+    FeatureStatus,
+    get_feature_status,
+    parse_firmware_version,
 )
-from yubikit.core import PID, TRANSPORT, NotSupportedError, Version
+from yubikit.core import PID, TRANSPORT, BadResponseError, NotSupportedError, Version
 from yubikit.core.smartcard import SmartCardConnection
+from yubikit.management import ManagementSession
 
 
 class FakeConnection(SmartCardConnection):
@@ -67,16 +75,132 @@ def test_is_canokey_negative():
     assert not canokey.is_canokey(FakeConnection(pid=None, atr=b"\x3b\x00"))
 
 
-def test_read_version():
+@pytest.mark.parametrize(
+    ("encoded", "expected"),
+    [
+        (b"1.3", Version(1, 3, 0)),
+        (b"2.0.1", Version(2, 0, 1)),
+        (b"3.0.3-437-ge1ee371-O", Version(3, 0, 3)),
+        (b"v3.0.1+usbip", Version(3, 0, 1)),
+    ],
+)
+def test_read_version(encoded, expected):
     conn = FakeConnection(
         [
             (select_apdu(), (b"", 0x9000)),
-            (bytes([0, INS_READ_VERSION, 0, 0]), (b"2.0.1", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (encoded, 0x9000)),
         ],
         pid=PID.CK_FIDO_CCID,
     )
     session = CanoKeyAdminSession(conn)
-    assert session.read_version() == Version(2, 0, 1)
+    assert session.read_version() == expected
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        b"69e562bcb07eedda015aae6064870c8548571e2b",
+        b"release 3.0.1",
+        b"\xff\xfe",
+    ],
+)
+def test_read_version_rejects_non_firmware_values(encoded):
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (encoded, 0x9000)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    with pytest.raises(BadResponseError):
+        CanoKeyAdminSession(conn).read_version()
+
+
+def test_parse_firmware_version_normalizes_catalog_short_version():
+    assert parse_firmware_version("1.3") == Version(1, 3, 0)
+
+
+@pytest.mark.parametrize(
+    ("feature", "version", "expected"),
+    [
+        (
+            CanoKeyFeature.OATH_MODERN_COMMANDS,
+            Version(1, 3, 0),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_MODERN_COMMANDS,
+            Version(1, 5, 2),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+            Version(1, 5, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+            Version(1, 6, 1),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_METADATA,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.CTAP_RESET,
+            Version(2, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.CTAP_RESET,
+            Version(3, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_SET_RETRIES,
+            Version(3, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_SET_RETRIES,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
+    ],
+)
+def test_firmware_feature_matrix(feature, version, expected):
+    assert get_feature_status(version, feature) == expected
+
+
+def test_every_feature_has_an_audited_rule():
+    assert set(FEATURE_MATRIX) == set(CanoKeyFeature)
+    assert all(
+        rule.known_through == CATALOG_LATEST_VERSION for rule in FEATURE_MATRIX.values()
+    )
+
+
+def test_catalog_versions_are_ordered_and_unique():
+    assert tuple(sorted(set(CATALOG_VERSIONS))) == CATALOG_VERSIONS
+
+
+def test_management_does_not_hide_invalid_canokey_firmware_version():
+    management_aid = bytes.fromhex("A000000527471117")
+    select_management = bytes([0, 0xA4, 0x04, 0, len(management_aid)]) + management_aid
+    conn = FakeConnection(
+        [
+            (select_management, (b"", 0x6A82)),
+            (select_apdu(), (b"", 0x9000)),
+            (
+                bytes([0, INS_READ_VERSION, 0, 0]),
+                (b"69e562bcb07eedda015aae6064870c8548571e2b", 0x9000),
+            ),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    with pytest.raises(BadResponseError):
+        ManagementSession(conn)
 
 
 def test_reset_oath_verifies_default_pin():

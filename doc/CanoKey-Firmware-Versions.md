@@ -2,9 +2,14 @@
 
 Reference for ckman (yubikey-manager fork) development. Only **host-visible protocol changes** are recorded: instructions, APDU/SW behavior, TLV formats, reported version numbers, algorithms, applet additions/removals, and USB enumeration. Internal refactors, build system, and test-only changes are omitted.
 
-The version set matches `canokey-usbip` commit `68d8fd8d9b7bfe1e969497c8c9926ee74db73045`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
+The version set matches `canokey-usbip` commit `04e66e407f28f80c030f23e5eca241cf410b6409`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
 
 Device information (firmware version, serial number) must always be read through the **admin applet**. No other channel is reliable across versions; do not add dependencies on any other applet for device identification.
+
+The exact core commit selects a reproducible firmware build, but it is not a
+feature-version API. `ckman` feature decisions use the admin applet firmware
+version. USB/IP tests assert that the admin version matches the firmware ID
+mapped from the exact core commit before executing any lifecycle command.
 
 ## Milestones (quick reference)
 
@@ -90,3 +95,18 @@ Device information (firmware version, serial number) must always be read through
 - **PIV algorithms**: RSA1024 never exists. Extended algorithms on 2.0.x need admin config (40h, P1=07h) and use custom IDs; 3.0.0+ enables them by default with standard IDs.
 - **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
 - **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
+
+## ckman feature matrix
+
+The executable matrix is maintained in `yubikit/canokey.py`. Each rule records
+supported inclusive firmware ranges and the newest audited catalog firmware.
+The resulting states match the upstream device-test model:
+
+- **supported**: the command must succeed; failure is fatal.
+- **unsupported**: report the firmware-specific reason and continue.
+- **unknown**: probe the command and accept only its explicit unsupported error.
+
+Applet-reported PIV, OATH, and OpenPGP protocol versions are synthetic and must
+not be used to select these rules. Provisioning-dependent state such as an
+attestation certificate or preinstalled key is not a firmware feature and must
+always be probed at runtime.

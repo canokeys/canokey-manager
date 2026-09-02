@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: 0a13feb59fc35b4008813f5aea25366ce65c8458
-  CANOKEY_CORE_ID: 3.0.1
+  CANOKEY_USBIP_SHA: 04e66e407f28f80c030f23e5eca241cf410b6409
+  CANOKEY_FIRMWARE_ID: 3.0.1
   CANOKEY_CORE_REF: 69e562bcb07eedda015aae6064870c8548571e2b
 
 jobs:
   smoke:
-    name: Ubuntu 24.04 / core 3.0.1
+    name: Ubuntu 24.04 / firmware 3.0.1
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -323,7 +323,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ckman-usbip-ubuntu24-core-${{ env.CANOKEY_CORE_ID }}
+          name: ckman-usbip-ubuntu24-firmware-${{ env.CANOKEY_FIRMWARE_ID }}
           path: |
             ${{ runner.temp }}/canokey-usbip-artifacts/preflight.log
             ${{ runner.temp }}/canokey-usbip-artifacts/metadata.json
