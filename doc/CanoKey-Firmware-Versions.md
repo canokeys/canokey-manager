@@ -98,6 +98,13 @@ mapped from the exact core commit before executing any lifecycle command.
 - **PIV algorithms**: RSA1024 never exists. Extended algorithms on 2.0.x need admin config (40h, P1=07h) and use custom IDs; 3.0.0+ enables them by default with standard IDs.
 - **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
 - **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
+- **OpenPGP attestation**: the YubiKey-specific attestation key, certificate,
+  and GET_ATTESTATION command are unavailable in every cataloged firmware
+  through 3.0.1. Standard `sig`, `dec`, and `aut` key metadata, UIF, and
+  certificate objects remain supported and must be tested independently.
+- **OpenPGP certificate selection**: CanoKey numbers SELECT DATA certificate
+  occurrences as `sig=0`, `dec=1`, `aut=2`; YubiKey uses the reverse order.
+  This is consistent across all cataloged CanoKey firmware.
 
 ## ckman feature matrix
 

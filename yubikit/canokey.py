@@ -69,6 +69,7 @@ class CanoKeyFeature(str, Enum):
     OPENPGP_SET_RETRIES = "openpgp-set-retries"
     OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
     OPENPGP_ECDSA_P384_SIGNING = "openpgp-ecdsa-p384-signing"
+    OPENPGP_ATTESTATION = "openpgp-attestation"
 
 
 class FeatureStatus(str, Enum):
@@ -158,6 +159,7 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
         (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
     ),
     CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.OPENPGP_ATTESTATION: FeatureRule((), CATALOG_LATEST_VERSION),
 }
 
 

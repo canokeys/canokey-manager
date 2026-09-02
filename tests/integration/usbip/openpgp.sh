@@ -57,79 +57,68 @@ section "ckman openpgp access set-signature-policy"
 openpgp_info="$("${CKMAN[@]}" openpgp info)"
 grep -Fq "Require PIN for signature:  Once" <<<"$openpgp_info"
 
-section "Generate OpenPGP attestation fixtures"
+section "Generate OpenPGP test fixtures"
 openssl genpkey \
   -algorithm RSA \
   -pkeyopt rsa_keygen_bits:2048 \
-  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-private.pem" \
+  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-test-private.pem" \
   2>/dev/null
 openssl req \
   -new \
   -x509 \
-  -key "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-private.pem" \
-  -subj "/CN=ckman USB-IP OpenPGP attestation" \
+  -key "$CANOKEY_USBIP_WORK_DIR/openpgp-test-private.pem" \
+  -subj "/CN=ckman USB-IP OpenPGP certificate" \
   -days 1 \
-  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-certificate.pem" \
+  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem" \
   2>/dev/null
 
-section "ckman openpgp keys import"
-probe_feature \
-  "OpenPGP attestation key import" \
-  "failed to import attestation key" \
-  "${CKMAN[@]}" openpgp keys import \
+section "Provision OpenPGP signing key"
+CKMAN_TEST_OPENPGP_ADMIN_PIN="$OPENPGP_ADMIN_PIN" \
+  uv run python "$script_dir/seed-openpgp-key.py" "$CANOKEY_PCSC_READER"
+
+section "ckman openpgp keys info"
+"${CKMAN[@]}" openpgp keys info sig
+
+section "ckman openpgp keys set-touch"
+"${CKMAN[@]}" openpgp keys set-touch \
   --admin-pin "$OPENPGP_ADMIN_PIN" \
-  att "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-private.pem"
-
-if [[ "$FEATURE_AVAILABLE" == true ]]; then
-  section "ckman openpgp keys info"
-  "${CKMAN[@]}" openpgp keys info att
-
-  section "ckman openpgp keys set-touch"
-  probe_feature \
-    "OpenPGP attestation touch policy" \
-    "touch policy not allowed|failed to set touch policy" \
-    "${CKMAN[@]}" openpgp keys set-touch \
-    --admin-pin "$OPENPGP_ADMIN_PIN" \
-    --force \
-    att off
-
-fi
+  --force \
+  sig off
 
 section "ckman openpgp certificates import"
-probe_feature \
-  "OpenPGP attestation certificate storage" \
-  "failed to import certificate" \
-  "${CKMAN[@]}" openpgp certificates import \
+"${CKMAN[@]}" openpgp certificates import \
   --admin-pin "$OPENPGP_ADMIN_PIN" \
-  att "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-certificate.pem"
+  sig "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem"
 
-if [[ "$FEATURE_AVAILABLE" == true ]]; then
-  section "ckman openpgp certificates export"
-  "${CKMAN[@]}" openpgp certificates export \
-    att "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem"
-  openssl x509 \
-    -in "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-certificate.pem" \
-    -outform DER \
-    -out "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-certificate.der"
-  openssl x509 \
-    -in "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem" \
-    -outform DER \
-    -out "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
-  cmp \
-    "$CANOKEY_USBIP_WORK_DIR/openpgp-attestation-certificate.der" \
-    "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
+section "ckman openpgp certificates export"
+"${CKMAN[@]}" openpgp certificates export \
+  sig "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem" \
+  -outform DER \
+  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.der"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem" \
+  -outform DER \
+  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
+cmp \
+  "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.der" \
+  "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
 
-  section "ckman openpgp certificates delete"
-  "${CKMAN[@]}" openpgp certificates delete \
-    --admin-pin "$OPENPGP_ADMIN_PIN" \
-    att
-fi
+section "ckman openpgp certificates delete"
+"${CKMAN[@]}" openpgp certificates delete \
+  --admin-pin "$OPENPGP_ADMIN_PIN" \
+  sig
 
-section "Probe OpenPGP signing key"
-probe_feature \
-  "OpenPGP signing key" \
-  "no key stored in slot sig" \
-  "${CKMAN[@]}" openpgp keys info sig
+section "ckman openpgp keys import attestation key"
+run_versioned_feature \
+  "ckman openpgp keys import attestation key" \
+  "openpgp-attestation" \
+  "not supported|failed to import attestation key" \
+  "${CKMAN[@]}" openpgp keys import \
+  --admin-pin "$OPENPGP_ADMIN_PIN" \
+  att "$CANOKEY_USBIP_WORK_DIR/openpgp-test-private.pem"
+
 if [[ "$FEATURE_AVAILABLE" == true ]]; then
   section "ckman openpgp keys attest"
   "${CKMAN[@]}" openpgp keys attest \
@@ -138,7 +127,7 @@ if [[ "$FEATURE_AVAILABLE" == true ]]; then
 else
   unsupported_feature \
     "ckman openpgp keys attest" \
-    "No signing key is provisioned by this firmware."
+    "The firmware feature matrix marks openpgp-attestation as unavailable."
 fi
 
 section "ckman openpgp reset after lifecycle"

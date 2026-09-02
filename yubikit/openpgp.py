@@ -1655,10 +1655,15 @@ class OpenPgpSession:
             if self.version <= (5, 4, 3):
                 # These use a non-standard byte in the command.
                 data = b"\x06" + data  # 6 is the length of the data.
+            occurrence = (
+                key_ref - 1
+                if canokey.is_canokey(self.protocol.connection)
+                else 3 - key_ref
+            )
             self.protocol.send_apdu(
                 0,
                 INS.SELECT_DATA,
-                3 - key_ref,
+                occurrence,
                 0x04,
                 data,
             )

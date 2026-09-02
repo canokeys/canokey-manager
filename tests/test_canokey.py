@@ -24,7 +24,7 @@ from yubikit.canokey import (
 from yubikit.core import PID, TRANSPORT, BadResponseError, NotSupportedError, Version
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import ManagementSession
-from yubikit.openpgp import OpenPgpSession
+from yubikit.openpgp import KEY_REF, OpenPgpSession
 
 
 class FakeConnection(SmartCardConnection):
@@ -113,6 +113,34 @@ def test_openpgp_version_read_propagates_unexpected_error():
     session.protocol = cast(Any, Protocol())
     with pytest.raises(ApduError):
         session._read_version()
+
+
+@pytest.mark.parametrize(
+    ("connection", "key_ref", "expected_occurrence"),
+    [
+        (FakeConnection(pid=PID.CK_FIDO_CCID), KEY_REF.SIG, 0),
+        (FakeConnection(pid=PID.CK_FIDO_CCID), KEY_REF.DEC, 1),
+        (FakeConnection(pid=PID.CK_FIDO_CCID), KEY_REF.AUT, 2),
+        (FakeConnection(), KEY_REF.SIG, 2),
+        (FakeConnection(), KEY_REF.DEC, 1),
+        (FakeConnection(), KEY_REF.AUT, 0),
+    ],
+)
+def test_openpgp_certificate_occurrence(connection, key_ref, expected_occurrence):
+    class Protocol:
+        def __init__(self):
+            self.connection = connection
+            self.sent = []
+
+        def send_apdu(self, *args):
+            self.sent.append(args)
+
+    protocol = Protocol()
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, protocol)
+    session._version = Version(5, 5, 5)
+    session._select_certificate(key_ref)
+    assert protocol.sent[0][2] == expected_occurrence
 
 
 @pytest.mark.parametrize(
@@ -247,6 +275,16 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING,
             Version(3, 0, 1),
             FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_ATTESTATION,
+            Version(3, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_ATTESTATION,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
         ),
     ],
 )

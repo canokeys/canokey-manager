@@ -77,6 +77,15 @@ def _fname(fobj):
     return getattr(fobj, "name", fobj)
 
 
+def _require_canokey_feature(ctx, feature):
+    session = ctx.obj["session"]
+    if canokey.is_canokey(session.protocol.connection):
+        try:
+            canokey.require_feature(ctx.obj["info"].version, feature)
+        except NotSupportedError as e:
+            raise CliFail(str(e))
+
+
 @click_group(connections=[SmartCardConnection])
 @click.pass_context
 @click_postpone_execution
@@ -468,6 +477,8 @@ def set_touch(ctx, key, policy, admin_pin, force):
     POLICY         touch policy to set (on, off, fixed, cached or cached-fixed)
     """
     session = ctx.obj["session"]
+    if key == KEY_REF.ATT:
+        _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
     policy_name = policy.name.lower().replace("_", "-")
 
     if admin_pin is None:
@@ -514,6 +525,7 @@ def import_key(ctx, key, private_key, admin_pin):
 
     if key != KEY_REF.ATT:
         ctx.fail("Importing keys is only supported for the Attestation slot.")
+    _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)
@@ -548,6 +560,7 @@ def attest(ctx, key, certificate, pin, format):
     """
 
     session = ctx.obj["session"]
+    _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
 
     if not pin:
         pin = click_prompt("Enter PIN", hide_input=True)
@@ -599,6 +612,8 @@ def export_certificate(ctx, key, format, certificate):
     CERTIFICATE  file to write certificate to (use '-' to use stdout)
     """
     session = ctx.obj["session"]
+    if key == KEY_REF.ATT:
+        _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
 
     try:
         cert = session.get_certificate(key)
@@ -624,6 +639,8 @@ def delete_certificate(ctx, key, admin_pin):
     KEY  key slot to delete certificate from (sig, dec, aut, or att)
     """
     session = ctx.obj["session"]
+    if key == KEY_REF.ATT:
+        _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)
@@ -649,6 +666,8 @@ def import_certificate(ctx, key, cert, admin_pin):
     CERTIFICATE  file containing the certificate (use '-' to use stdin)
     """
     session = ctx.obj["session"]
+    if key == KEY_REF.ATT:
+        _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_ATTESTATION)
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)

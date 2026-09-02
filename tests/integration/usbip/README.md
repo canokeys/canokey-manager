@@ -15,9 +15,10 @@ reader from `CANOKEY_PCSC_READER`.
   `certificates`, subject to the CanoKey-specific negative cases below
 
 The PIV and OATH tests provision data, verify round trips, and clean it up. The
-OpenPGP test changes and recovers PINs and, when supported, imports an
-attestation key and certificate and verifies the certificate round trip. It
-resets the applet at the end.
+OpenPGP test changes and recovers PINs, provisions a standard signing key,
+tests key metadata and touch policy, and verifies a certificate round trip.
+When supported, it also exercises the separate attestation feature. It resets
+the applet at the end.
 
 After the executable smoke lifecycle, `device-tests.sh` runs the reusable
 upstream CLI and protocol device tests for each applet against the same real
@@ -52,8 +53,7 @@ reported by individual applets are never compared to CanoKey firmware.
   policies, and attestation
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OpenPGP retry counter configuration
-- OpenPGP attestation key, certificate, touch policy, and signing-key
-  attestation
+- OpenPGP attestation key and signing-key attestation
 
 ## Not covered by the current hosted-runner path
 
