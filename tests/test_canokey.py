@@ -243,6 +243,11 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             Version(3, 0, 1),
             FeatureStatus.UNSUPPORTED,
         ),
+        (
+            CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING,
+            Version(3, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
     ],
 )
 def test_firmware_feature_matrix(feature, version, expected):

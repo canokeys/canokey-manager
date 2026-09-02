@@ -138,8 +138,11 @@ class TestOATH:
         assert len(lines) == 1
         assert "query-me" in lines[0]
 
-    def test_oath_reset(self, ykman_cli):
-        output = ykman_cli("oath", "reset", "-f").output
+    def test_oath_reset(self, ykman_cli, info):
+        args = ["oath", "reset", "-f"]
+        if condition.is_canokey(info):
+            args.extend(("--admin-pin", "123456"))
+        output = ykman_cli(*args).output
         assert "Reset complete" in output
 
     def test_oath_hotp_vectors_6(self, accounts_cli, info):

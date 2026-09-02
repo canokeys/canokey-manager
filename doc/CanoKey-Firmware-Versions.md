@@ -85,6 +85,7 @@ mapped from the exact core commit before executing any lifecycle command.
 - PIV: Ed25519 general-authenticate signing fixed; X25519 private key import becomes little-endian; import tags constrained (06 generic / 07 Ed25519 / 08 X25519)
 - OATH: SEND_REMAINING chain fixed (no longer returns wrong data when records exactly fill the buffer)
 - CTAP: CCID/HID concurrency handling fixed
+- OpenPGP: P-384 is advertised and supports key import/generation and ECDH, but ECDSA signing with a SHA-256 digest returns 6700. The later core commit `e3da9ffffdef299defdcb589ed90b08c3b353505` adds the missing digest padding; no cataloged firmware contains it yet.
 
 ## ckman implementation notes
 

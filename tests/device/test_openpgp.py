@@ -6,7 +6,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
-from yubikit.canokey import CanoKeyFeature
+from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
 from yubikit.core import TRANSPORT, InvalidPinError
 from yubikit.core.smartcard import AID, ApduError
 from yubikit.management import CAPABILITY
@@ -51,7 +51,18 @@ def not_roca(version, info):
     return condition.is_canokey(info) or not ((4, 2, 0) <= version < (4, 3, 5))
 
 
-def skip_unsupported_oid(session, oid, key_ref):
+def skip_unsupported_oid(session, oid, key_ref, info):
+    if (
+        condition.is_canokey(info)
+        and key_ref == KEY_REF.SIG
+        and oid == OID.SECP384R1
+        and get_feature_status(
+            info.version,
+            CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING,
+        )
+        == FeatureStatus.UNSUPPORTED
+    ):
+        pytest.skip("CanoKey firmware does not support OpenPGP P-384 signing")
     attr_list = session.get_algorithm_information()[key_ref]
     for attr in attr_list:
         if isinstance(attr, EcAttributes) and attr.oid == oid:
@@ -175,7 +186,7 @@ def test_generate_requires_admin(session):
 def test_import_sign_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
-    skip_unsupported_oid(session, oid, KEY_REF.SIG)
+    skip_unsupported_oid(session, oid, KEY_REF.SIG, info)
 
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(keys.admin)
@@ -187,8 +198,8 @@ def test_import_sign_ecdsa(session, info, keys, oid):
 
 
 @condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
-def test_import_sign_eddsa(session, keys):
-    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG)
+def test_import_sign_eddsa(session, info, keys):
+    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG, info)
     priv = ed25519.Ed25519PrivateKey.generate()
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.SIG, priv)
@@ -203,7 +214,7 @@ def test_import_sign_eddsa(session, keys):
 def test_import_ecdh(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
-    skip_unsupported_oid(session, oid, KEY_REF.DEC)
+    skip_unsupported_oid(session, oid, KEY_REF.DEC, info)
     priv = ec.generate_private_key(getattr(ec, oid.name)())
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.DEC, priv)
@@ -217,8 +228,8 @@ def test_import_ecdh(session, info, keys, oid):
 
 @condition.check(not_fips_capable)
 @condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
-def test_import_ecdh_x25519(session, keys):
-    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC)
+def test_import_ecdh_x25519(session, info, keys):
+    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC, info)
     priv = x25519.X25519PrivateKey.generate()
     session.verify_admin(keys.admin)
     session.put_key(KEY_REF.DEC, priv)
@@ -312,7 +323,7 @@ def test_generate_rsa(session, keys, key_size, info):
 def test_generate_ecdsa(session, info, keys, oid):
     if fips_capable(info) and oid == OID.SECP256K1:
         pytest.skip("FIPS capable")
-    skip_unsupported_oid(session, oid, KEY_REF.SIG)
+    skip_unsupported_oid(session, oid, KEY_REF.SIG, info)
 
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.SIG, oid)
@@ -323,8 +334,8 @@ def test_generate_ecdsa(session, info, keys, oid):
 
 
 @condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
-def test_generate_ed25519(session, keys):
-    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG)
+def test_generate_ed25519(session, info, keys):
+    skip_unsupported_oid(session, OID.Ed25519, KEY_REF.SIG, info)
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.SIG, OID.Ed25519)
     message = b"Hello world"
@@ -335,8 +346,8 @@ def test_generate_ed25519(session, keys):
 
 @condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @condition.check(not_fips_capable)
-def test_generate_x25519(session, keys):
-    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC)
+def test_generate_x25519(session, info, keys):
+    skip_unsupported_oid(session, OID.X25519, KEY_REF.DEC, info)
     session.verify_admin(keys.admin)
     pub = session.generate_ec_key(KEY_REF.DEC, OID.X25519)
 
