@@ -1587,7 +1587,7 @@ class OpenPgpSession:
 
         require_version(self.version, (5, 2, 0))
 
-        if curve_oid not in OID:
+        if all(curve_oid != oid for oid in OID):
             raise ValueError("Curve OID is not recognized")
 
         logger.debug(f"Generating EC private key for {key_ref.name}")
