@@ -1,0 +1,236 @@
+name: CanoKey USB/IP integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  CANOKEY_USBIP_SHA: 68d8fd8d9b7bfe1e969497c8c9926ee74db73045
+  CANOKEY_CORE_ID: 3.0.1
+  CANOKEY_CORE_REF: 69e562bcb07eedda015aae6064870c8548571e2b
+
+jobs:
+  smoke:
+    name: Ubuntu 24.04 / core 3.0.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out ckman
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+
+      # Upgrade this SHA only after validating the new compat/run contract and
+      # firmware catalog in a pull request.
+      - name: Check out canokey-usbip
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          repository: canokeys/canokey-usbip
+          ref: ${{ env.CANOKEY_USBIP_SHA }}
+          path: external/canokey-usbip
+          submodules: false
+
+      - name: Report runner environment
+        shell: bash
+        run: |
+          artifact_dir="$RUNNER_TEMP/canokey-usbip-artifacts"
+          mkdir -p "$artifact_dir"
+          exec > >(tee -a "$artifact_dir/preflight.log") 2>&1
+          uname -a
+          uname -r
+          lsb_release -a || true
+
+      - name: Install Ubuntu USB/IP and build dependencies
+        shell: bash
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/canokey-usbip-artifacts/preflight.log") 2>&1
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            hwdata \
+            kmod \
+            libccid \
+            libpcsclite-dev \
+            linux-tools-common \
+            ninja-build \
+            pcsc-tools \
+            pcscd \
+            pkg-config \
+            python3-jinja2 \
+            python3-jsonschema \
+            swig \
+            udev \
+            usbutils
+
+      - name: Require kernel-matched vhci_hcd
+        shell: bash
+        run: |
+          artifact_dir="$RUNNER_TEMP/canokey-usbip-artifacts"
+          mkdir -p "$artifact_dir"
+          exec > >(tee -a "$artifact_dir/preflight.log") 2>&1
+
+          kernel_release="$(uname -r)"
+          module_package="linux-modules-extra-${kernel_release}"
+          tools_package="linux-tools-${kernel_release}"
+
+          diagnose_kernel() {
+            echo "=== vhci_hcd diagnostics ==="
+            uname -r
+            apt-cache policy "$module_package" || true
+            apt-cache policy "$tools_package" || true
+            find "/lib/modules/${kernel_release}" \
+              \( -iname '*vhci*' -o -iname '*usbip*' \) -print || true
+            grep USBIP "/boot/config-${kernel_release}" || true
+          }
+
+          echo "Running kernel: ${kernel_release}"
+          if modinfo vhci_hcd; then
+            echo "vhci_hcd is already available for ${kernel_release}."
+          else
+            echo "vhci_hcd is not installed; checking ${module_package}."
+            if ! apt-cache show "$module_package" >/dev/null 2>&1; then
+              diagnose_kernel
+              echo "ERROR: matching linux-modules-extra package unavailable for GitHub-hosted kernel ${kernel_release}"
+              exit 1
+            fi
+            if ! sudo apt-get install -y "$module_package"; then
+              diagnose_kernel
+              echo "ERROR: failed to install exact kernel module package ${module_package}"
+              exit 1
+            fi
+          fi
+
+          if ! modinfo vhci_hcd; then
+            diagnose_kernel
+            echo "ERROR: GitHub-hosted kernel ${kernel_release} does not provide vhci_hcd"
+            exit 1
+          fi
+          if ! sudo modprobe vhci_hcd; then
+            diagnose_kernel
+            echo "ERROR: GitHub-hosted kernel ${kernel_release} cannot load vhci_hcd"
+            exit 1
+          fi
+
+          if ! lsmod | grep -E 'vhci|usbip'; then
+            diagnose_kernel
+            echo "ERROR: vhci_hcd modprobe succeeded but no vhci/usbip module is loaded"
+            exit 1
+          fi
+          if ! compgen -G '/sys/devices/platform/vhci_hcd*' >/dev/null; then
+            diagnose_kernel
+            echo "ERROR: vhci_hcd is loaded but its platform sysfs interface is unavailable"
+            exit 1
+          fi
+          ls -ld /sys/devices/platform/vhci_hcd*
+
+          if ! usbip version; then
+            echo "The usbip dispatcher cannot find a client for ${kernel_release}; checking ${tools_package}."
+            if ! apt-cache show "$tools_package" >/dev/null 2>&1; then
+              diagnose_kernel
+              echo "ERROR: matching linux-tools package unavailable for GitHub-hosted kernel ${kernel_release}"
+              exit 1
+            fi
+            if ! sudo apt-get install -y "$tools_package"; then
+              diagnose_kernel
+              echo "ERROR: failed to install exact USB/IP client package ${tools_package}"
+              exit 1
+            fi
+          fi
+          if ! usbip version; then
+            diagnose_kernel
+            echo "ERROR: usbip client is unavailable for GitHub-hosted kernel ${kernel_release}"
+            exit 1
+          fi
+
+      - name: Check canokey-usbip host requirements
+        shell: bash
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/canokey-usbip-artifacts/preflight.log") 2>&1
+          external/canokey-usbip/compat/environment
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: .python-version
+
+      - name: Install ckman
+        run: uv sync --locked
+
+      - name: Verify ckman smoke command syntax
+        run: |
+          uv run ckman --help
+          uv run ckman piv --help
+          uv run ckman oath --help
+          uv run ckman openpgp --help
+
+      # Follow-up stages, intentionally not implemented here:
+      # Stage 2: oldest/latest/core-master firmware smoke matrix.
+      # Stage 3: fresh-device PIV reset/generate/certificate/info/export lifecycle.
+      # Stage 4: fresh-device OATH add/list/calculate/delete lifecycle.
+      # Stage 5: destructive OpenPGP lifecycle coverage.
+      - name: Run ckman against a virtual CanoKey
+        shell: bash
+        env:
+          CANOKEY_USBIP_DEBUG: "1"
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          set +e
+          external/canokey-usbip/compat/run \
+            --core-ref "$CANOKEY_CORE_REF" \
+            --test-command "./tests/integration/usbip/smoke.sh" \
+            --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+          run_status=$?
+          set -e
+
+          test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
+          test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
+          [[ ! -f "$test_stdout" ]] || cat "$test_stdout"
+          [[ ! -s "$test_stderr" ]] || cat "$test_stderr" >&2
+
+          if ((run_status != 0)); then
+            metadata="$RUNNER_TEMP/canokey-usbip-artifacts/metadata.json"
+            if [[ -f "$metadata" ]]; then
+              python3 - "$metadata" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          print(
+              "ERROR: canokey-usbip phase "
+              f"{metadata.get('phase', 'unknown')} failed: "
+              f"{metadata.get('failure', 'no failure detail')}"
+          )
+          PY
+            else
+              echo "ERROR: canokey-usbip failed before writing metadata (exit ${run_status})"
+            fi
+            exit "$run_status"
+          fi
+
+      - name: Upload USB/IP diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ckman-usbip-ubuntu24-core-${{ env.CANOKEY_CORE_ID }}
+          path: |
+            ${{ runner.temp }}/canokey-usbip-artifacts/preflight.log
+            ${{ runner.temp }}/canokey-usbip-artifacts/metadata.json
+            ${{ runner.temp }}/canokey-usbip-artifacts/build.log
+            ${{ runner.temp }}/canokey-usbip-artifacts/usbip.log
+            ${{ runner.temp }}/canokey-usbip-artifacts/usbip-port.txt
+            ${{ runner.temp }}/canokey-usbip-artifacts/lsusb.txt
+            ${{ runner.temp }}/canokey-usbip-artifacts/pcscd.log
+            ${{ runner.temp }}/canokey-usbip-artifacts/udev.txt
+            ${{ runner.temp }}/canokey-usbip-artifacts/test.stdout
+            ${{ runner.temp }}/canokey-usbip-artifacts/test.stderr
+          if-no-files-found: warn
