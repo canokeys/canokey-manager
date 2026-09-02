@@ -115,9 +115,26 @@ jobs:
             exit 1
           fi
 
-          if ! lsmod | grep -E 'vhci|usbip'; then
+          if modinfo usbhid >/dev/null 2>&1; then
+            if ! sudo modprobe usbhid; then
+              diagnose_kernel
+              echo "ERROR: GitHub-hosted kernel ${kernel_release} cannot load usbhid"
+              exit 1
+            fi
+          elif grep -q '^CONFIG_USB_HID=y' "/boot/config-${kernel_release}"; then
+            echo "usbhid is built into ${kernel_release}."
+          else
             diagnose_kernel
-            echo "ERROR: vhci_hcd modprobe succeeded but no vhci/usbip module is loaded"
+            echo "ERROR: GitHub-hosted kernel ${kernel_release} does not provide usbhid"
+            exit 1
+          fi
+          if modinfo hid_generic >/dev/null 2>&1; then
+            sudo modprobe hid_generic
+          fi
+
+          if ! lsmod | grep -E 'vhci|usbip|usbhid|hid_generic'; then
+            diagnose_kernel
+            echo "ERROR: required USB/IP and HID modules are not loaded"
             exit 1
           fi
           if ! compgen -G '/sys/devices/platform/vhci_hcd*' >/dev/null; then
@@ -172,6 +189,22 @@ jobs:
           uv run ckman oath --help
           uv run ckman openpgp --help
 
+      - name: Configure PC/SC for the noninteractive runner
+        shell: bash
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/canokey-usbip-artifacts/preflight.log") 2>&1
+          if ! pcscd --help 2>&1 | grep -q -- '--disable-polkit'; then
+            echo "ERROR: this pcscd build cannot disable interactive polkit authorization"
+            exit 1
+          fi
+          printf '%s\n' 'PCSCD_ARGS=--disable-polkit' | sudo tee /etc/default/pcscd
+          sudo systemctl restart pcscd.service
+          if ! pgrep -af '[p]cscd.*--disable-polkit'; then
+            sudo systemctl status pcscd.service --no-pager || true
+            echo "ERROR: pcscd did not start with --disable-polkit"
+            exit 1
+          fi
+
       # Follow-up stages, intentionally not implemented here:
       # Stage 2: oldest/latest/core-master firmware smoke matrix.
       # Stage 3: fresh-device PIV reset/generate/certificate/info/export lifecycle.
@@ -183,6 +216,48 @@ jobs:
           CANOKEY_USBIP_DEBUG: "1"
         run: |
           cd "$GITHUB_WORKSPACE"
+
+          capture_usb_bindings() {
+            output="$RUNNER_TEMP/canokey-usbip-artifacts/usb-drivers.txt"
+            for _ in {1..120}; do
+              for vendor_file in /sys/bus/usb/devices/*/idVendor; do
+                [[ -f "$vendor_file" ]] || continue
+                device="${vendor_file%/idVendor}"
+                [[ "$(<"$vendor_file")" == "20a0" ]] || continue
+                [[ -f "$device/idProduct" ]] || continue
+                [[ "$(<"$device/idProduct")" == "42d4" ]] || continue
+
+                sleep 3
+                {
+                  echo "Device: $device"
+                  for interface in "$device":*; do
+                    [[ -d "$interface" ]] || continue
+                    echo "=== $interface ==="
+                    for attribute in bInterfaceClass bInterfaceSubClass bInterfaceProtocol modalias; do
+                      [[ ! -f "$interface/$attribute" ]] || \
+                        printf '%s=%s\n' "$attribute" "$(<"$interface/$attribute")"
+                    done
+                    if [[ -L "$interface/driver" ]]; then
+                      echo "driver=$(readlink -f "$interface/driver")"
+                    else
+                      echo "driver=unbound"
+                    fi
+                    udevadm info --query=all --path="$interface" || true
+                  done
+                  echo "=== hidraw ==="
+                  find /sys/class/hidraw -maxdepth 2 -print -exec readlink -f {} \; || true
+                  echo "=== modules ==="
+                  lsmod | grep -E 'vhci|usbip|hid|ccid' || true
+                } >"$output" 2>&1
+                return
+              done
+              sleep 0.5
+            done
+            echo "CanoKey 20a0:42d4 did not appear before the capture timeout." >"$output"
+          }
+
+          capture_usb_bindings &
+          capture_pid=$!
           set +e
           external/canokey-usbip/compat/run \
             --core-ref "$CANOKEY_CORE_REF" \
@@ -190,6 +265,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
           run_status=$?
           set -e
+          wait "$capture_pid" || true
 
           test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
           test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
@@ -217,6 +293,26 @@ jobs:
             exit "$run_status"
           fi
 
+      - name: Collect hosted runner diagnostics
+        if: always()
+        shell: bash
+        run: |
+          artifact_dir="$RUNNER_TEMP/canokey-usbip-artifacts"
+          mkdir -p "$artifact_dir"
+          sudo dmesg --ctime 2>&1 | tee "$artifact_dir/kernel.log" >/dev/null || true
+          {
+            echo "=== pcscd defaults ==="
+            cat /etc/default/pcscd || true
+            echo "=== pcscd process ==="
+            pgrep -af '[p]cscd' || true
+            echo "=== pcscd service ==="
+            systemctl status pcscd.service pcscd.socket --no-pager || true
+            echo "=== relevant modules ==="
+            lsmod | grep -E 'vhci|usbip|hid|ccid' || true
+            echo "=== hidraw after cleanup ==="
+            find /sys/class/hidraw -maxdepth 2 -print -exec readlink -f {} \; || true
+          } >"$artifact_dir/host-state.txt" 2>&1
+
       - name: Upload USB/IP diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -233,4 +329,7 @@ jobs:
             ${{ runner.temp }}/canokey-usbip-artifacts/udev.txt
             ${{ runner.temp }}/canokey-usbip-artifacts/test.stdout
             ${{ runner.temp }}/canokey-usbip-artifacts/test.stderr
+            ${{ runner.temp }}/canokey-usbip-artifacts/kernel.log
+            ${{ runner.temp }}/canokey-usbip-artifacts/usb-drivers.txt
+            ${{ runner.temp }}/canokey-usbip-artifacts/host-state.txt
           if-no-files-found: warn
