@@ -210,10 +210,9 @@ jobs:
             exit 1
           fi
 
-      # This job covers read-only applet smoke plus PIV and OATH lifecycles.
-      # Follow-up stages, intentionally not implemented here:
-      # Stage 2: oldest/latest/core-master firmware smoke matrix.
-      # Stage 5: destructive OpenPGP lifecycle coverage.
+      # This job covers PC/SC command lifecycles for PIV, OATH, and OpenPGP.
+      # See tests/integration/usbip/README.md for capability-bound exclusions.
+      # Stage 2 will add the oldest/latest/core-master firmware smoke matrix.
       - name: Run ckman against a virtual CanoKey
         shell: bash
         env:

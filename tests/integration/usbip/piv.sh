@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/lib.sh"
+
+PIV_DEFAULT_PIN="123456"
+PIV_DEFAULT_PUK="12345678"
+PIV_DEFAULT_MANAGEMENT_KEY="010203040506070801020304050607080102030405060708"
+PIV_PIN="654321"
+PIV_RECOVERY_PIN="112233"
+PIV_PUK="87654321"
+PIV_MANAGEMENT_KEY="111111111111111122222222222222223333333333333333"
+
+section "ckman piv reset"
+capture_without_secrets \
+  "Reset complete." \
+  "${CKMAN[@]}" piv reset --force
+echo "PIV reset complete."
+
+section "ckman piv access set-retries"
+capture_without_secrets \
+  "Number of PIN/PUK retries set." \
+  "${CKMAN[@]}" piv access set-retries \
+  --management-key "$PIV_DEFAULT_MANAGEMENT_KEY" \
+  --pin "$PIV_DEFAULT_PIN" \
+  --force \
+  3 3
+echo "PIV retry counters updated."
+
+section "ckman piv access change-pin"
+"${CKMAN[@]}" piv access change-pin \
+  --pin "$PIV_DEFAULT_PIN" \
+  --new-pin "$PIV_PIN"
+
+section "ckman piv access change-puk"
+"${CKMAN[@]}" piv access change-puk \
+  --puk "$PIV_DEFAULT_PUK" \
+  --new-puk "$PIV_PUK"
+
+section "ckman piv access change-management-key"
+"${CKMAN[@]}" piv access change-management-key \
+  --management-key "$PIV_DEFAULT_MANAGEMENT_KEY" \
+  --new-management-key "$PIV_MANAGEMENT_KEY" \
+  --force
+
+section "ckman piv access unblock-pin"
+for attempt in 1 2 3; do
+  expect_failure \
+    "Incorrect PIV PIN attempt $attempt" \
+    "${CKMAN[@]}" piv access change-pin \
+    --pin "000000" \
+    --new-pin "$PIV_DEFAULT_PIN"
+done
+"${CKMAN[@]}" piv access unblock-pin \
+  --puk "$PIV_PUK" \
+  --new-pin "$PIV_RECOVERY_PIN"
+
+section "Generate PIV test keys"
+openssl genpkey \
+  -algorithm EC \
+  -pkeyopt ec_paramgen_curve:P-256 \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem" \
+  2>/dev/null
+openssl pkey \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem" \
+  -pubout \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-import-public.pem" \
+  2>/dev/null
+openssl req \
+  -new \
+  -x509 \
+  -key "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem" \
+  -subj "/CN=ckman USB-IP imported PIV key" \
+  -days 1 \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-import-certificate.pem" \
+  2>/dev/null
+
+section "ckman piv keys generate"
+"${CKMAN[@]}" piv keys generate \
+  --algorithm ECCP256 \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem"
+
+section "ckman piv keys info"
+"${CKMAN[@]}" piv keys info 9a
+
+section "ckman piv keys export"
+"${CKMAN[@]}" piv keys export \
+  --verify \
+  --pin "$PIV_RECOVERY_PIN" \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
+cmp \
+  "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
+
+section "ckman piv keys attest"
+"${CKMAN[@]}" piv keys attest \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem" \
+  -noout \
+  -subject
+
+section "ckman piv certificates generate"
+"${CKMAN[@]}" piv certificates generate \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  --pin "$PIV_RECOVERY_PIN" \
+  --subject "CN=ckman USB-IP generated PIV key" \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem"
+
+section "ckman piv certificates export"
+"${CKMAN[@]}" piv certificates export \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.pem"
+openssl verify \
+  -CAfile "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.pem" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.pem"
+
+section "ckman piv certificates request"
+"${CKMAN[@]}" piv certificates request \
+  --pin "$PIV_RECOVERY_PIN" \
+  --subject "CN=ckman USB-IP PIV request" \
+  9a \
+  "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-request.pem"
+openssl req \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-request.pem" \
+  -verify \
+  -noout
+
+section "ckman piv certificates delete"
+"${CKMAN[@]}" piv certificates delete \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9a
+
+section "ckman piv certificates import"
+"${CKMAN[@]}" piv certificates import \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  --pin "$PIV_RECOVERY_PIN" \
+  --verify \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.pem"
+"${CKMAN[@]}" piv certificates export \
+  9a "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.pem"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.pem" \
+  -outform DER \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.der"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.pem" \
+  -outform DER \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.der"
+cmp \
+  "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.der" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.der"
+
+section "ckman piv certificates export attestation slot"
+"${CKMAN[@]}" piv certificates export \
+  f9 "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem"
+openssl x509 \
+  -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem" \
+  -noout \
+  -subject
+
+section "ckman piv keys import"
+"${CKMAN[@]}" piv keys import \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  --pin-policy always \
+  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
+"${CKMAN[@]}" piv keys info 9c
+"${CKMAN[@]}" piv keys export \
+  --verify \
+  --pin "$PIV_RECOVERY_PIN" \
+  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
+cmp \
+  "$CANOKEY_USBIP_WORK_DIR/piv-import-public.pem" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
+
+section "ckman piv certificates import for imported key"
+"${CKMAN[@]}" piv certificates import \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  --pin "$PIV_RECOVERY_PIN" \
+  --verify \
+  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-certificate.pem"
+"${CKMAN[@]}" piv certificates export \
+  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-certificate.pem"
+
+section "ckman piv objects generate"
+"${CKMAN[@]}" piv objects generate \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  chuid
+"${CKMAN[@]}" piv objects generate \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  ccc
+
+section "ckman piv objects export"
+"${CKMAN[@]}" piv objects export \
+  chuid "$CANOKEY_USBIP_WORK_DIR/piv-chuid.bin"
+"${CKMAN[@]}" piv objects export \
+  ccc "$CANOKEY_USBIP_WORK_DIR/piv-ccc.bin"
+test -s "$CANOKEY_USBIP_WORK_DIR/piv-chuid.bin"
+test -s "$CANOKEY_USBIP_WORK_DIR/piv-ccc.bin"
+
+section "ckman piv objects import"
+"${CKMAN[@]}" piv objects import \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  chuid "$CANOKEY_USBIP_WORK_DIR/piv-chuid.bin"
+"${CKMAN[@]}" piv objects export \
+  chuid "$CANOKEY_USBIP_WORK_DIR/piv-chuid-roundtrip.bin"
+cmp \
+  "$CANOKEY_USBIP_WORK_DIR/piv-chuid.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/piv-chuid-roundtrip.bin"
+
+section "ckman piv certificates delete imported certificate"
+"${CKMAN[@]}" piv certificates delete \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9c
+
+section "ckman piv keys delete"
+"${CKMAN[@]}" piv keys delete \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9c
+"${CKMAN[@]}" piv keys delete \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9a
+
+section "ckman piv info after lifecycle"
+"${CKMAN[@]}" piv info
