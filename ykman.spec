@@ -6,7 +6,10 @@ import os
 with open("ykman/__init__.py") as f:
     version_file = f.read()
 version = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", version_file, re.M).group(1)
-version_tuple = "(" + version.split("-")[0].replace(".", ", ") + ", 0)"
+version_match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.post(\d+))?", version)
+if not version_match:
+    raise ValueError(f"Unsupported release version: {version}")
+version_tuple = str(tuple(int(part or 0) for part in version_match.groups()))
 
 with open("version_info.txt.in") as f:
     version_info = f.read()

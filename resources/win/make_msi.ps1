@@ -10,7 +10,12 @@ $VERSION = $(& "$SOURCE_DIR\ckman.exe" --version).Split(' ')[-1]
 echo "Release version: $VERSION"
 echo "Binaries: $SOURCE_DIR"
 
-$SIMPLE_VERSION = "$($VERSION.Split('-')[0]).0"
+$VERSION_MATCH = [regex]::Match($VERSION, '^(\d+)\.(\d+)\.(\d+)(?:\.post(\d+))?$')
+if (-not $VERSION_MATCH.Success) {
+  throw "Unsupported release version: $VERSION"
+}
+$POST_VERSION = if ($VERSION_MATCH.Groups[4].Success) { $VERSION_MATCH.Groups[4].Value } else { "0" }
+$SIMPLE_VERSION = "$($VERSION_MATCH.Groups[1].Value).$($VERSION_MATCH.Groups[2].Value).$($VERSION_MATCH.Groups[3].Value).$POST_VERSION"
 
 cd $PSScriptRoot
 
