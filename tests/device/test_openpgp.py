@@ -230,6 +230,7 @@ def test_import_ecdh_x25519(session, keys):
     assert shared1 == shared2
 
 
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_import_sign_rsa(session, keys, key_size, info):
     if condition.is_canokey(info):
@@ -254,6 +255,7 @@ def test_import_sign_rsa(session, keys, key_size, info):
 
 
 @condition.check(not_fips_capable)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_import_decrypt_rsa(session, keys, key_size, info):
     if condition.is_canokey(info):
@@ -280,6 +282,7 @@ def test_import_decrypt_rsa(session, keys, key_size, info):
 
 
 @condition.check(not_roca)
+@condition.min_version_or_canokey(CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION, 5, 2)
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_generate_rsa(session, keys, key_size, info):
     if condition.is_canokey(info):

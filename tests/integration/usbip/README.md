@@ -48,7 +48,9 @@ their upstream YubiKey version predicates. On CanoKey, the same test body uses
 the admin firmware version and the feature matrix instead; synthetic versions
 reported by individual applets are never compared to CanoKey firmware.
 
-- PIV retry counter configuration and attestation
+- PIV retry counter configuration, metadata-based key info/export, import PIN
+  policies, and attestation
+- OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OpenPGP retry counter configuration
 - OpenPGP attestation key, certificate, touch policy, and signing-key
   attestation

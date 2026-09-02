@@ -137,8 +137,7 @@ def info(ctx):
 @click_force_option
 @click.option(
     "--admin-pin",
-    help="CanoKey admin PIN (required to reset OATH on a CanoKey with a "
-    "non-default admin PIN)",
+    help="CanoKey admin PIN (prompted when omitted)",
     metavar="PIN",
 )
 def reset(ctx, force, admin_pin):
@@ -164,7 +163,10 @@ def reset(ctx, force, admin_pin):
         session.reset(admin_pin)
     except canokey.AdminPinRequired:
         # CanoKey: the admin applet PIN is needed to reset OATH
-        session.reset(click_prompt("CanoKey admin PIN", hide_input=True))
+        try:
+            session.reset(click_prompt("CanoKey admin PIN", hide_input=True))
+        except canokey.AdminPinError as e:
+            raise CliFail(str(e))
     except canokey.AdminPinError as e:
         raise CliFail(str(e))
 

@@ -1,25 +1,74 @@
 import gzip
 import zlib
 from datetime import date
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from ykman.piv import (
+    _list_keys,
     generate_chuid,
     generate_random_management_key,
     _parse_rfc4514_string,
 )
-from yubikit.core import BadResponseError, NotSupportedError, Version
+from yubikit.core import PID, BadResponseError, NotSupportedError, Version
+from yubikit.core.smartcard import SW, ApduError
 from yubikit.piv import (
     KEY_TYPE,
     MANAGEMENT_KEY_TYPE,
     PIN_POLICY,
+    SLOT,
     TOUCH_POLICY,
     Chuid,
     FascN,
     _do_check_key_support,
     decompress_certificate,
 )
+from yubikit.piv import INS_GENERATE_ASYMMETRIC, INS_MOVE_KEY, PivSession
+
+
+def test_list_keys_ignores_only_empty_slots():
+    class EmptySession:
+        def get_slot_metadata(self, slot):
+            raise ApduError(b"", SW.REFERENCE_DATA_NOT_FOUND)
+
+    assert _list_keys(EmptySession()) == {}
+
+
+def test_list_keys_propagates_unexpected_apdu_error():
+    class FailingSession:
+        def get_slot_metadata(self, slot):
+            raise ApduError(b"", SW.SECURITY_CONDITION_NOT_SATISFIED)
+
+    with pytest.raises(ApduError) as exc_info:
+        _list_keys(FailingSession())
+    assert exc_info.value.sw == SW.SECURITY_CONDITION_NOT_SATISFIED
+
+
+@pytest.mark.parametrize(
+    ("pid", "version", "expected_ins"),
+    [
+        (PID.CK_FIDO_CCID, Version(5, 0, 0), INS_GENERATE_ASYMMETRIC),
+        (PID.YK4_FIDO_CCID, Version(5, 7, 0), INS_MOVE_KEY),
+    ],
+)
+def test_delete_key_uses_device_specific_command(pid, version, expected_ins):
+    class Protocol:
+        connection = SimpleNamespace(pid=pid, atr=None)
+
+        def __init__(self):
+            self.commands = []
+
+        def send_apdu(self, *args):
+            self.commands.append(args)
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = version
+    session.delete_key(SLOT.AUTHENTICATION)
+
+    assert session.protocol.commands[0][1] == expected_ins
 
 
 @pytest.mark.parametrize(

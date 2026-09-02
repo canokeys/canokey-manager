@@ -321,7 +321,12 @@ def _list_all_devices(
             raise ValueError("Invalid connection type")
         try:
             for dev in _CONNECTION_LIST_MAPPING[connection_type]():
-                assert dev.pid is not None  # noqa: S101
+                if dev.pid is None:
+                    logger.debug(
+                        "Ignoring reader without a recognized YubiKey/CanoKey PID: %s",
+                        dev,
+                    )
+                    continue
                 group = groups.setdefault(dev.pid, _PidGroup(dev.pid))
                 group.add(
                     connection_type,

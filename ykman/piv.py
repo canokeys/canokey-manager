@@ -442,7 +442,7 @@ def _list_keys(session: PivSession) -> Mapping[SLOT, SlotMetadata]:
             keys[slot] = session.get_slot_metadata(slot)
         except ApduError as e:
             if e.sw != SW.REFERENCE_DATA_NOT_FOUND:
-                raise NotSupportedError
+                raise
     return keys
 
 

@@ -300,6 +300,11 @@ def list_readers():
 def list_devices(name_filter=None):
     devices = []
     for reader in list_readers():
-        if name_filter is None or name_filter.lower() in reader.name.lower():
+        name = reader.name.lower()
+        if name_filter is None:
+            matches = YK_READER_NAME in name or CK_READER_NAME in name
+        else:
+            matches = name_filter.lower() in name
+        if matches:
             devices.append(ScardYubiKeyDevice(reader))
     return devices

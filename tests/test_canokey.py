@@ -1,5 +1,7 @@
 """Unit tests for yubikit.canokey (fork-only module)."""
 
+from typing import Any, cast
+
 import pytest
 from yubikit import canokey
 from yubikit.canokey import (
@@ -20,8 +22,9 @@ from yubikit.canokey import (
     parse_firmware_version,
 )
 from yubikit.core import PID, TRANSPORT, BadResponseError, NotSupportedError, Version
-from yubikit.core.smartcard import SmartCardConnection
+from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import ManagementSession
+from yubikit.openpgp import OpenPgpSession
 
 
 class FakeConnection(SmartCardConnection):
@@ -73,6 +76,43 @@ def test_is_canokey_by_atr():
 def test_is_canokey_negative():
     assert not canokey.is_canokey(FakeConnection())
     assert not canokey.is_canokey(FakeConnection(pid=None, atr=b"\x3b\x00"))
+
+
+@pytest.mark.parametrize(
+    ("connection", "sw", "expected"),
+    [
+        (FakeConnection(), SW.CONDITIONS_NOT_SATISFIED, Version(1, 0, 0)),
+        (
+            FakeConnection(pid=PID.CK_FIDO_CCID),
+            SW.INVALID_INSTRUCTION,
+            Version(5, 5, 5),
+        ),
+    ],
+)
+def test_openpgp_expected_version_fallbacks(connection, sw, expected):
+    class Protocol:
+        def __init__(self):
+            self.connection = connection
+
+        def send_apdu(self, *args):
+            raise ApduError(b"", sw)
+
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, Protocol())
+    assert session._read_version() == expected
+
+
+def test_openpgp_version_read_propagates_unexpected_error():
+    class Protocol:
+        connection = FakeConnection(pid=PID.CK_FIDO_CCID)
+
+        def send_apdu(self, *args):
+            raise ApduError(b"", SW.SECURITY_CONDITION_NOT_SATISFIED)
+
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, Protocol())
+    with pytest.raises(ApduError):
+        session._read_version()
 
 
 @pytest.mark.parametrize(
@@ -134,6 +174,11 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             FeatureStatus.SUPPORTED,
         ),
         (
+            CanoKeyFeature.OATH_MODERN_COMMANDS,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
+        (
             CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
             Version(1, 5, 2),
             FeatureStatus.UNSUPPORTED,
@@ -193,6 +238,11 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             Version(3, 0, 2),
             FeatureStatus.UNKNOWN,
         ),
+        (
+            CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS,
+            Version(3, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
     ],
 )
 def test_firmware_feature_matrix(feature, version, expected):
@@ -228,7 +278,21 @@ def test_management_does_not_hide_invalid_canokey_firmware_version():
         ManagementSession(conn)
 
 
-def test_reset_oath_verifies_default_pin():
+def test_reset_oath_accepts_explicit_default_pin():
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x9000)),
+            (bytes([0, INS_RESET_OATH, 0, 0]), (b"", 0x9000)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    CanoKeyAdminSession(conn, pin="123456").reset_oath()
+    verify_apdu = conn.sent[1]
+    assert verify_apdu[5:] == b"123456"
+
+
+def test_reset_oath_reuses_already_verified_admin_session():
     conn = FakeConnection(
         [
             (select_apdu(), (b"", 0x9000)),
@@ -238,8 +302,7 @@ def test_reset_oath_verifies_default_pin():
         pid=PID.CK_FIDO_CCID,
     )
     CanoKeyAdminSession(conn).reset_oath()
-    verify_apdu = conn.sent[1]
-    assert verify_apdu[5:] == b"123456"
+    assert conn.sent[1] == bytes([0, INS_VERIFY, 0, 0, 0])
 
 
 def test_reset_oath_custom_pin():
@@ -259,12 +322,25 @@ def test_reset_oath_requires_pin_when_default_fails():
     conn = FakeConnection(
         [
             (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x63C3)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    with pytest.raises(AdminPinRequired):
+        CanoKeyAdminSession(conn).reset_oath()
+
+
+def test_reset_oath_does_not_retry_default_pin_after_prior_failure():
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
             (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x63C2)),
         ],
         pid=PID.CK_FIDO_CCID,
     )
     with pytest.raises(AdminPinRequired):
         CanoKeyAdminSession(conn).reset_oath()
+    assert len(conn.sent) == 2
 
 
 def test_wrong_pin_reports_retries():
@@ -309,13 +385,13 @@ def test_reset_ctap_supported():
     conn = FakeConnection(
         [
             (select_apdu(), (b"", 0x9000)),
-            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.3", 0x9000)),
             (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.3", 0x9000)),
             (bytes([0, INS_RESET_CTAP, 0, 0]), (b"", 0x9000)),
         ],
         pid=PID.CK_FIDO_CCID,
     )
-    CanoKeyAdminSession(conn).reset_ctap()
+    CanoKeyAdminSession(conn, pin="123456").reset_ctap()
 
 
 def test_oath_reset_falls_back_to_admin():
@@ -325,11 +401,12 @@ def test_oath_reset_falls_back_to_admin():
     oath_select_resp = (
         bytes.fromhex("7903") + b"\x05\x05\x05" + bytes.fromhex("7108") + b"12345678"
     )
-    # The fork's OATH chaining workaround sends INS_SEND_REMAINING (0xA5)
-    # after every successful APDU; the card answers 6985 when done.
+    # Firmware before 3.0.1 needs an extra SEND_REMAINING after SW=9000.
     a5_done = (bytes([0, 0xA5, 0, 0]), (b"", 0x6985))
     conn = FakeConnection(
         [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.0", 0x9000)),
             (select_oath, (oath_select_resp, 0x9000)),  # OathSession init
             a5_done,
             (select_apdu(), (b"", 0x9000)),  # select admin applet
@@ -340,7 +417,7 @@ def test_oath_reset_falls_back_to_admin():
         ],
         pid=PID.CK_FIDO_CCID,
     )
-    OathSession(conn).reset()
+    OathSession(conn).reset("123456")
     assert not conn._script  # All scripted APDUs consumed
 
 
@@ -361,6 +438,8 @@ def test_oath_select_when_locked():
     )
     conn = FakeConnection(
         [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.0", 0x9000)),
             (select_oath, (locked_resp, 0x9000)),
             (bytes([0, 0xA5, 0, 0]), (b"", 0x6982)),  # locked: no more data
         ],
@@ -368,3 +447,22 @@ def test_oath_select_when_locked():
     )
     session = OathSession(conn)
     assert session.locked
+
+
+def test_oath_fixed_firmware_does_not_send_unneeded_remaining_command():
+    from yubikit.oath import OathSession
+
+    select_oath = bytes([0, 0xA4, 0x04, 0, 7]) + bytes.fromhex("A0000005272101")
+    oath_select_resp = (
+        bytes.fromhex("7903") + b"\x06\x00\x00" + bytes.fromhex("7108") + b"12345678"
+    )
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.1", 0x9000)),
+            (select_oath, (oath_select_resp, 0x9000)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    OathSession(conn)
+    assert not conn._script

@@ -56,6 +56,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
+from . import canokey
 from .core import (
     InvalidPinError,
     NotSupportedError,
@@ -1013,9 +1014,16 @@ class OpenPgpSession:
         try:
             bcd = self.protocol.send_apdu(0, INS.GET_VERSION, 0, 0)
             return _override_version.patch(Version(*(_bcd(x) for x in bcd)))
-        except ApduError:
-            # CanoKey doesn't have a dedicated version of OpenPGP
-            return Version(5, 5, 5)
+        except ApduError as e:
+            if e.sw == SW.CONDITIONS_NOT_SATISFIED:
+                # Pre 1.0.2 OpenPGP applets do not expose a version.
+                return Version(1, 0, 0)
+            if e.sw == SW.INVALID_INSTRUCTION and canokey.is_canokey(
+                self.protocol.connection
+            ):
+                # CanoKey has no dedicated OpenPGP applet version.
+                return Version(5, 5, 5)
+            raise
 
     @property
     def aid(self) -> OpenPgpAid:

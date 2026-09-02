@@ -65,6 +65,7 @@ class CanoKeyFeature(str, Enum):
     PIV_ED25519_X25519_FIXES = "piv-ed25519-x25519-fixes"
     OATH_RESPONSE_CHAINING_FIX = "oath-response-chaining-fix"
     PIV_SET_RETRIES = "piv-set-retries"
+    PIV_SIGNATURE_DEFAULT_ALWAYS = "piv-signature-default-always"
     OPENPGP_SET_RETRIES = "openpgp-set-retries"
     OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
 
@@ -148,6 +149,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
         (FirmwareRange(Version(3, 0, 1)),), CATALOG_LATEST_VERSION
     ),
     CanoKeyFeature.PIV_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS: FeatureRule(
+        (), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.OPENPGP_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.OPENPGP_GET_CHALLENGE: FeatureRule(
         (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
@@ -170,11 +174,11 @@ def parse_firmware_version(value: str) -> Version:
 def get_feature_status(version: Version, feature: CanoKeyFeature) -> FeatureStatus:
     """Return the audited support status for a firmware-dependent feature."""
     rule = FEATURE_MATRIX[feature]
+    if version > rule.known_through:
+        return FeatureStatus.UNKNOWN
     if any(version_range.contains(version) for version_range in rule.supported):
         return FeatureStatus.SUPPORTED
-    if version <= rule.known_through:
-        return FeatureStatus.UNSUPPORTED
-    return FeatureStatus.UNKNOWN
+    return FeatureStatus.UNSUPPORTED
 
 
 def require_feature(version: Version, feature: CanoKeyFeature) -> None:
@@ -195,6 +199,8 @@ def is_canokey(connection) -> bool:
     USB connections are recognized by PID; NFC connections (no PID) by the
     "CanoKey" string in the ATR historical bytes.
     """
+    if getattr(connection, "is_cano", False):
+        return True
     if getattr(connection, "pid", None) == PID.CK_FIDO_CCID:
         return True
     atr = getattr(connection, "atr", None)
@@ -213,7 +219,7 @@ class AdminPinError(CommandError):
 
 
 class AdminPinRequired(AdminPinError):
-    """The default admin PIN did not verify; an explicit PIN is required."""
+    """The admin applet is not verified; an explicit PIN is required."""
 
     def __init__(self):
         super().__init__("CanoKey admin PIN required")
@@ -277,12 +283,17 @@ class CanoKeyAdminSession:
         """Verify the default PIN, unless a PIN was already verified."""
         if self._verified:
             return
+
         try:
-            self.verify_pin(DEFAULT_ADMIN_PIN)
-        except AdminPinError as e:
-            if e.retries is None:  # Blocked
-                raise
-            raise AdminPinRequired() from e
+            self.protocol.send_apdu(0, INS_VERIFY, 0, 0)
+            self._verified = True
+            return
+        except ApduError as e:
+            if e.sw == SW.AUTH_METHOD_BLOCKED:
+                raise AdminPinError("Admin PIN is blocked") from e
+            if e.sw >> 8 == 0x63 and e.sw & 0xF0 == 0xC0:
+                raise AdminPinRequired() from e
+            raise
 
     def _reset_applet(self, ins: int, name: str) -> None:
         self._ensure_verified()

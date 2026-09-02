@@ -308,7 +308,12 @@ def set_pin_retries(ctx, management_key, pin, pin_retries, puk_retries, force):
     session = ctx.obj["session"]
     info = ctx.obj["info"]
     if canokey.is_canokey(session.protocol.connection):
-        canokey.require_feature(info.version, canokey.CanoKeyFeature.PIV_SET_RETRIES)
+        try:
+            canokey.require_feature(
+                info.version, canokey.CanoKeyFeature.PIV_SET_RETRIES
+            )
+        except NotSupportedError as e:
+            raise CliFail(str(e))
     if CAPABILITY.PIV in info.fips_capable:
         if not (
             session.get_pin_metadata().default_value

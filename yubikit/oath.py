@@ -15,6 +15,7 @@ from typing import Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import canokey
+from .canokey import CanoKeyFeature, FeatureStatus, get_feature_status
 from .core import (
     BadResponseError,
     NotSupportedError,
@@ -271,7 +272,18 @@ class OathSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
-        self.protocol = SmartCardProtocol(connection, INS_SEND_REMAINING)
+        read_on_success = False
+        if canokey.is_canokey(connection):
+            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            read_on_success = (
+                get_feature_status(
+                    firmware_version, CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX
+                )
+                == FeatureStatus.UNSUPPORTED
+            )
+        self.protocol = SmartCardProtocol(
+            connection, INS_SEND_REMAINING, read_on_success=read_on_success
+        )
         self._version, self._salt, self._challenge = _parse_select(
             self.protocol.select(AID.OATH)
         )
@@ -319,8 +331,8 @@ class OathSession:
 
         On CanoKey the OATH applet has no reset instruction (all firmware
         versions); the reset is performed via the CanoKey admin applet,
-        which requires its own PIN (the default is tried when admin_pin
-        is not given).
+        which requires its own PIN. If no PIN is given, an unverified admin
+        session raises AdminPinRequired without guessing a PIN.
         """
         if canokey.is_canokey(self.protocol.connection):
             # CanoKey: reset the OATH applet via the admin applet

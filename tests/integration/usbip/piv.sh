@@ -84,16 +84,26 @@ section "ckman piv keys generate"
   9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem"
 
 section "ckman piv keys info"
-"${CKMAN[@]}" piv keys info 9a
+run_versioned_feature \
+  "ckman piv keys info" \
+  "piv-metadata" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" piv keys info 9a
 
 section "ckman piv keys export"
-"${CKMAN[@]}" piv keys export \
-  --verify \
-  --pin "$PIV_RECOVERY_PIN" \
-  9a "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
-cmp \
-  "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
-  "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
+run_versioned_feature \
+  "ckman piv keys export" \
+  "piv-metadata" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" piv keys export \
+    --verify \
+    --pin "$PIV_RECOVERY_PIN" \
+    9a "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  cmp \
+    "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
+    "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
+fi
 
 section "Probe PIV attestation support"
 probe_feature \
@@ -172,18 +182,51 @@ cmp \
   "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.der"
 
 section "ckman piv keys import"
-"${CKMAN[@]}" piv keys import \
-  --management-key "$PIV_MANAGEMENT_KEY" \
-  --pin-policy always \
-  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
-"${CKMAN[@]}" piv keys info 9c
-"${CKMAN[@]}" piv keys export \
-  --verify \
-  --pin "$PIV_RECOVERY_PIN" \
-  9c "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
-cmp \
-  "$CANOKEY_USBIP_WORK_DIR/piv-import-public.pem" \
-  "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
+policy_status="$(firmware_feature_status "piv-generate-policies")"
+if [[ "$policy_status" == supported ]]; then
+  "${CKMAN[@]}" piv keys import \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    --pin-policy always \
+    9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
+elif [[ "$policy_status" == unsupported ]]; then
+  unsupported_feature \
+    "PIV key import PIN policy" \
+    "The firmware feature matrix marks piv-generate-policies as unavailable."
+  "${CKMAN[@]}" piv keys import \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
+else
+  probe_feature \
+    "PIV key import PIN policy" \
+    "not supported|invalid instruction|incorrect parameter" \
+    "${CKMAN[@]}" piv keys import \
+      --management-key "$PIV_MANAGEMENT_KEY" \
+      --pin-policy always \
+      9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
+  if [[ "$FEATURE_AVAILABLE" != true ]]; then
+    "${CKMAN[@]}" piv keys import \
+      --management-key "$PIV_MANAGEMENT_KEY" \
+      9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
+  fi
+fi
+run_versioned_feature \
+  "ckman piv keys info for imported key" \
+  "piv-metadata" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" piv keys info 9c
+run_versioned_feature \
+  "ckman piv keys export for imported key" \
+  "piv-metadata" \
+  "not supported|invalid instruction" \
+  "${CKMAN[@]}" piv keys export \
+    --verify \
+    --pin "$PIV_RECOVERY_PIN" \
+    9c "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  cmp \
+    "$CANOKEY_USBIP_WORK_DIR/piv-import-public.pem" \
+    "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-public.pem"
+fi
 
 section "ckman piv certificates import for imported key"
 "${CKMAN[@]}" piv certificates import \

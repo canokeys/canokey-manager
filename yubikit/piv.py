@@ -53,6 +53,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
+from . import canokey
 from .core import (
     BadResponseError,
     InvalidPinError,
@@ -1444,12 +1445,18 @@ class PivSession:
 
         :param slot: The slot containing the key to delete.
         """
-        require_version(self.version, (5, 7, 0))
         slot = SLOT(slot)
         logger.debug(f"Deleting key in slot {slot}")
-        # CanoKey does not support INS_MOVE_KEY, regenerate a dummy key instead
-        data: bytes = Tlv(TAG_GEN_ALGORITHM, int2bytes(KEY_TYPE.ECCP256))
-        self.protocol.send_apdu(0, INS_GENERATE_ASYMMETRIC, 0, slot, Tlv(0xAC, data))
+        if canokey.is_canokey(self.protocol.connection):
+            # All cataloged CanoKey firmware can overwrite a slot but has no
+            # MOVE KEY instruction. Keep this compatibility behavior explicit.
+            data: bytes = Tlv(TAG_GEN_ALGORITHM, int2bytes(KEY_TYPE.ECCP256))
+            self.protocol.send_apdu(
+                0, INS_GENERATE_ASYMMETRIC, 0, slot, Tlv(0xAC, data)
+            )
+        else:
+            require_version(self.version, (5, 7, 0))
+            self.protocol.send_apdu(0, INS_MOVE_KEY, 0xFF, slot)
         logger.info(f"Key deleted in slot {slot}")
 
     def _change_reference(self, ins, p2, value1, value2):

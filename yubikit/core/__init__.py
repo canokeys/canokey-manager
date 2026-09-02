@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 _VERSION_STRING_PATTERN = re.compile(
-    r"[^\d]*(?P<major>\d+).(?P<minor>\d+).(?P<patch>\d+)\b"
+    r"[^\d]*(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)\b"
 )
 
 
@@ -73,8 +73,6 @@ class Version(NamedTuple):
             return cls(
                 int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
             )
-        else:
-            return cls(9, 9, 9)
         raise ValueError("No version found in string")
 
 

@@ -239,6 +239,7 @@ def _read_info_ctap(conn, key_type, interfaces):
             form_factor=FORM_FACTOR.USB_A_KEYCHAIN,
             supported_capabilities=supported_apps,
             is_locked=False,
+            is_cano=key_type == YUBIKEY.CK,
             version_qualifier=VersionQualifier(version),
         )
 

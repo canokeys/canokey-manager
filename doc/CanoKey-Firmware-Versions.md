@@ -29,8 +29,10 @@ mapped from the exact core commit before executing any lifecycle command.
 - APDU layer: a command without Le (case-1) is answered with 61xx chaining; GET RESPONSE without Le never yields data; explicit Le=0x00 means 256 bytes; extended APDU Le is clamped to 1340 bytes; command chaining (CLA=10h) is supported. **ckman must always use short APDUs with an explicit Le.**
 - OATH has no reset instruction (INS 04h); OATH reset is only available through the admin applet (INS 05h).
 - PIV: no MOVE KEY (INS FFh is SET_MANAGEMENT_KEY); management key is always 3-key TDES, default `0102..08` ×3; PIN/PUK are fixed-length 8 bytes, FF-padded, defaults `123456` / `12345678`.
+- PIV slot 9C defaults to PIN policy ONCE whenever metadata is available through 3.0.1, rather than YubiKey's ALWAYS.
 - OpenPGP: RSA private key import uses CRT format; VERIFY with a wrong PIN returns 6982 instead of 63Cx.
 - Admin applet: default PIN `123456`, 3 retries; READ_SN/READ_CONFIG require an explicit Le.
+- Admin PIN handling: use empty-Lc VERIFY to inspect validation state without consuming a retry. Never guess the default PIN; request an explicit PIN when the admin applet is not already verified.
 - CCID interface string is "OpenPGP PIV OATH"; the ATR contains "CanoKey".
 
 ## Per-version details

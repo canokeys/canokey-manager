@@ -82,8 +82,8 @@ third parties. Please refer to your platforms native package manager for
 detailed instructions on how to install, if available.
 
 ==== Windows
-A Windows installer is available to download from the
-https://github.com/Yubico/yubikey-manager/releases/latest[Releases page].
+The CanoKey fork does not publish a standalone Windows installer. Install the
+`canokey-manager` Python package instead; Windows remains covered by CI tests.
 
 ==== MacOS
 A MacOS installer is available to download from the

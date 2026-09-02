@@ -3,9 +3,8 @@ from inspect import Parameter, isgeneratorfunction, signature
 import pytest
 from makefun import wraps
 
-from yubikit.core import TRANSPORT
+from yubikit import canokey as canokey_support
 from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
-from yubikit.management import CAPABILITY
 
 
 def check(check, message="Condition not satisfied"):
@@ -120,11 +119,8 @@ def yk4_fips(status=True):
 
 
 def is_canokey(info) -> bool:
-    """CanoKey devices are identified by the lack of the OTP application."""
-    capabilities = CAPABILITY(
-        info.supported_capabilities.get(TRANSPORT.USB) or CAPABILITY(0)
-    )
-    return not bool(capabilities & CAPABILITY.OTP)
+    """Use the production device identity instead of a capability heuristic."""
+    return canokey_support.is_canokey(info)
 
 
 def canokey(status=True):

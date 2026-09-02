@@ -1,4 +1,4 @@
 #!/bin/sh
 
-# Delete existing installation
-rm -rf /usr/local/ykman
+# Delete existing installations from both the upstream and fork package names.
+rm -rf /usr/local/ykman /usr/local/ckman

@@ -1,8 +1,11 @@
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from yubikit.core import TRANSPORT, YUBIKEY, Tlv
+from ykman import device as device_module
+from yubikit.core import PID, TRANSPORT, YUBIKEY, Tlv
+from yubikit.core.smartcard import SmartCardConnection
 from yubikit.management import (
     CAPABILITY,
     FORM_FACTOR,
@@ -37,6 +40,36 @@ def info_nfc(form_factor, **kwargs):
         },
         **kwargs,
     )
+
+
+def test_device_listing_ignores_unrecognized_pcsc_reader(monkeypatch):
+    unknown = SimpleNamespace(pid=None)
+    canokey = SimpleNamespace(pid=PID.CK_FIDO_CCID)
+    groups = []
+
+    class FakeGroup:
+        def __init__(self, pid):
+            self.pid = pid
+            self.devices = []
+            groups.append(self)
+
+        def add(self, connection_type, device, silent=False):
+            self.devices.append(device)
+
+        def get_devices(self):
+            return self.devices
+
+    monkeypatch.setitem(
+        device_module._CONNECTION_LIST_MAPPING,
+        SmartCardConnection,
+        lambda: [unknown, canokey],
+    )
+    monkeypatch.setattr(device_module, "_PidGroup", FakeGroup)
+
+    devices = device_module._list_all_devices([SmartCardConnection])
+
+    assert devices == [canokey]
+    assert [group.pid for group in groups] == [PID.CK_FIDO_CCID]
 
 
 def test_yk5_formfactors():

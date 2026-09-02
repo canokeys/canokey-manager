@@ -31,7 +31,7 @@ from enum import IntEnum
 import click
 
 from yubikit import canokey
-from yubikit.core import TRANSPORT
+from yubikit.core import TRANSPORT, NotSupportedError
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import CAPABILITY
 from yubikit.openpgp import (
@@ -197,10 +197,13 @@ def set_pin_retries(
     """
     session = ctx.obj["session"]
     if canokey.is_canokey(session.protocol.connection):
-        canokey.require_feature(
-            ctx.obj["info"].version,
-            canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
-        )
+        try:
+            canokey.require_feature(
+                ctx.obj["info"].version,
+                canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
+            )
+        except NotSupportedError as e:
+            raise CliFail(str(e))
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)

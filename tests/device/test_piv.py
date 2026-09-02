@@ -234,6 +234,19 @@ def skip_unsupported_key_type(session, key_type, info, pin_policy=PIN_POLICY.DEF
         pytest.skip(f"{e}")
 
 
+def expected_default_pin_policy(info, slot, upstream_policy):
+    if (
+        condition.is_canokey(info)
+        and slot == SLOT.SIGNATURE
+        and get_feature_status(
+            info.version, CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS
+        )
+        == FeatureStatus.UNSUPPORTED
+    ):
+        return PIN_POLICY.ONCE
+    return upstream_policy
+
+
 class TestCertificateSignatures:
     @pytest.mark.parametrize("key_type", SIGN_KEY_TYPES)
     @pytest.mark.parametrize(
@@ -800,7 +813,9 @@ class TestMetadata:
         data = session.get_slot_metadata(slot)
 
         assert data.key_type == key_type
-        assert data.pin_policy == PIN_POLICY.ALWAYS
+        assert data.pin_policy == expected_default_pin_policy(
+            info, slot, PIN_POLICY.ALWAYS
+        )
         assert data.touch_policy == TOUCH_POLICY.NEVER
         assert data.generated is True
         assert data.public_key.public_bytes(
@@ -837,7 +852,7 @@ class TestMetadata:
         data = session.get_slot_metadata(slot)
 
         assert data.key_type == KEY_TYPE.from_public_key(key.public_key())
-        assert data.pin_policy == pin_policy
+        assert data.pin_policy == expected_default_pin_policy(info, slot, pin_policy)
         assert data.touch_policy == TOUCH_POLICY.NEVER
         assert data.generated is False
         assert data.public_key.public_bytes(

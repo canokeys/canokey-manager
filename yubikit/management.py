@@ -320,6 +320,7 @@ class DeviceInfo:
     fps_version: Version | None = None
     stm_version: Version | None = None
     version_qualifier: VersionQualifier = _DUMMY_VQ
+    is_cano: bool = False
 
     @property
     def _is_bio(self) -> bool:
@@ -709,6 +710,7 @@ class ManagementSession:
                 TRANSPORT.NFC: capabilities,
             },
             is_locked=False,
+            is_cano=True,
             version_qualifier=VersionQualifier(self.version, RELEASE_TYPE.FINAL, 0),
         )
         try:

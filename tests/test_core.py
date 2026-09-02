@@ -1,5 +1,5 @@
-from yubikit.core import Tlv, Oid, bytes2int, int2bytes
 import pytest
+from yubikit.core import Oid, Tlv, Version, bytes2int, int2bytes
 
 OID_TESTS = {
     "1.2.840.10045.3.1.7": b"\x2a\x86\x48\xce\x3d\x03\x01\x07",  # SECP256R1
@@ -12,6 +12,16 @@ OID_TESTS = {
     "1.3.6.1.4.1.3029.1.5.1": b"\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01",  # X25519
     "1.3.6.1.4.1.11591.15.1": b"\x2b\x06\x01\x04\x01\xda\x47\x0f\x01",  # Ed25519
 }
+
+
+def test_version_from_string_rejects_missing_version():
+    with pytest.raises(ValueError, match="No version found"):
+        Version.from_string("development build")
+
+
+def test_version_from_string_requires_dot_separators():
+    with pytest.raises(ValueError, match="No version found"):
+        Version.from_string("version 5x9x2")
 
 
 @pytest.mark.parametrize("oid_str, oid_bytes", OID_TESTS.items())

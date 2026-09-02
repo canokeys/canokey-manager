@@ -39,8 +39,11 @@ PASSWORD = "aaaa"
 @pytest.fixture(autouse=True)
 @condition.capability(CAPABILITY.OATH)
 @condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
-def preconditions(ykman_cli):
-    ykman_cli("oath", "reset", "-f")
+def preconditions(ykman_cli, info):
+    args = ["oath", "reset", "-f"]
+    if condition.is_canokey(info):
+        args.extend(("--admin-pin", "123456"))
+    ykman_cli(*args)
 
 
 @pytest.fixture()

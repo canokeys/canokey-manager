@@ -17,7 +17,7 @@ if [[ "$(firmware_feature_status oath-modern-commands)" == "unsupported" ]]; the
 fi
 
 section "ckman oath reset"
-"${CKMAN[@]}" oath reset --force
+"${CKMAN[@]}" oath reset --admin-pin 123456 --force
 
 section "ckman oath info"
 "${CKMAN[@]}" oath info

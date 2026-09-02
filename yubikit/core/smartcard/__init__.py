@@ -232,19 +232,21 @@ SW1_HAS_MORE_DATA = 0x61
 
 class ResponseChainingProcessor(ApduProcessor):
     def __init__(
-        self, delegate: ApduProcessor, ins_send_remaining: int = INS_SEND_REMAINING
+        self,
+        delegate: ApduProcessor,
+        ins_send_remaining: int = INS_SEND_REMAINING,
+        read_on_success: bool = False,
     ):
         self.delegate = delegate
         self.ins_send_remaining = ins_send_remaining
+        self.read_on_success = read_on_success
 
     def send_apdu(self, cla, ins, p1, p2, data, le):
         response, sw = self.delegate.send_apdu(cla, ins, p1, p2, data, le)
 
         # Read chained response
         buf = b""
-        while sw >> 8 == SW1_HAS_MORE_DATA or (
-            self.ins_send_remaining == 0xA5 and sw == SW.OK
-        ):  # workaround for CanoKey OATH
+        while sw >> 8 == SW1_HAS_MORE_DATA or (self.read_on_success and sw == SW.OK):
             buf += response
             response, sw_n = self.delegate.send_apdu(
                 0, self.ins_send_remaining, 0, 0, b"", 0
@@ -335,11 +337,13 @@ class SmartCardProtocol:
         self,
         smartcard_connection: SmartCardConnection,
         ins_send_remaining: int = INS_SEND_REMAINING,
+        read_on_success: bool = False,
     ):
         self.connection = smartcard_connection
         self._max_apdu_size = _MaxApduSize.NEO
         self._apdu_format = ApduFormat.SHORT
         self._ins_send_remaining = ins_send_remaining
+        self._read_on_success = read_on_success
         self._processor = self._build_base_processor()[0]
 
     def _build_base_processor(self) -> tuple[ApduProcessor, ApduFormatter]:
@@ -353,7 +357,9 @@ class SmartCardProtocol:
             processor = ApduFormatProcessor(self.connection, formatter)
 
         # Add chained response processor
-        processor = ResponseChainingProcessor(processor, self._ins_send_remaining)
+        processor = ResponseChainingProcessor(
+            processor, self._ins_send_remaining, self._read_on_success
+        )
 
         return processor, formatter
 

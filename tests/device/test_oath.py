@@ -25,7 +25,7 @@ def session(ccid_connection, info, scp_params):
         oath = OathSession(ccid_connection, scp_params)
     else:
         oath = OathSession(ccid_connection)
-    oath.reset()
+    oath.reset("123456" if condition.is_canokey(info) else None)
 
     if fips:
         oath.set_key(KEY)
