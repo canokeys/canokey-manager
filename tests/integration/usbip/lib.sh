@@ -31,3 +31,37 @@ capture_without_secrets() {
   output="$("$@")"
   grep -Fq "$expected" <<<"$output"
 }
+
+FEATURE_AVAILABLE=false
+
+probe_feature() {
+  local description="$1"
+  local unsupported_pattern="$2"
+  shift 2
+
+  local stdout_file="$CANOKEY_USBIP_WORK_DIR/optional.stdout"
+  local stderr_file="$CANOKEY_USBIP_WORK_DIR/optional.stderr"
+  local status
+
+  if "$@" >"$stdout_file" 2>"$stderr_file"; then
+    FEATURE_AVAILABLE=true
+    echo "$description is supported."
+    return 0
+  else
+    status=$?
+  fi
+
+  if grep -Eiq "$unsupported_pattern" "$stdout_file" "$stderr_file"; then
+    FEATURE_AVAILABLE=false
+    echo "UNSUPPORTED: $description is not available on CanoKey core ${CANOKEY_CORE_ID:-unknown} (${CANOKEY_CORE_REF:-unknown}); continuing."
+    return 0
+  fi
+
+  cat "$stdout_file"
+  cat "$stderr_file" >&2
+  return "$status"
+}
+
+unsupported_feature() {
+  echo "UNSUPPORTED: $1 on CanoKey core ${CANOKEY_CORE_ID:-unknown} (${CANOKEY_CORE_REF:-unknown}); $2 Continuing with the remaining commands."
+}

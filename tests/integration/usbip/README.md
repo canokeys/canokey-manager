@@ -5,7 +5,7 @@ real USB, CCID, PC/SC, and CanoKey firmware stack provided by
 `canokey-usbip/compat/run`. Every device operation explicitly selects the
 reader from `CANOKEY_PCSC_READER`.
 
-## Functionally covered
+## Command coverage
 
 - Top level: `info`, `apdu`
 - PIV: `info`, `reset`; every command under `access`, `keys`, `certificates`,
@@ -15,18 +15,22 @@ reader from `CANOKEY_PCSC_READER`.
   `certificates`, subject to the CanoKey-specific negative cases below
 
 The PIV and OATH tests provision data, verify round trips, and clean it up. The
-OpenPGP test changes and recovers PINs, imports an attestation key and
-certificate, verifies the certificate round trip, and resets the applet at the
-end.
+OpenPGP test changes and recovers PINs and, when supported, imports an
+attestation key and certificate and verifies the certificate round trip. It
+resets the applet at the end.
 
-## Expected CanoKey rejections
+## Firmware-dependent commands
 
-- `piv access set-retries`: the catalog CanoKey core does not implement PIV
-  retry counter configuration.
-- `openpgp access set-retries`: CanoKey does not implement SET PIN RETRIES.
-- `openpgp keys attest`: `ckman` cannot provision a normal OpenPGP signing key,
-  and the catalog firmware starts without one. The command is exercised and
-  required to reject the missing prerequisite.
+The test follows the upstream device-test model: known device exclusions are
+reported before execution, and discoverable capabilities are probed before a
+dependent command runs. CanoKey core ID/ref, rather than an applet protocol
+version, identifies the tested firmware. Unsupported features are reported and
+do not stop the rest of the lifecycle. Ordinary command failures remain fatal.
+
+- PIV retry counter configuration and attestation
+- OpenPGP retry counter configuration
+- OpenPGP attestation key, certificate, touch policy, and signing-key
+  attestation
 
 ## Not covered by the current hosted-runner path
 

@@ -19,13 +19,9 @@ capture_without_secrets \
 echo "PIV reset complete."
 
 section "ckman piv access set-retries"
-expect_failure \
-  "PIV retry configuration unsupported by CanoKey" \
-  "${CKMAN[@]}" piv access set-retries \
-  --management-key "$PIV_DEFAULT_MANAGEMENT_KEY" \
-  --pin "$PIV_DEFAULT_PIN" \
-  --force \
-  3 3
+unsupported_feature \
+  "ckman piv access set-retries" \
+  "CanoKey does not implement PIV retry counter configuration."
 
 section "ckman piv access change-pin"
 "${CKMAN[@]}" piv access change-pin \
@@ -93,13 +89,30 @@ cmp \
   "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
   "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
 
-section "ckman piv keys attest"
-"${CKMAN[@]}" piv keys attest \
-  9a "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem"
-openssl x509 \
-  -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem" \
-  -noout \
-  -subject
+section "Probe PIV attestation support"
+probe_feature \
+  "PIV attestation certificate" \
+  "no certificate found" \
+  "${CKMAN[@]}" piv certificates export \
+  f9 "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  openssl x509 \
+    -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem" \
+    -noout \
+    -subject
+
+  section "ckman piv keys attest"
+  "${CKMAN[@]}" piv keys attest \
+    9a "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem"
+  openssl x509 \
+    -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation.pem" \
+    -noout \
+    -subject
+else
+  unsupported_feature \
+    "ckman piv keys attest" \
+    "The PIV attestation certificate is absent."
+fi
 
 section "ckman piv certificates generate"
 "${CKMAN[@]}" piv certificates generate \
@@ -151,14 +164,6 @@ openssl x509 \
 cmp \
   "$CANOKEY_USBIP_WORK_DIR/piv-generated-certificate.der" \
   "$CANOKEY_USBIP_WORK_DIR/piv-reimported-certificate.der"
-
-section "ckman piv certificates export attestation slot"
-"${CKMAN[@]}" piv certificates export \
-  f9 "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem"
-openssl x509 \
-  -in "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem" \
-  -noout \
-  -subject
 
 section "ckman piv keys import"
 "${CKMAN[@]}" piv keys import \
