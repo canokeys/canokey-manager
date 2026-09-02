@@ -188,10 +188,11 @@ jobs:
 
       - name: Verify ckman smoke command syntax
         run: |
-          uv run ckman --help
-          uv run ckman piv --help
-          uv run ckman oath --help
-          uv run ckman openpgp --help
+          uv run ckman --help >/dev/null
+          uv run ckman piv --help >/dev/null
+          uv run ckman oath --help >/dev/null
+          uv run ckman openpgp --help >/dev/null
+          echo "ckman integration command syntax verified."
 
       - name: Configure PC/SC for the noninteractive runner
         shell: bash
