@@ -22,17 +22,21 @@ run_applet_tests() {
     "$@"
 }
 
+status=0
+
 run_applet_tests \
   "OATH" \
   tests/device/cli/test_oath.py \
-  tests/device/test_oath.py
+  tests/device/test_oath.py || status=1
 
 run_applet_tests \
   "PIV" \
   tests/device/cli/piv \
-  tests/device/test_piv.py
+  tests/device/test_piv.py || status=1
 
 run_applet_tests \
   "OpenPGP" \
   tests/device/cli/test_openpgp.py \
-  tests/device/test_openpgp.py
+  tests/device/test_openpgp.py || status=1
+
+exit "$status"

@@ -38,12 +38,13 @@ CRED_DATA = CredentialData("name", OATH_TYPE.TOTP, HASH_ALGORITHM.SHA1, b"secret
 
 class TestFunctions:
     @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 5, 3)
-    def test_rename(self, session):
+    def test_rename(self, session, info):
+        challenge = b"12345678" if condition.is_canokey(info) else b"challenge"
         cred = session.put_credential(CRED_DATA)
         new_id = session.rename_credential(cred.id, "newname", "newissuer")
         with pytest.raises(ApduError):
-            session.calculate(cred.id, b"challenge")
-        session.calculate(new_id, b"challenge")
+            session.calculate(cred.id, challenge)
+        session.calculate(new_id, challenge)
 
     @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 5, 3)
     def test_rename_to_existing(self, session):
