@@ -163,11 +163,11 @@ def test_change_pin_retries(session, keys, version, info):
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_pin(NON_DEFAULT_PIN)
-        assert e.value.attempts_remaining == 4
+    assert e.value.attempts_remaining == 4
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_admin(NON_DEFAULT_ADMIN_PIN)
-        assert e.value.attempts_remaining == attempts[2] - 1
+    assert e.value.attempts_remaining == attempts[2] - 1
 
 
 def test_import_requires_admin(session):

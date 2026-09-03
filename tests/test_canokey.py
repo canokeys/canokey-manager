@@ -195,7 +195,7 @@ def test_openpgp_without_algorithm_information_still_writes_attributes():
     assert written == [(KEY_REF.SIG.algorithm_attributes_do, attributes)]
 
 
-def test_openpgp_set_pin_attempts_ignores_synthetic_canokey_version():
+def test_openpgp_set_pin_attempts_uses_admin_firmware_version():
     class Protocol:
         connection = FakeConnection(pid=PID.CK_FIDO_CCID)
 
@@ -209,11 +209,37 @@ def test_openpgp_set_pin_attempts_ignores_synthetic_canokey_version():
     session = object.__new__(OpenPgpSession)
     session.protocol = cast(Any, protocol)
     session._version = Version(1, 0, 0)
+    session._canokey_firmware_version = Version(3, 1, 0)
 
     session.set_pin_attempts(5, 6, 7)
 
     assert len(protocol.commands) == 1
     assert protocol.commands[0][-1] == b"\x05\x06\x07"
+
+
+@pytest.mark.parametrize(
+    ("firmware_version", "error"),
+    [
+        (Version(3, 0, 1), NotSupportedError),
+        (Version(3, 1, 1), UnknownFeatureError),
+    ],
+)
+def test_openpgp_set_pin_attempts_rejects_unavailable_canokey_feature(
+    firmware_version, error
+):
+    class Protocol:
+        connection = FakeConnection(pid=PID.CK_FIDO_CCID)
+
+        def send_apdu(self, *args):
+            pytest.fail("unexpected SET_PIN_RETRIES command")
+
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = Version(5, 5, 5)
+    session._canokey_firmware_version = firmware_version
+
+    with pytest.raises(error):
+        session.set_pin_attempts(5, 6, 7)
 
 
 @pytest.mark.parametrize(

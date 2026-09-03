@@ -985,10 +985,12 @@ class OpenPgpSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_firmware_version: Version | None = None
         self._canokey_missing_data_object_wrapping = False
         self._canokey_has_algorithm_information = True
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            self._canokey_firmware_version = firmware_version
             wrapping_status = canokey.get_feature_status(
                 firmware_version, canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING
             )
@@ -1183,7 +1185,12 @@ class OpenPgpSession:
         :param reset_attempts: The Reset Code attempts.
         :param admin_attempts: The Admin PIN attempts.
         """
-        if not canokey.is_canokey(self.protocol.connection):
+        if self._canokey_firmware_version is not None:
+            canokey.require_feature(
+                self._canokey_firmware_version,
+                canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
+            )
+        else:
             if self.version[0] == 1:
                 # YubiKey NEO
                 require_version(self.version, (1, 0, 7))
