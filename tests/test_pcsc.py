@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fido2.ctap import STATUS, CtapError
@@ -7,7 +8,7 @@ from fido2.hid import CTAPHID
 from ykman import pcsc
 from yubikit.core import PID
 from yubikit.core.fido import FidoConnection, SmartCardCtapDevice
-from yubikit.core.smartcard import SW, ApduError
+from yubikit.core.smartcard import SW, ApduError, SmartCardProtocol
 
 CTAP1_VERSION_APDU = bytes.fromhex("000300000000000000")
 
@@ -20,7 +21,7 @@ def _ctap_device(response=b"", sw=SW.OK, is_canokey=True):
             return response
 
     device = SmartCardCtapDevice.__new__(SmartCardCtapDevice)
-    device.protocol = Protocol()
+    device.protocol = cast(SmartCardProtocol, Protocol())
     device._is_canokey = is_canokey
     return device
 
@@ -90,7 +91,7 @@ def test_canokey_ctap1_response_keeps_polling_during_touch():
             return response
 
     device = SmartCardCtapDevice.__new__(SmartCardCtapDevice)
-    device.protocol = Protocol()
+    device.protocol = cast(SmartCardProtocol, Protocol())
     device._is_canokey = True
 
     assert device.call(CTAPHID.MSG, CTAP1_VERSION_APDU) == b"registered\x90\x00"
