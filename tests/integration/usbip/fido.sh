@@ -101,7 +101,11 @@ case "$config_status" in
     capture_without_secrets \
       "Minimum PIN length set." \
       "${CKMAN[@]}" fido access set-min-length --pin "$FIDO_PIN" 6
-    "${CKMAN[@]}" fido info | grep -Fq "Minimum PIN length: 6"
+    minimum_pin_length="$(
+      "${CKMAN[@]}" fido info |
+        sed -n 's/^Minimum PIN length:[[:space:]]*//p'
+    )"
+    [[ "$minimum_pin_length" == 6 ]]
 
     section "ckman fido access force-change"
     capture_without_secrets \

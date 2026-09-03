@@ -81,6 +81,10 @@ openssl genpkey \
   -out "$CANOKEY_USBIP_WORK_DIR/piv-rsa3072-private.pem" \
   2>/dev/null
 openssl genpkey \
+  -algorithm ED25519 \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-private.pem" \
+  2>/dev/null
+openssl genpkey \
   -algorithm X25519 \
   -out "$CANOKEY_USBIP_WORK_DIR/piv-x25519-private.pem" \
   2>/dev/null
@@ -277,12 +281,11 @@ if [[ "$FEATURE_AVAILABLE" == true ]]; then
 fi
 
 run_versioned_feature \
-  "PIV Ed25519 and X25519 CLI paths" \
+  "PIV Ed25519 and X25519 import paths" \
   "piv-ed25519-x25519-fixes" \
-  "${CKMAN[@]}" piv keys generate \
-  --algorithm ED25519 \
+  "${CKMAN[@]}" piv keys import \
   --management-key "$PIV_MANAGEMENT_KEY" \
-  84 "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-public.pem"
+  84 "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-private.pem"
 if [[ "$FEATURE_AVAILABLE" == true ]]; then
   "${CKMAN[@]}" piv keys import \
     --management-key "$PIV_MANAGEMENT_KEY" \
