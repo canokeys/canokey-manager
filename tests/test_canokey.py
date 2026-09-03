@@ -1,5 +1,6 @@
 """Unit tests for yubikit.canokey (fork-only module)."""
 
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -9,6 +10,7 @@ from yubikit.canokey import (
     CATALOG_LATEST_VERSION,
     CATALOG_VERSIONS,
     FEATURE_MATRIX,
+    INS_READ_SN,
     INS_READ_VERSION,
     INS_RESET_CTAP,
     INS_RESET_OATH,
@@ -32,6 +34,7 @@ from yubikit.core import (
 )
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import ManagementSession
+from yubikit.oath import OATH_TYPE, TAG_NAME, TAG_RESPONSE, TAG_TRUNCATED
 from yubikit.openpgp import DO, KEY_REF, OpenPgpSession
 
 
@@ -196,6 +199,9 @@ def test_oath_calculate_uses_audited_response_form(legacy, tag):
 
     session = object.__new__(OathSession)
     session.protocol = cast(Any, Protocol())
+    session._instructions = cast(
+        Any, SimpleNamespace(calculate=0xA2, calculate_p2=0x01)
+    )
     session._canokey_truncated_calculate_response = legacy
 
     assert session.calculate(b"credential", b"challenge") == b"hash"
@@ -210,6 +216,9 @@ def test_oath_calculate_legacy_compatibility_preserves_apdu_errors():
 
     session = object.__new__(OathSession)
     session.protocol = cast(Any, Protocol())
+    session._instructions = cast(
+        Any, SimpleNamespace(calculate=0xA2, calculate_p2=0x01)
+    )
     session._canokey_truncated_calculate_response = True
 
     with pytest.raises(ApduError) as exc_info:
@@ -294,6 +303,21 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
     ("feature", "version", "expected"),
     [
         (
+            CanoKeyFeature.OATH_LEGACY_COMMANDS,
+            Version(1, 3, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_LEGACY_COMMANDS,
+            Version(1, 5, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_LEGACY_COMMANDS,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
+        (
             CanoKeyFeature.OATH_MODERN_COMMANDS,
             Version(1, 3, 0),
             FeatureStatus.UNSUPPORTED,
@@ -305,6 +329,16 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
         ),
         (
             CanoKeyFeature.OATH_MODERN_COMMANDS,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
+        (
+            CanoKeyFeature.OATH_TOUCH,
+            Version(1, 3, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_TOUCH,
             Version(3, 0, 2),
             FeatureStatus.UNKNOWN,
         ),
@@ -710,4 +744,87 @@ def test_oath_fixed_firmware_does_not_send_unneeded_remaining_command():
         pid=PID.CK_FIDO_CCID,
     )
     OathSession(conn)
+    assert not conn._script
+
+
+def _legacy_oath_session(extra_script=()):
+    from yubikit.oath import OathSession
+
+    select_oath = bytes([0, 0xA4, 0x04, 0, 7]) + bytes.fromhex("A0000005272101")
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"1.3", 0x9000)),
+            (bytes([0, INS_READ_SN, 0, 0]), (b"\x01\x02\x03\x04", 0x9000)),
+            (select_oath, (b"", 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+            *extra_script,
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+    return OathSession(conn), conn
+
+
+def test_legacy_oath_uses_legacy_commands_and_response_framing():
+    legacy_list = bytes(Tlv(TAG_NAME, b"Issuer:name")) + bytes(
+        Tlv(TAG_RESPONSE, b"\x21\x06")
+    )
+    legacy_calculate = bytes(Tlv(TAG_TRUNCATED, b"\x06\x01\x02\x03\x04"))
+    legacy_calculate_all = bytes(Tlv(TAG_NAME, b"Issuer:name")) + legacy_calculate
+    session, conn = _legacy_oath_session(
+        [
+            (bytes([0, 0x03, 0, 0]), (legacy_list, 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+            (bytes([0, 0x04, 0, 0]), (legacy_calculate, 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+            (bytes([0, 0x05, 0, 0]), (legacy_calculate_all, 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+            (bytes([0, 0x04, 0, 0]), (legacy_calculate, 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+        ]
+    )
+
+    credentials = session.list_credentials()
+    assert [(c.issuer, c.name, c.oath_type) for c in credentials] == [
+        ("Issuer", "name", OATH_TYPE.TOTP)
+    ]
+    assert session.calculate(credentials[0].id, b"challenge") == b"\x01\x02\x03\x04"
+    entries = session.calculate_all(timestamp=30)
+    assert [credential.id for credential in entries] == [b"Issuer:name"]
+    assert next(iter(entries.values())) is not None
+    assert session.calculate_code(credentials[0], timestamp=30).value == "909060"
+    assert session.version == Version(0, 0, 0)
+    assert not session.locked
+    assert not conn._script
+
+
+def test_legacy_oath_rejects_conflicting_modern_commands_before_apdu():
+    session, conn = _legacy_oath_session()
+    sent = len(conn.sent)
+
+    for operation in (
+        lambda: session.validate(b"key"),
+        lambda: session.set_key(b"key"),
+        session.unset_key,
+        lambda: session.rename_credential(b"old", "new"),
+    ):
+        with pytest.raises(NotSupportedError):
+            operation()
+
+    assert len(conn.sent) == sent
+
+
+def test_unknown_firmware_does_not_select_an_oath_dialect():
+    from yubikit.oath import OathSession
+
+    conn = FakeConnection(
+        [
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.2", 0x9000)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+
+    with pytest.raises(UnknownFeatureError, match="oath-legacy-commands"):
+        OathSession(conn)
     assert not conn._script

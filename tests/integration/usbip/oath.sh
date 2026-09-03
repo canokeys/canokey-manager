@@ -9,16 +9,28 @@ OATH_PASSWORD="usbip-oath-password"
 OATH_NEW_PASSWORD="usbip-oath-password-2"
 
 oath_status="$(firmware_feature_status oath-modern-commands)"
-if [[ "$oath_status" == "unsupported" ]]; then
-  section "ckman oath command lifecycle"
-  unsupported_feature \
-    "the modern ckman OATH command lifecycle" \
-    "Firmware before 1.5.2 uses the legacy CanoKey OATH instruction set."
-  exit 0
-elif [[ "$oath_status" == "unknown" ]]; then
-  echo "ERROR: UNKNOWN: oath-modern-commands has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
-  exit 1
-fi
+legacy_oath=false
+case "$oath_status" in
+  supported) ;;
+  unsupported)
+    legacy_status="$(firmware_feature_status oath-legacy-commands)"
+    case "$legacy_status" in
+      supported) legacy_oath=true ;;
+      unsupported)
+        echo "ERROR: no supported OATH command dialect for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+        exit 1
+        ;;
+      unknown)
+        echo "ERROR: UNKNOWN: oath-legacy-commands has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  unknown)
+    echo "ERROR: UNKNOWN: oath-modern-commands has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+    exit 1
+    ;;
+esac
 
 section "ckman oath reset"
 "${CKMAN[@]}" oath reset --admin-pin 123456 --force
@@ -47,9 +59,17 @@ printf '%s\n' "$oath_code"
 [[ "$oath_code" =~ ^[0-9]{6}$ ]]
 
 section "ckman oath accounts rename"
-"${CKMAN[@]}" oath accounts rename \
-  --force \
-  "ckman:usbip-totp" "ckman:usbip-renamed"
+primary_account="ckman:usbip-totp"
+if [[ "$legacy_oath" == "true" ]]; then
+  unsupported_feature \
+    "ckman oath accounts rename" \
+    "Firmware 1.3 does not implement credential rename."
+else
+  "${CKMAN[@]}" oath accounts rename \
+    --force \
+    "$primary_account" "ckman:usbip-renamed"
+  primary_account="ckman:usbip-renamed"
+fi
 
 section "ckman oath accounts uri"
 "${CKMAN[@]}" oath accounts uri \
@@ -104,37 +124,44 @@ capture_without_secrets \
   "usbip-generated"
 echo "Generated OATH account added without exposing its secret."
 
-section "ckman oath access change"
-"${CKMAN[@]}" oath access change \
-  --new-password "$OATH_PASSWORD"
+if [[ "$legacy_oath" == "true" ]]; then
+  section "ckman oath access password protection"
+  unsupported_feature \
+    "ckman oath access password protection" \
+    "Firmware 1.3 does not implement SET_CODE or VALIDATE."
+else
+  section "ckman oath access change"
+  "${CKMAN[@]}" oath access change \
+    --new-password "$OATH_PASSWORD"
 
-section "ckman oath access remember"
-"${CKMAN[@]}" oath access remember \
-  --password "$OATH_PASSWORD"
-remembered_accounts="$("${CKMAN[@]}" oath accounts list)"
-grep -Fq "usbip-generated" <<<"$remembered_accounts"
+  section "ckman oath access remember"
+  "${CKMAN[@]}" oath access remember \
+    --password "$OATH_PASSWORD"
+  remembered_accounts="$("${CKMAN[@]}" oath accounts list)"
+  grep -Fq "usbip-generated" <<<"$remembered_accounts"
 
-section "ckman oath access forget remembered password"
-"${CKMAN[@]}" oath access forget
-password_accounts="$("${CKMAN[@]}" oath accounts list --password "$OATH_PASSWORD")"
-grep -Fq "usbip-generated" <<<"$password_accounts"
+  section "ckman oath access forget remembered password"
+  "${CKMAN[@]}" oath access forget
+  password_accounts="$("${CKMAN[@]}" oath accounts list --password "$OATH_PASSWORD")"
+  grep -Fq "usbip-generated" <<<"$password_accounts"
 
-section "ckman oath access change and remember"
-"${CKMAN[@]}" oath access change \
-  --password "$OATH_PASSWORD" \
-  --new-password "$OATH_NEW_PASSWORD" \
-  --remember
-remembered_accounts="$("${CKMAN[@]}" oath accounts list)"
-grep -Fq "usbip-generated" <<<"$remembered_accounts"
+  section "ckman oath access change and remember"
+  "${CKMAN[@]}" oath access change \
+    --password "$OATH_PASSWORD" \
+    --new-password "$OATH_NEW_PASSWORD" \
+    --remember
+  remembered_accounts="$("${CKMAN[@]}" oath accounts list)"
+  grep -Fq "usbip-generated" <<<"$remembered_accounts"
 
-section "ckman oath access clear password"
-"${CKMAN[@]}" oath access change \
-  --password "$OATH_NEW_PASSWORD" \
-  --clear
+  section "ckman oath access clear password"
+  "${CKMAN[@]}" oath access change \
+    --password "$OATH_NEW_PASSWORD" \
+    --clear
+fi
 
 section "ckman oath accounts delete"
 for account in \
-  "ckman:usbip-renamed" \
+  "$primary_account" \
   "ckman:usbip-uri" \
   "ckman:usbip-pskc" \
   "usbip-hotp" \

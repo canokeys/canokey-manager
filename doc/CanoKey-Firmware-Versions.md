@@ -42,7 +42,11 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 ### 1.3
 - USB VID/PID is `20A0:42D4`; manufacturer is "canokeys.org" and product is "CanoKey"
 - Admin READ_VERSION, READ_SN, and READ_CONFIG provide device identification and configuration
-- OATH uses the legacy instruction set: PUT 01 / DELETE 02 / LIST 03 / CALCULATE 04 / CALCULATE_ALL 05 / SEND_REMAINING 06 / SET_DEFAULT 55; SELECT returns no version TLV and there is no password protection
+- OATH uses the legacy instruction set: PUT 01 / DELETE 02 / LIST 03 /
+  CALCULATE 04 / CALCULATE_ALL 05 / SEND_REMAINING 06 / SET_DEFAULT 55;
+  SELECT returns no version TLV. TOTP/HOTP, SHA1/SHA256, touch, list,
+  calculate, and delete are supported. Password protection, rename, SHA512,
+  and full-HMAC responses are not supported.
 - PIV reports 5.0.0 and supports RSA2048, ECCP256, and ECCP384
 - OpenPGP GET DATA 65/6E/7A returns the contents without the constructed outer tag
 - OpenPGP standard UIF data objects D6/D7/D8 are absent; touch-policy commands
@@ -111,7 +115,19 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **OpenPGP constructed data objects**: GET DATA 65/6E/7A omits its
   constructed outer tag through 1.6.2. ckman restores only those three tags on
   audited pre-2.0 firmware; 2.0.0 and newer responses remain untouched.
-- **OATH dialects**: catalog version 1.3 uses the legacy instruction set (send-remaining 06h, no version TLV, no password protection); 1.5.2 and newer use the YubiKey set (send-remaining A5h). A locked OATH applet answers A5h with 6982, not 6985.
+- **OATH dialects**: catalog version 1.3 uses the legacy instruction set
+  (LIST 03h, CALCULATE 04h, CALCULATE_ALL 05h, SEND_REMAINING 06h, and
+  P2=00h for both calculation commands). ckman selects this dialect only when
+  the firmware matrix marks it supported and uses the admin serial to provide
+  a stable session device ID because SELECT has no version or salt TLV.
+  Firmware 1.5.2 and newer use the YubiKey set (SEND_REMAINING A5h,
+  CALCULATE_ALL P2=01h, and truncated CALCULATE P2=01h).
+  A locked modern OATH applet answers A5h with 6982, not 6985.
+- **OATH 1.3 unsupported operations**: SET_CODE/VALIDATE, RENAME, SHA512, and
+  full-HMAC calculation are confirmed absent. ckman rejects password and
+  rename operations before their colliding legacy instruction bytes can be
+  sent. Other OATH operations execute normally; transport, permission, and
+  unexpected APDU errors remain failures.
 - **OATH data limits**: HOTP counters start at 1; CALCULATE rejects challenges longer than 8 bytes; LIST/CALCULATE_ALL may silently drop records that exactly fill the response buffer.
 - **OATH full response**: 1.5.2 through 1.6.2 always return the truncated
   tag-76h response even for P2=0. Its four-byte payload has already undergone
@@ -174,8 +190,10 @@ The same matrix records protocol-correct framing/status boundaries for
 normalized narrowly so their commands still execute; an unknown newer
 firmware fails closed instead of inheriting either compatibility path.
 
-It also records the independently confirmed 2.0.0 boundaries for
-`oath-full-response`, `oath-rename-collision-check`,
+It also records the independently confirmed OATH dialect and touch boundaries,
+including legacy commands and touch support on 1.3, modern commands from
+1.5.2, and the 2.0.0 boundaries for `oath-full-response`,
+`oath-rename-collision-check`,
 `piv-select-resets-security-state`, and `openpgp-rsa4096-generation`. Tests gate
 only the missing semantics; adjacent supported operations continue to execute.
 

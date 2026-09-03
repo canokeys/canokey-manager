@@ -53,7 +53,9 @@ _FIRMWARE_VERSION_PATTERN = re.compile(
 class CanoKeyFeature(str, Enum):
     """Host-visible features whose support depends on CanoKey firmware."""
 
+    OATH_LEGACY_COMMANDS = "oath-legacy-commands"
     OATH_MODERN_COMMANDS = "oath-modern-commands"
+    OATH_TOUCH = "oath-touch"
     OATH_FULL_RESPONSE = "oath-full-response"
     OATH_RENAME_COLLISION_CHECK = "oath-rename-collision-check"
     OPENPGP_ALGORITHM_INFORMATION = "openpgp-algorithm-information"
@@ -130,8 +132,15 @@ CATALOG_LATEST_VERSION = CATALOG_VERSIONS[-1]
 # Hardware provisioning state, such as the presence of attestation material, is
 # intentionally not listed here and must be detected with a runtime probe.
 FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
+    CanoKeyFeature.OATH_LEGACY_COMMANDS: FeatureRule(
+        (FirmwareRange(Version(1, 3, 0), Version(1, 3, 0)),),
+        CATALOG_LATEST_VERSION,
+    ),
     CanoKeyFeature.OATH_MODERN_COMMANDS: FeatureRule(
         (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.OATH_TOUCH: FeatureRule(
+        (FirmwareRange(Version(1, 3, 0)),), CATALOG_LATEST_VERSION
     ),
     CanoKeyFeature.OATH_FULL_RESPONSE: FeatureRule(
         (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION

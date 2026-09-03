@@ -1,6 +1,5 @@
 import pytest
-
-from yubikit.canokey import CanoKeyFeature
+from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT
 from yubikit.core.smartcard import AID, SW, ApduError
 from yubikit.management import CAPABILITY
@@ -18,7 +17,6 @@ KEY = bytes.fromhex("01020304050607080102030405060708")
 
 @pytest.fixture
 @condition.capability(CAPABILITY.OATH)
-@condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
 def session(ccid_connection, info, scp_params):
     fips = CAPABILITY.OATH in info.fips_capable
     if ccid_connection.transport == TRANSPORT.NFC and fips:
@@ -56,6 +54,7 @@ class TestFunctions:
 
 class TestLockPreventsAccess:
     @pytest.fixture(autouse=True)
+    @condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
     def set_lock(self, session):
         assert not session.locked
         session.put_credential(CRED_DATA)
@@ -161,10 +160,13 @@ class TestHmacVectors:
     @pytest.mark.parametrize("params", HMAC_PARAMS, ids=_ids_hmac)
     def test_vector(self, info, session, params):
         key, challenge, hash_algorithm, expected = params
-        if hash_algorithm == HASH_ALGORITHM.SHA512 and not condition.is_canokey(info):
-            if info.version[0] <= 4:
-                if info.is_fips or info.version < (4, 3, 1):
-                    pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
+        if (
+            hash_algorithm == HASH_ALGORITHM.SHA512
+            and not condition.is_canokey(info)
+            and info.version[0] <= 4
+            and (info.is_fips or info.version < (4, 3, 1))
+        ):
+            pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
         if condition.is_canokey(info) and len(challenge) > 8:
             pytest.skip("CanoKey OATH rejects challenges longer than 8 bytes")
         cred = session.put_credential(
@@ -208,10 +210,17 @@ class TestTotpVectors:
     )
     def test_vector(self, info, session, params, digits):
         timestamp, hash_algorithm, value, key = params
-        if hash_algorithm == HASH_ALGORITHM.SHA512 and not condition.is_canokey(info):
-            if info.version[0] <= 4:
-                if info.is_fips or info.version < (4, 3, 1):
-                    pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
+        if hash_algorithm == HASH_ALGORITHM.SHA512:
+            if condition.is_canokey(info):
+                if (
+                    condition.canokey_feature_status(
+                        info, CanoKeyFeature.OATH_MODERN_COMMANDS
+                    )
+                    == FeatureStatus.UNSUPPORTED
+                ):
+                    pytest.skip("CanoKey firmware does not support OATH SHA512")
+            elif info.version[0] <= 4 and (info.is_fips or info.version < (4, 3, 1)):
+                pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
 
         cred = session.put_credential(
             CredentialData("test", OATH_TYPE.TOTP, hash_algorithm, key, digits)

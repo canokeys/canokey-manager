@@ -56,6 +56,22 @@ INS_VALIDATE = 0xA3
 INS_CALCULATE_ALL = 0xA4
 INS_SEND_REMAINING = 0xA5
 
+
+@dataclass(frozen=True)
+class _InstructionSet:
+    list: int
+    calculate: int
+    calculate_p2: int
+    calculate_all: int
+    send_remaining: int
+    calculate_all_p2: int
+
+
+_MODERN_INSTRUCTIONS = _InstructionSet(
+    INS_LIST, INS_CALCULATE, 0x01, INS_CALCULATE_ALL, INS_SEND_REMAINING, 0x01
+)
+_LEGACY_INSTRUCTIONS = _InstructionSet(0x03, 0x04, 0x00, 0x05, 0x06, 0x00)
+
 TOTP_ID_PATTERN = re.compile(r"^((\d+)/)?(([^:]+):)?(.+)$")
 
 MASK_ALGO = 0x0F
@@ -273,9 +289,19 @@ class OathSession:
         scp_key_params: ScpKeyParams | None = None,
     ):
         read_on_success = False
+        self._legacy = False
+        self._legacy_salt = b""
+        self._instructions = _MODERN_INSTRUCTIONS
         self._canokey_truncated_calculate_response = False
         if canokey.is_canokey(connection):
-            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            admin = canokey.CanoKeyAdminSession(connection)
+            firmware_version = admin.read_version()
+            legacy_status = get_feature_status(
+                firmware_version, CanoKeyFeature.OATH_LEGACY_COMMANDS
+            )
+            modern_status = get_feature_status(
+                firmware_version, CanoKeyFeature.OATH_MODERN_COMMANDS
+            )
             chaining_status = get_feature_status(
                 firmware_version, CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX
             )
@@ -283,6 +309,8 @@ class OathSession:
                 firmware_version, CanoKeyFeature.OATH_FULL_RESPONSE
             )
             for feature, status in (
+                (CanoKeyFeature.OATH_LEGACY_COMMANDS, legacy_status),
+                (CanoKeyFeature.OATH_MODERN_COMMANDS, modern_status),
                 (CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX, chaining_status),
                 (CanoKeyFeature.OATH_FULL_RESPONSE, full_response_status),
             ):
@@ -291,16 +319,30 @@ class OathSession:
                         f"{feature.value} support is unknown for CanoKey firmware "
                         f"{firmware_version}"
                     )
+            if legacy_status == FeatureStatus.SUPPORTED:
+                if modern_status == FeatureStatus.SUPPORTED:
+                    raise BadResponseError(
+                        f"Conflicting OATH dialects for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
+                self._legacy = True
+                self._legacy_salt = struct.pack(">I", admin.read_serial())
+                self._instructions = _LEGACY_INSTRUCTIONS
+            elif modern_status != FeatureStatus.SUPPORTED:
+                raise NotSupportedError(
+                    f"OATH commands are not supported by CanoKey firmware "
+                    f"{firmware_version}"
+                )
             read_on_success = chaining_status == FeatureStatus.UNSUPPORTED
             self._canokey_truncated_calculate_response = (
                 full_response_status == FeatureStatus.UNSUPPORTED
             )
         self.protocol = SmartCardProtocol(
-            connection, INS_SEND_REMAINING, read_on_success=read_on_success
+            connection,
+            self._instructions.send_remaining,
+            read_on_success=read_on_success,
         )
-        self._version, self._salt, self._challenge = _parse_select(
-            self.protocol.select(AID.OATH)
-        )
+        self._version, self._salt, self._challenge = self._select()
         self.protocol.configure(self.version)
 
         if scp_key_params:
@@ -316,6 +358,22 @@ class OathSession:
             f"OATH session initialized (version={self.version}, "
             f"has_key={self._has_key})"
         )
+
+    def _select(self):
+        response = self.protocol.select(AID.OATH)
+        if self._legacy:
+            if response:
+                raise BadResponseError(
+                    "Unexpected SELECT response from legacy CanoKey OATH applet"
+                )
+            return Version(0, 0, 0), self._legacy_salt, None
+        return _parse_select(response)
+
+    def _require_modern_commands(self, operation: str) -> None:
+        if self._legacy:
+            raise NotSupportedError(
+                f"OATH {operation} is not supported by CanoKey firmware 1.3"
+            )
 
     @property
     def version(self) -> Version:
@@ -355,7 +413,7 @@ class OathSession:
             ).reset_oath()
         else:
             self.protocol.send_apdu(0, INS_RESET, 0xDE, 0xAD)
-        _, self._salt, self._challenge = _parse_select(self.protocol.select(AID.OATH))
+        _, self._salt, self._challenge = self._select()
         if self._scp_params:
             self.protocol.init_scp(self._scp_params)
         logger.info("OATH application data reset performed")
@@ -376,6 +434,7 @@ class OathSession:
 
         :param key: The access key.
         """
+        self._require_modern_commands("password protection")
         logger.debug("Unlocking session")
         response = _hmac_sha1(key, self._challenge)
         challenge = os.urandom(8)
@@ -394,6 +453,7 @@ class OathSession:
 
         :param key: The access key.
         """
+        self._require_modern_commands("password protection")
         challenge = os.urandom(8)
         response = _hmac_sha1(key, challenge)
         self.protocol.send_apdu(
@@ -419,6 +479,7 @@ class OathSession:
 
         This removes the need to authentication a session before using it.
         """
+        self._require_modern_commands("password protection")
         self.protocol.send_apdu(0, INS_SET_CODE, 0, 0, Tlv(TAG_KEY))
         logger.info("Access code removed")
         self._has_key = False
@@ -473,6 +534,7 @@ class OathSession:
         :param name: The new name of the credential.
         :param issuer: The credential issuer.
         """
+        self._require_modern_commands("credential rename")
         logger.debug(f"Renaming credential '{credential_id!r}' to '{issuer}:{name}'")
         require_version(self.version, (5, 3, 1))
         _, _, period = _parse_cred_id(credential_id, OATH_TYPE.TOTP)
@@ -487,10 +549,20 @@ class OathSession:
         """List OATH credentials."""
         logger.debug("Listing OATH credentials...")
         creds = []
-        for tlv in Tlv.parse_list(self.protocol.send_apdu(0, INS_LIST, 0, 0)):
-            data = Tlv.unpack(TAG_NAME_LIST, tlv)
-            oath_type = OATH_TYPE(MASK_TYPE & data[0])
-            cred_id = data[1:]
+        tlvs = Tlv.parse_list(self.protocol.send_apdu(0, self._instructions.list, 0, 0))
+        while tlvs:
+            if self._legacy:
+                if len(tlvs) < 2:
+                    raise BadResponseError("Incomplete legacy OATH LIST response")
+                cred_id = Tlv.unpack(TAG_NAME, tlvs.pop(0))
+                metadata = Tlv.unpack(TAG_RESPONSE, tlvs.pop(0))
+                if len(metadata) != 2:
+                    raise BadResponseError("Invalid legacy OATH LIST metadata")
+                oath_type = OATH_TYPE(MASK_TYPE & metadata[0])
+            else:
+                data = Tlv.unpack(TAG_NAME_LIST, tlvs.pop(0))
+                oath_type = OATH_TYPE(MASK_TYPE & data[0])
+                cred_id = data[1:]
             issuer, name, period = _parse_cred_id(cred_id, oath_type)
             creds.append(
                 Credential(
@@ -508,7 +580,7 @@ class OathSession:
         logger.debug(f"Calculating response for credential: {credential_id!r}")
         response = self.protocol.send_apdu(
             0,
-            INS_CALCULATE,
+            self._instructions.calculate,
             0,
             0,
             Tlv(TAG_NAME, credential_id) + Tlv(TAG_CHALLENGE, challenge),
@@ -546,7 +618,11 @@ class OathSession:
         entries = {}
         data = Tlv.parse_list(
             self.protocol.send_apdu(
-                0, INS_CALCULATE_ALL, 0, 1, Tlv(TAG_CHALLENGE, challenge)
+                0,
+                self._instructions.calculate_all,
+                0,
+                self._instructions.calculate_all_p2,
+                Tlv(TAG_CHALLENGE, challenge),
             )
         )
         while data:
@@ -599,9 +675,9 @@ class OathSession:
             TAG_TRUNCATED,
             self.protocol.send_apdu(
                 0,
-                INS_CALCULATE,
+                self._instructions.calculate,
                 0,
-                0x01,  # Truncate
+                self._instructions.calculate_p2,
                 Tlv(TAG_NAME, credential.id) + Tlv(TAG_CHALLENGE, challenge),
             ),
         )

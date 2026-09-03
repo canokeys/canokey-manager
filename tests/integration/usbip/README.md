@@ -19,11 +19,15 @@ repository does not duplicate those commit SHAs.
 - OpenPGP: `info`, `reset`; all commands under `access`, `keys`, and
   `certificates`, subject to the CanoKey-specific negative cases below
 
-The PIV and OATH tests provision data, verify round trips, and clean it up. The
-OpenPGP test changes and recovers PINs, provisions a standard signing key,
-tests key metadata and touch policy, and verifies a certificate round trip.
-When supported, it also exercises the separate attestation feature. It resets
-the applet at the end.
+The PIV and OATH tests provision data, verify round trips, and clean it up. On
+firmware 1.3, the OATH lifecycle uses its matrix-selected legacy dialect and
+still executes reset, info, TOTP/HOTP with SHA1/SHA256, touch metadata, URI and
+PSKC import, generated secrets, list, calculate, and delete. Only the confirmed
+missing password, rename, SHA512, and full-HMAC features report `UNSUPPORTED`
+or a pytest skip. The OpenPGP test changes and recovers PINs, provisions a
+standard signing key, tests key metadata and touch policy, and verifies a
+certificate round trip. When supported, it also exercises the separate
+attestation feature. It resets the applet at the end.
 
 After the executable smoke lifecycle, `device-tests.sh` runs the reusable
 upstream CLI and protocol device tests for each applet against the same real
@@ -105,6 +109,9 @@ reported by individual applets are never compared to CanoKey firmware.
 - PIV SELECT security-state reset, available from firmware 2.0.0; older
   firmware is explicitly deauthenticated before each standard PIV reset
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
+- OATH legacy commands and response framing on firmware 1.3; modern commands
+  from 1.5.2 onward; touch is independently supported on every cataloged
+  firmware
 - OATH full-HMAC responses and duplicate rename rejection, available from 2.0.0;
   ordinary truncated calculations and renames continue to run on older firmware
 - OpenPGP retry counter configuration
