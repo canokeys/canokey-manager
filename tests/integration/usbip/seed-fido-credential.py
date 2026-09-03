@@ -37,11 +37,11 @@ def main() -> int:
     with devices[0].open_connection(SmartCardCtapDevice) as device:
         ctap2 = Ctap2(device)
         client_pin = ClientPin(ctap2)
-        make_token = client_pin.get_pin_token(
-            pin, ClientPin.PERMISSION.MAKE_CREDENTIAL, RP_ID
-        )
         credentials = []
         for index, user in enumerate(USERS):
+            make_token = client_pin.get_pin_token(
+                pin, ClientPin.PERMISSION.MAKE_CREDENTIAL, RP_ID
+            )
             client_data_hash = hashlib.sha256(
                 f"ckman USB/IP resident credential {index}".encode()
             ).digest()

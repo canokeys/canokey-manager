@@ -69,10 +69,11 @@ config_status="$(firmware_feature_status fido-authenticator-config)"
 case "$config_status" in
   supported)
     section "ckman fido config toggle-always-uv"
-    initial_always_uv="$(
+    read_always_uv() {
       "${CKMAN[@]}" fido info |
         sed -n 's/^Always Require UV:[[:space:]]*//p'
-    )"
+    }
+    initial_always_uv="$(read_always_uv)"
     case "$initial_always_uv" in
       On)
         first_toggle="off"
@@ -90,13 +91,11 @@ case "$config_status" in
     capture_without_secrets \
       "Always Require UV is ${first_toggle}." \
       "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
-    "${CKMAN[@]}" fido info |
-      grep -Fq "Always Require UV: ${first_toggle^}"
+    [[ "$(read_always_uv)" == "${first_toggle^}" ]]
     capture_without_secrets \
       "Always Require UV is ${second_toggle}." \
       "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
-    "${CKMAN[@]}" fido info |
-      grep -Fq "Always Require UV: ${initial_always_uv}"
+    [[ "$(read_always_uv)" == "$initial_always_uv" ]]
 
     section "ckman fido access set-min-length"
     capture_without_secrets \
