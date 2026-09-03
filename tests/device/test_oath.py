@@ -1,6 +1,5 @@
 import pytest
-
-from yubikit.canokey import CanoKeyFeature
+from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT
 from yubikit.core.smartcard import AID, SW, ApduError
 from yubikit.management import CAPABILITY
@@ -18,7 +17,6 @@ KEY = bytes.fromhex("01020304050607080102030405060708")
 
 @pytest.fixture
 @condition.capability(CAPABILITY.OATH)
-@condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
 def session(ccid_connection, info, scp_params):
     fips = CAPABILITY.OATH in info.fips_capable
     if ccid_connection.transport == TRANSPORT.NFC and fips:
@@ -46,7 +44,7 @@ class TestFunctions:
             session.calculate(cred.id, challenge)
         session.calculate(new_id, challenge)
 
-    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 5, 3)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_RENAME_COLLISION_CHECK, 5, 3)
     def test_rename_to_existing(self, session):
         cred = session.put_credential(CRED_DATA)
         new_id = session.rename_credential(cred.id, "newname", "newissuer")
@@ -56,6 +54,7 @@ class TestFunctions:
 
 class TestLockPreventsAccess:
     @pytest.fixture(autouse=True)
+    @condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
     def set_lock(self, session):
         assert not session.locked
         session.put_credential(CRED_DATA)
@@ -157,13 +156,17 @@ def _ids_hmac(params):
 
 
 class TestHmacVectors:
+    @condition.canokey_feature(CanoKeyFeature.OATH_FULL_RESPONSE)
     @pytest.mark.parametrize("params", HMAC_PARAMS, ids=_ids_hmac)
     def test_vector(self, info, session, params):
         key, challenge, hash_algorithm, expected = params
-        if hash_algorithm == HASH_ALGORITHM.SHA512 and not condition.is_canokey(info):
-            if info.version[0] <= 4:
-                if info.is_fips or info.version < (4, 3, 1):
-                    pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
+        if (
+            hash_algorithm == HASH_ALGORITHM.SHA512
+            and not condition.is_canokey(info)
+            and info.version[0] <= 4
+            and (info.is_fips or info.version < (4, 3, 1))
+        ):
+            pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
         if condition.is_canokey(info) and len(challenge) > 8:
             pytest.skip("CanoKey OATH rejects challenges longer than 8 bytes")
         cred = session.put_credential(
@@ -207,10 +210,17 @@ class TestTotpVectors:
     )
     def test_vector(self, info, session, params, digits):
         timestamp, hash_algorithm, value, key = params
-        if hash_algorithm == HASH_ALGORITHM.SHA512 and not condition.is_canokey(info):
-            if info.version[0] <= 4:
-                if info.is_fips or info.version < (4, 3, 1):
-                    pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
+        if hash_algorithm == HASH_ALGORITHM.SHA512:
+            if condition.is_canokey(info):
+                if (
+                    condition.canokey_feature_status(
+                        info, CanoKeyFeature.OATH_MODERN_COMMANDS
+                    )
+                    == FeatureStatus.UNSUPPORTED
+                ):
+                    pytest.skip("CanoKey firmware does not support OATH SHA512")
+            elif info.version[0] <= 4 and (info.is_fips or info.version < (4, 3, 1)):
+                pytest.skip("SHA512 requires (non-FIPS) YubiKey 4.3.1 or later")
 
         cred = session.put_credential(
             CredentialData("test", OATH_TYPE.TOTP, hash_algorithm, key, digits)

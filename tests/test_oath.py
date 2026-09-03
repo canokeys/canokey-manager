@@ -1,7 +1,13 @@
 #  vim: set fileencoding=utf-8 :
 
-import pytest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import pytest
+from ykman._cli.oath import change
+from ykman._cli.util import CliFail
+from ykman.oath import calculate_steam
+from yubikit.core import NotSupportedError
 from yubikit.oath import (
     HASH_ALGORITHM,
     OATH_TYPE,
@@ -10,6 +16,53 @@ from yubikit.oath import (
     _format_cred_id,
     _parse_cred_id,
 )
+
+
+@pytest.mark.parametrize("remember", [True, False])
+def test_change_does_not_update_remembered_key_when_device_update_fails(
+    monkeypatch, remember
+):
+    session = MagicMock(device_id="device-id")
+    session.derive_key.return_value = b"key"
+    session.set_key.side_effect = NotSupportedError("not supported")
+    keys = MagicMock()
+    keys.__contains__.return_value = True
+    ctx = SimpleNamespace(obj={"session": session, "oath_keys": keys})
+    monkeypatch.setattr("ykman._cli.oath._init_session", lambda *args, **kwargs: None)
+
+    with pytest.raises(CliFail, match="not supported"):
+        change.callback.__wrapped__(
+            ctx,
+            password=None,
+            clear=False,
+            new_password="new password",
+            remember=remember,
+        )
+
+    keys.put_secret.assert_not_called()
+    keys.__delitem__.assert_not_called()
+    keys.write.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("truncated", "response"),
+    [
+        (True, bytes.fromhex("01234567")),
+        (False, bytes.fromhex("0000012345670000000000000000000000000002")),
+    ],
+)
+def test_calculate_steam_accepts_audited_canokey_truncated_response(
+    truncated, response
+):
+    class Session:
+        _canokey_truncated_calculate_response = truncated
+
+        def calculate(self, credential_id, challenge):
+            assert credential_id == b"steam"
+            return response
+
+    credential = SimpleNamespace(id=b"steam")
+    assert calculate_steam(Session(), credential, timestamp=30) == "FR3RK"
 
 
 @pytest.mark.parametrize(

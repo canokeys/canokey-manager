@@ -17,14 +17,17 @@ export PYTHON_KEYRING_BACKEND="tests.integration.usbip.keyring_backend.Keyring"
 
 source "$script_dir/lib.sh"
 
-section "ckman info"
-device_info="$("${CKMAN[@]}" info)"
-printf '%s\n' "$device_info"
-
 export CANOKEY_FIRMWARE_VERSION_NORMALIZED
 CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
   uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_VERSION"
 )"
+
+"$script_dir/fido.sh"
+
+section "ckman info"
+device_info="$("${CKMAN[@]}" info)"
+printf '%s\n' "$device_info"
+
 reported_firmware="$(
   sed -n 's/^Firmware version:[[:space:]]*//p' <<<"$device_info"
 )"
@@ -43,10 +46,27 @@ if [[ -n "${CANOKEY_FIRMWARE_ID:-}" ]]; then
 fi
 echo "CanoKey firmware identity verified: ${reported_firmware}."
 
+section "ckman list"
+list_output="$(uv run ckman list)"
+printf '%s\n' "$list_output"
+grep -Fq "CanoKey" <<<"$list_output"
+
+reported_serial="$(
+  sed -n 's/^Serial number:[[:space:]]*//p' <<<"$device_info"
+)"
+serials_output="$(uv run ckman list --serials)"
+grep -Fxq "$reported_serial" <<<"$serials_output"
+
+readers_output="$(uv run ckman list --readers)"
+grep -Fxq "$CANOKEY_PCSC_READER" <<<"$readers_output"
+
 section "ckman apdu"
-apdu_output="$("${CKMAN[@]}" apdu --app openpgp --no-pretty 84/08=)"
-printf '%s\n' "$apdu_output"
-grep -Fq "RECV (SW=9000)" <<<"$apdu_output"
+run_versioned_feature \
+  "ckman apdu OpenPGP GET CHALLENGE" \
+  "openpgp-get-challenge" \
+  capture_without_secrets \
+  "RECV (SW=9000)" \
+  "${CKMAN[@]}" apdu --app openpgp --no-pretty 84/08=
 
 "$script_dir/piv.sh"
 "$script_dir/oath.sh"

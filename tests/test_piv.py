@@ -5,27 +5,63 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-
 from ykman.piv import (
     _list_keys,
+    _parse_rfc4514_string,
     generate_chuid,
     generate_random_management_key,
-    _parse_rfc4514_string,
 )
 from yubikit.core import PID, BadResponseError, NotSupportedError, Version
 from yubikit.core.smartcard import SW, ApduError
 from yubikit.piv import (
+    INS_GENERATE_ASYMMETRIC,
+    INS_MOVE_KEY,
+    INS_RESET,
+    INS_VERIFY,
     KEY_TYPE,
     MANAGEMENT_KEY_TYPE,
+    OBJECT_ID,
     PIN_POLICY,
+    PIN_P2,
     SLOT,
     TOUCH_POLICY,
     Chuid,
     FascN,
+    PivSession,
     _do_check_key_support,
     decompress_certificate,
 )
-from yubikit.piv import INS_GENERATE_ASYMMETRIC, INS_MOVE_KEY, PivSession
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_reset_deauthenticates_only_when_select_preserves_security_state(legacy):
+    class Protocol:
+        def __init__(self):
+            self.commands = []
+
+        def send_apdu(self, *args):
+            self.commands.append(args)
+
+    protocol = Protocol()
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, protocol)
+    session._canokey_select_preserves_security_state = legacy
+    test_session = cast(Any, session)
+
+    def unsupported():
+        raise NotSupportedError()
+
+    test_session.get_bio_metadata = unsupported
+    test_session.get_pin_attempts = lambda: 0
+    test_session.get_puk_metadata = lambda: SimpleNamespace(attempts_remaining=0)
+    test_session.get_management_key_metadata = unsupported
+
+    session.reset()
+
+    expected = [(0, INS_RESET, 0, 0)]
+    if legacy:
+        expected.insert(0, (0, INS_VERIFY, 0xFF, PIN_P2))
+    assert protocol.commands == expected
 
 
 def test_list_keys_ignores_only_empty_slots():
@@ -69,6 +105,115 @@ def test_delete_key_uses_device_specific_command(pid, version, expected_ins):
     session.delete_key(SLOT.AUTHENTICATION)
 
     assert session.protocol.commands[0][1] == expected_ins
+
+
+@pytest.mark.parametrize(
+    ("object_id", "raw"),
+    [
+        (OBJECT_ID.CHUID, bytes.fromhex("3003010203")),
+        (OBJECT_ID.CAPABILITY, bytes.fromhex("f00101")),
+    ],
+)
+def test_get_object_accepts_confirmed_legacy_canokey_factory_data(object_id, raw):
+    class Protocol:
+        def send_apdu(self, *args):
+            return raw
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_missing_object_wrapping = True
+
+    assert session.get_object(object_id) == raw
+
+
+def test_get_object_does_not_relax_other_malformed_legacy_data():
+    class Protocol:
+        def send_apdu(self, *args):
+            return b"malformed"
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_missing_object_wrapping = True
+
+    with pytest.raises(BadResponseError, match="Malformed object data"):
+        session.get_object(OBJECT_ID.CHUID)
+
+
+def test_get_object_keeps_standard_wrapping_on_newer_firmware():
+    raw = b"chuid"
+
+    class Protocol:
+        def send_apdu(self, *args):
+            from yubikit.core import Tlv
+
+            return bytes(Tlv(0x53, raw))
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_missing_object_wrapping = False
+
+    assert session.get_object(OBJECT_ID.CHUID) == raw
+
+
+@pytest.mark.parametrize(
+    ("legacy", "response_sw", "expected_sw"),
+    [
+        (True, 0x6900, SW.REFERENCE_DATA_NOT_FOUND),
+        (False, 0x6900, 0x6900),
+        (
+            True,
+            SW.SECURITY_CONDITION_NOT_SATISFIED,
+            SW.SECURITY_CONDITION_NOT_SATISFIED,
+        ),
+    ],
+)
+def test_get_slot_metadata_normalizes_only_confirmed_legacy_empty_status(
+    legacy, response_sw, expected_sw
+):
+    class Protocol:
+        def send_apdu(self, *args):
+            raise ApduError(b"error", response_sw)
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = Version(5, 3, 0)
+    session._canokey_legacy_empty_slot_status = legacy
+
+    with pytest.raises(ApduError) as exc_info:
+        session.get_slot_metadata(SLOT.AUTHENTICATION)
+    assert exc_info.value.sw == expected_sw
+
+
+def test_get_slot_metadata_normalizes_confirmed_legacy_empty_response():
+    class Protocol:
+        def send_apdu(self, *args):
+            return b""
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = Version(5, 3, 0)
+    session._canokey_legacy_empty_slot_status = True
+
+    with pytest.raises(ApduError) as exc_info:
+        session.get_slot_metadata(SLOT.RETIRED3)
+    assert exc_info.value.sw == SW.REFERENCE_DATA_NOT_FOUND
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_get_bio_metadata_handles_empty_response_only_for_confirmed_legacy(legacy):
+    class Protocol:
+        def send_apdu(self, *args):
+            return b""
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_legacy_empty_slot_status = legacy
+
+    if legacy:
+        with pytest.raises(NotSupportedError):
+            session.get_bio_metadata()
+    else:
+        assert not session.get_bio_metadata().configured
 
 
 @pytest.mark.parametrize(

@@ -703,6 +703,50 @@ class PivSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_missing_object_wrapping = False
+        self._canokey_legacy_empty_slot_status = False
+        self._canokey_select_preserves_security_state = False
+        if canokey.is_canokey(connection):
+            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            wrapping_status = canokey.get_feature_status(
+                firmware_version, canokey.CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING
+            )
+            metadata_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
+            )
+            select_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+            )
+            for feature, status in (
+                (
+                    canokey.CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
+                    wrapping_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
+                    metadata_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+                    select_status,
+                ),
+            ):
+                if status == canokey.FeatureStatus.UNKNOWN:
+                    raise canokey.UnknownFeatureError(
+                        f"{feature.value} support is unknown for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
+            self._canokey_missing_object_wrapping = (
+                wrapping_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_legacy_empty_slot_status = (
+                metadata_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_select_preserves_security_state = (
+                select_status == canokey.FeatureStatus.UNSUPPORTED
+            )
         self.protocol = SmartCardProtocol(connection)
         self.protocol.select(AID.PIV)
 
@@ -741,6 +785,10 @@ class PivSession:
         values for PIN, PUK, and management key.
         """
         logger.debug("Preparing PIV reset")
+
+        # CanoKey: before 2.0, SELECT did not clear a previously verified PIN.
+        if self._canokey_select_preserves_security_state:
+            self.protocol.send_apdu(0, INS_VERIFY, 0xFF, PIN_P2)
 
         try:
             if self.get_bio_metadata().configured:
@@ -1099,7 +1147,17 @@ class PivSession:
         slot = SLOT(slot)
         logger.debug(f"Getting metadata for slot {slot}")
         require_version(self.version, (5, 3, 0))
-        data = Tlv.parse_dict(self.protocol.send_apdu(0, INS_GET_METADATA, 0, slot))
+        try:
+            response = self.protocol.send_apdu(0, INS_GET_METADATA, 0, slot)
+        except ApduError as e:
+            # CanoKey: 2.0.x used 6900 for an empty key slot.
+            if self._canokey_legacy_empty_slot_status and e.sw == 0x6900:
+                raise ApduError(e.data, SW.REFERENCE_DATA_NOT_FOUND) from e
+            raise
+        # CanoKey: 2.0.x returned success with no data for unknown slots.
+        if self._canokey_legacy_empty_slot_status and not response:
+            raise ApduError(b"", SW.REFERENCE_DATA_NOT_FOUND)
+        data = Tlv.parse_dict(response)
         policy = data[TAG_METADATA_POLICY]
         return SlotMetadata(
             KEY_TYPE(data[TAG_METADATA_ALGO][0]),
@@ -1118,15 +1176,19 @@ class PivSession:
         """
         logger.debug("Getting bio metadata")
         try:
-            data = Tlv.parse_dict(
-                self.protocol.send_apdu(0, INS_GET_METADATA, 0, SLOT_OCC_AUTH)
-            )
+            response = self.protocol.send_apdu(0, INS_GET_METADATA, 0, SLOT_OCC_AUTH)
         except ApduError as e:
             if e.sw in (SW.REFERENCE_DATA_NOT_FOUND, SW.INVALID_INSTRUCTION):
                 raise NotSupportedError(
                     "Biometric verification not supported by this YuibKey"
                 )
             raise
+        # CanoKey: 2.0.x returned success with no data for this unknown slot.
+        if self._canokey_legacy_empty_slot_status and not response:
+            raise NotSupportedError(
+                "Biometric verification not supported by this YuibKey"
+            )
+        data = Tlv.parse_dict(response)
         return BioMetadata(
             1 == data.get(TAG_METADATA_BIO_CONFIGURED, b"\x00")[0],
             data.get(TAG_METADATA_RETRIES, b"\x00")[0],
@@ -1226,15 +1288,22 @@ class PivSession:
             expected = TAG_OBJ_DATA
 
         try:
+            response = self.protocol.send_apdu(
+                0,
+                INS_GET_DATA,
+                0x3F,
+                0xFF,
+                Tlv(TAG_OBJ_ID, int2bytes(object_id)),
+            )
+            # CanoKey: factory CCC/CHUID omitted the 53h container before 1.6.1.
+            if self._canokey_missing_object_wrapping and (
+                (object_id == OBJECT_ID.CHUID and response.startswith(b"\x30"))
+                or (object_id == OBJECT_ID.CAPABILITY and response.startswith(b"\xf0"))
+            ):
+                response = bytes(Tlv(TAG_OBJ_DATA, response))
             return Tlv.unpack(
                 expected,
-                self.protocol.send_apdu(
-                    0,
-                    INS_GET_DATA,
-                    0x3F,
-                    0xFF,
-                    Tlv(TAG_OBJ_ID, int2bytes(object_id)),
-                ),
+                response,
             )
         except ValueError as e:
             raise BadResponseError("Malformed object data", e)

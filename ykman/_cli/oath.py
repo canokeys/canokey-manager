@@ -36,7 +36,7 @@ from pskc import PSKC
 
 from ykman.piv import parse_rfc4514_string
 from yubikit import canokey
-from yubikit.core import TRANSPORT
+from yubikit.core import TRANSPORT, NotSupportedError
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import CAPABILITY
 from yubikit.oath import (
@@ -289,7 +289,10 @@ def change(ctx, password, clear, new_password, remember):
     device_id = session.device_id
 
     if clear:
-        session.unset_key()
+        try:
+            session.unset_key()
+        except NotSupportedError as e:
+            raise CliFail(str(e))
         if device_id in keys:
             del keys[device_id]
             keys.write()
@@ -309,6 +312,12 @@ def change(ctx, password, clear, new_password, remember):
                 "Enter the new password", hide_input=True, confirmation_prompt=True
             )
         key = session.derive_key(new_password)
+        try:
+            session.set_key(key)
+        except NotSupportedError as e:
+            raise CliFail(str(e))
+        except ApduError as e:
+            _fail_scp(ctx, e)
         if remember:
             keys.put_secret(device_id, key.hex())
             keys.write()
@@ -316,11 +325,7 @@ def change(ctx, password, clear, new_password, remember):
         elif device_id in keys:
             del keys[device_id]
             keys.write()
-        try:
-            session.set_key(key)
-            click.echo("Password updated.")
-        except ApduError as e:
-            _fail_scp(ctx, e)
+        click.echo("Password updated.")
 
 
 @access.command()
@@ -801,6 +806,8 @@ def import_pskc(ctx, import_file, touch, force, password, remember):
 def _add_cred(ctx, data, touch, force):
     session = ctx.obj["session"]
     version = session.version
+    info = ctx.obj["info"]
+    is_cano = canokey.is_canokey(info)
 
     if not (0 < len(data.name) <= 64):
         raise CliFail("Name must be between 1 and 64 bytes.")
@@ -808,16 +815,28 @@ def _add_cred(ctx, data, touch, force):
     if len(data.secret) < 2:
         raise CliFail("Secret must be at least 2 bytes.")
 
-    if touch and not version >= (4, 2, 6):
-        raise CliFail("Require touch is not supported on this YubiKey.")
+    if touch:
+        if is_cano:
+            try:
+                canokey.require_feature(info.version, canokey.CanoKeyFeature.OATH_TOUCH)
+            except (NotSupportedError, canokey.UnknownFeatureError) as e:
+                raise CliFail(str(e))
+        elif not version >= (4, 2, 6):
+            raise CliFail("Require touch is not supported on this YubiKey.")
 
     if data.counter and data.oath_type != OATH_TYPE.HOTP:
         raise CliFail("Counter only supported for HOTP accounts.")
 
-    if data.hash_algorithm == HASH_ALGORITHM.SHA512 and (
-        not version >= (4, 3, 1) or is_yk4_fips(ctx.obj["info"])
-    ):
-        raise CliFail("Algorithm SHA512 not supported on this YubiKey.")
+    if data.hash_algorithm == HASH_ALGORITHM.SHA512:
+        if is_cano:
+            try:
+                canokey.require_feature(
+                    info.version, canokey.CanoKeyFeature.OATH_MODERN_COMMANDS
+                )
+            except (NotSupportedError, canokey.UnknownFeatureError) as e:
+                raise CliFail(str(e))
+        elif not version >= (4, 3, 1) or is_yk4_fips(info):
+            raise CliFail("Algorithm SHA512 not supported on this YubiKey.")
 
     creds = session.list_credentials()
     cred_id = data.get_id()
@@ -1017,7 +1036,10 @@ def rename(ctx, query, name, force, password, remember):
                 err=True,
             )
         ):
-            session.rename_credential(cred.id, name, issuer)
+            try:
+                session.rename_credential(cred.id, name, issuer)
+            except NotSupportedError as e:
+                raise CliFail(str(e))
             click.echo(f"Renamed {_string_id(cred)} to {new_id.decode()}.")
         else:
             click.echo("Rename aborted by user.")

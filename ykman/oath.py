@@ -54,8 +54,11 @@ def calculate_steam(
     """Calculate steam codes."""
     timestamp = int(timestamp or time())
     resp = app.calculate(credential.id, struct.pack(">q", timestamp // 30))
-    offset = resp[-1] & 0x0F
-    code = struct.unpack(">I", resp[offset : offset + 4])[0] & 0x7FFFFFFF
+    if app._canokey_truncated_calculate_response:
+        code = int.from_bytes(resp, "big") & 0x7FFFFFFF
+    else:
+        offset = resp[-1] & 0x0F
+        code = struct.unpack(">I", resp[offset : offset + 4])[0] & 0x7FFFFFFF
     chars = []
     for i in range(5):
         chars.append(STEAM_CHAR_TABLE[code % len(STEAM_CHAR_TABLE)])

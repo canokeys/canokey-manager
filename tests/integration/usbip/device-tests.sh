@@ -42,6 +42,7 @@ run_applet_tests \
 
 run_applet_tests \
   "PIV" \
+  -vv \
   tests/device/cli/piv \
   tests/device/test_piv.py || status=1
 

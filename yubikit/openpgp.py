@@ -985,6 +985,38 @@ class OpenPgpSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_missing_data_object_wrapping = False
+        self._canokey_has_algorithm_information = True
+        if canokey.is_canokey(connection):
+            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            wrapping_status = canokey.get_feature_status(
+                firmware_version, canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING
+            )
+            algorithm_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+            )
+            for feature, status in (
+                (
+                    canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING,
+                    wrapping_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+                    algorithm_status,
+                ),
+            ):
+                if status == canokey.FeatureStatus.UNKNOWN:
+                    raise canokey.UnknownFeatureError(
+                        f"{feature.value} support is unknown for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
+            self._canokey_missing_data_object_wrapping = (
+                wrapping_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_has_algorithm_information = (
+                algorithm_status == canokey.FeatureStatus.SUPPORTED
+            )
         self.protocol = SmartCardProtocol(connection)
         try:
             self.protocol.select(AID.OPENPGP)
@@ -1063,7 +1095,15 @@ class OpenPgpSession:
         :param do: The Data Object to get.
         """
         logger.debug(f"Reading Data Object {do.name} ({do:X})")
-        return self.protocol.send_apdu(0, INS.GET_DATA, do >> 8, do & 0xFF)
+        response = self.protocol.send_apdu(0, INS.GET_DATA, do >> 8, do & 0xFF)
+        # CanoKey: firmware before 2.0 omits these constructed outer tags.
+        if self._canokey_missing_data_object_wrapping and do in (
+            DO.CARDHOLDER_RELATED_DATA,
+            DO.APPLICATION_RELATED_DATA,
+            DO.SECURITY_SUPPORT_TEMPLATE,
+        ):
+            return bytes(Tlv(do, response))
+        return response
 
     def put_data(self, do: DO, data: bytes | SupportsBytes) -> None:
         """Write a Data Object to the YubiKey.
@@ -1434,12 +1474,13 @@ class OpenPgpSession:
         :param attributes: The algorithm attributes to set.
         """
         logger.debug(f"Setting Algorithm Attributes for {key_ref.name}")
-        supported = self.get_algorithm_information()
-        if self.version[0] > 0:  # Don't check support on major version 0
-            if key_ref not in supported:
-                raise NotSupportedError("Key slot not supported")
-            if attributes not in supported[key_ref]:
-                raise NotSupportedError("Algorithm attributes not supported")
+        if self._canokey_has_algorithm_information:
+            supported = self.get_algorithm_information()
+            if self.version[0] > 0:  # Don't check support on major version 0
+                if key_ref not in supported:
+                    raise NotSupportedError("Key slot not supported")
+                if attributes not in supported[key_ref]:
+                    raise NotSupportedError("Algorithm attributes not supported")
 
         self.put_data(key_ref.algorithm_attributes_do, attributes)
         logger.info("Algorithm Attributes have been changed")

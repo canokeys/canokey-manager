@@ -38,7 +38,6 @@ PASSWORD = "aaaa"
 
 @pytest.fixture(autouse=True)
 @condition.capability(CAPABILITY.OATH)
-@condition.canokey_feature(CanoKeyFeature.OATH_MODERN_COMMANDS)
 def preconditions(ykman_cli, info):
     args = ["oath", "reset", "-f"]
     if condition.is_canokey(info):
@@ -227,7 +226,7 @@ class TestOATH:
         assert 6 == len(code)
         int(code)
 
-    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 4)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_TOUCH, 4)
     def test_oath_code_output(self, accounts_cli):
         accounts_cli("add", "TOTP:normal", "aaaa")
         accounts_cli("add", "--touch", "TOTP:touch", "aaab")
@@ -251,7 +250,7 @@ class TestOATH:
         assert 6 == len(code)
         int(code)
 
-    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 4)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_TOUCH, 4)
     def test_oath_totp_steam_touch_not_in_code_output(self, accounts_cli):
         accounts_cli("add", "--touch", "Steam:steam-cred", "abba")
         accounts_cli("add", "TOTP:totp-cred", "abba")

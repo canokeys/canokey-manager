@@ -9,15 +9,46 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: 04e66e407f28f80c030f23e5eca241cf410b6409
-  CANOKEY_FIRMWARE_ID: 3.0.1
-  CANOKEY_CORE_REF: 69e562bcb07eedda015aae6064870c8548571e2b
+  CANOKEY_USBIP_SHA: f7953f70d353316ff8ed29589039c3d23ef99c79
 
 jobs:
+  firmware-catalog:
+    name: Resolve historical firmware catalog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      firmwares: ${{ steps.catalog.outputs.firmwares }}
+
+    steps:
+      - name: Check out canokey-usbip
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          repository: canokeys/canokey-usbip
+          ref: ${{ env.CANOKEY_USBIP_SHA }}
+          path: external/canokey-usbip
+          submodules: false
+          persist-credentials: false
+
+      - name: Export historical release matrix
+        id: catalog
+        shell: bash
+        run: |
+          firmwares="$(external/canokey-usbip/compat/list-firmwares --release-map --compact)"
+          [[ "$(jq 'length' <<<"$firmwares")" -gt 0 ]]
+          echo "firmwares=$firmwares" >> "$GITHUB_OUTPUT"
+
   smoke:
-    name: Ubuntu 24.04 / firmware 3.0.1
+    name: Ubuntu 24.04 / firmware ${{ matrix.firmware.id }}
+    needs: firmware-catalog
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        firmware: ${{ fromJSON(needs.firmware-catalog.outputs.firmwares) }}
+    env:
+      CANOKEY_FIRMWARE_ID: ${{ matrix.firmware.id }}
+      CANOKEY_CORE_REF: ${{ matrix.firmware.core_commit }}
 
     steps:
       - name: Check out ckman
@@ -32,6 +63,7 @@ jobs:
           ref: ${{ env.CANOKEY_USBIP_SHA }}
           path: external/canokey-usbip
           submodules: false
+          persist-credentials: false
 
       - name: Report runner environment
         shell: bash
@@ -214,7 +246,6 @@ jobs:
       # This job covers PC/SC command lifecycles plus reusable upstream CLI and
       # protocol tests for FIDO, PIV, OATH, and OpenPGP over PC/SC.
       # See tests/integration/usbip/README.md for capability-bound exclusions.
-      # Stage 2 will add the oldest/latest/core-master firmware smoke matrix.
       - name: Run ckman against a virtual CanoKey
         shell: bash
         env:
