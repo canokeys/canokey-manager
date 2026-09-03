@@ -2,7 +2,7 @@
 
 Reference for ckman (yubikey-manager fork) development. Only **host-visible protocol changes** are recorded: instructions, APDU/SW behavior, TLV formats, reported version numbers, algorithms, applet additions/removals, and USB enumeration. Internal refactors, build system, and test-only changes are omitted.
 
-The version set matches `canokey-usbip` commit `f62a9dcd84aec231f6179687841f91f237cbd5d8`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
+The version set matches `canokey-usbip` commit `84b3e32e953bda88a73a28e006d01bd894f0f6f2`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
 
 Device information (firmware version, serial number) must always be read through the **admin applet**. No other channel is reliable across versions; do not add dependencies on any other applet for device identification.
 
@@ -25,7 +25,7 @@ catalog and executes every historical release from 1.3 through 3.1.0.
 | 2.0.1 | `be6325b8c4e6d40e86b2943f65083ed6b71f8259` | CTAP authData and getNextAssertion fixes |
 | 3.0.0 | `7cb33508a69ce4d281a053e1e53e6d006469076b` | PIV reports 5.7.0; pass applet; admin, OATH, and OpenPGP extensions |
 | 3.0.1 | `69e562bcb07eedda015aae6064870c8548571e2b` | PIV Ed25519 and X25519 fixes; OATH and CTAP concurrency fixes |
-| 3.1.0 | `231a9cbacbede56c2c93c8940210d0f0782586bf` | FIDO authenticator config; PIV 6.0, move/delete, retry configuration, and attestation; OpenPGP retry and P-384 fixes |
+| 3.1.0 | `aeacc59f8ff29976c0b3870493175e469dc234b1` | FIDO authenticator config; PIV 6.0, move/delete, retry configuration, and attestation; OpenPGP retry and P-384 fixes |
 
 ## Invariants across all versions (safe to rely on)
 
