@@ -155,12 +155,14 @@ def require_reader(connection_types, reader):
 
 def list_all_devices(*args, **kwargs):
     devices = _list_all_devices(*args, **kwargs)
-    with_serial = [(dev, dev_info) for (dev, dev_info) in devices if dev_info.serial]
+    with_serial = [
+        (dev, dev_info) for (dev, dev_info) in devices if dev_info.serial is not None
+    ]
     if with_serial:
         history = AppData("history")
         cache = history.setdefault("devices", {})
         for dev, dev_info in with_serial:
-            if dev_info.serial:
+            if dev_info.serial is not None:
                 k = str(dev_info.serial)
                 cache[k] = cache.pop(k, None) or _describe_device(dev, dev_info, False)
         # 5, chosen by fair dice roll
@@ -187,7 +189,11 @@ def require_device(connection_types, serial=None):
                 click.echo(
                     "- "
                     + _describe_device(dev, dev_info)
-                    + (f" Serial: {dev_info.serial}" if dev_info.serial else ""),
+                    + (
+                        f" Serial: {dev_info.serial}"
+                        if dev_info.serial is not None
+                        else ""
+                    ),
                     err=True,
                 )
             raise CliFail("Use --device SERIAL to specify which one to use.")
@@ -569,12 +575,12 @@ def list_keys(ctx, serials, readers):
     pids = set()
     for dev, dev_info in list_all_devices():
         if serials:
-            if dev_info.serial:
+            if dev_info.serial is not None:
                 click.echo(dev_info.serial)
         else:
             click.echo(
                 _describe_device(dev, dev_info)
-                + (f" Serial: {dev_info.serial}" if dev_info.serial else "")
+                + (f" Serial: {dev_info.serial}" if dev_info.serial is not None else "")
             )
         pids.add(dev.pid)
 

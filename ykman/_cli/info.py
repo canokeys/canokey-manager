@@ -160,7 +160,7 @@ def info(ctx, check_fips):
     device_name = get_name(info, key_type)
 
     click.echo(f"Device type: {device_name}")
-    if info.serial:
+    if info.serial is not None:
         click.echo(f"Serial number: {info.serial}")
     if info.version:
         click.echo(f"Firmware version: {info.version_name}")
