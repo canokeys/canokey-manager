@@ -285,19 +285,19 @@ run_versioned_feature \
   "piv-ed25519-x25519-fixes" \
   "${CKMAN[@]}" piv keys import \
   --management-key "$PIV_MANAGEMENT_KEY" \
-  84 "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-private.pem"
+  82 "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-private.pem"
 if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  "${CKMAN[@]}" piv keys info 82
+  "${CKMAN[@]}" piv keys delete \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    82
   "${CKMAN[@]}" piv keys import \
     --management-key "$PIV_MANAGEMENT_KEY" \
-    85 "$CANOKEY_USBIP_WORK_DIR/piv-x25519-private.pem"
-  "${CKMAN[@]}" piv keys info 84
-  "${CKMAN[@]}" piv keys info 85
+    83 "$CANOKEY_USBIP_WORK_DIR/piv-x25519-private.pem"
+  "${CKMAN[@]}" piv keys info 83
   "${CKMAN[@]}" piv keys delete \
     --management-key "$PIV_MANAGEMENT_KEY" \
-    84
-  "${CKMAN[@]}" piv keys delete \
-    --management-key "$PIV_MANAGEMENT_KEY" \
-    85
+    83
 fi
 
 section "ckman piv objects generate"
