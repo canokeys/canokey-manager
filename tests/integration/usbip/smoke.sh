@@ -64,7 +64,7 @@ grep -Fxq "$CANOKEY_PCSC_READER" <<<"$readers_output"
 section "ckman apdu"
 capture_without_secrets \
   "RECV (SW=9000)" \
-  "${CKMAN[@]}" apdu --app openpgp --no-pretty ca004f00=
+  "${CKMAN[@]}" apdu --app openpgp --no-pretty 00ca004f=
 run_versioned_feature \
   "ckman apdu OpenPGP GET CHALLENGE" \
   "openpgp-get-challenge" \

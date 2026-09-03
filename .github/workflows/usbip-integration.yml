@@ -220,7 +220,7 @@ jobs:
           uv sync --locked
           # canokey-core 3.1 code generation uses the setup-python interpreter,
           # not Ubuntu's system Python where python3-jsonschema is installed.
-          uv pip install --system 'jsonschema>=4,<5'
+          uv pip install --system 'jinja2>=3,<4' 'jsonschema>=4,<5'
 
       - name: Verify ckman smoke command syntax
         run: |
