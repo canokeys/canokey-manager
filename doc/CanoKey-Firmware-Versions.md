@@ -122,6 +122,10 @@ catalog and executes every historical release from 1.3 through 3.0.1.
   a stable session device ID because SELECT has no version or salt TLV.
   Firmware 1.5.2 and newer use the YubiKey set (SEND_REMAINING A5h,
   CALCULATE_ALL P2=01h, and truncated CALCULATE P2=01h).
+- **OATH 1.3 touch property**: PUT encodes the touch flag as the standard TLV
+  `78 01 02`. Firmware 1.5.2 and newer use their historical two-byte form
+  `78 02`. ckman changes this encoding only for the matrix-selected legacy
+  dialect.
   A locked modern OATH applet answers A5h with 6982, not 6985.
 - **OATH 1.3 unsupported operations**: SET_CODE/VALIDATE, RENAME, SHA512, and
   full-HMAC calculation are confirmed absent. ckman rejects password and

@@ -502,7 +502,10 @@ class OathSession:
         )
 
         if touch_required:
-            data += struct.pack(">BB", TAG_PROPERTY, PROP_REQUIRE_TOUCH)
+            if self._legacy:
+                data += Tlv(TAG_PROPERTY, bytes([PROP_REQUIRE_TOUCH]))
+            else:
+                data += struct.pack(">BB", TAG_PROPERTY, PROP_REQUIRE_TOUCH)
 
         if d.counter > 0:
             data += Tlv(TAG_IMF, struct.pack(">I", d.counter))

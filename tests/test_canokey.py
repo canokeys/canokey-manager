@@ -34,7 +34,16 @@ from yubikit.core import (
 )
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import ManagementSession
-from yubikit.oath import OATH_TYPE, TAG_NAME, TAG_RESPONSE, TAG_TRUNCATED
+from yubikit.oath import (
+    HASH_ALGORITHM,
+    OATH_TYPE,
+    TAG_KEY,
+    TAG_NAME,
+    TAG_PROPERTY,
+    TAG_RESPONSE,
+    TAG_TRUNCATED,
+    CredentialData,
+)
 from yubikit.openpgp import DO, KEY_REF, OpenPgpSession
 
 
@@ -517,6 +526,21 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             Version(3, 0, 2),
             FeatureStatus.UNKNOWN,
         ),
+        (
+            CanoKeyFeature.FIDO_CREDENTIAL_MANAGEMENT,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_CREDENTIAL_MANAGEMENT,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_CREDENTIAL_MANAGEMENT,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
     ],
 )
 def test_firmware_feature_matrix(feature, version, expected):
@@ -771,6 +795,11 @@ def test_legacy_oath_uses_legacy_commands_and_response_framing():
     )
     legacy_calculate = bytes(Tlv(TAG_TRUNCATED, b"\x06\x01\x02\x03\x04"))
     legacy_calculate_all = bytes(Tlv(TAG_NAME, b"Issuer:name")) + legacy_calculate
+    touch_put_data = (
+        bytes(Tlv(TAG_NAME, b"touch"))
+        + bytes(Tlv(TAG_KEY, b"\x21\x06" + b"secret".ljust(14, b"\0")))
+        + bytes(Tlv(TAG_PROPERTY, b"\x02"))
+    )
     session, conn = _legacy_oath_session(
         [
             (bytes([0, 0x03, 0, 0]), (legacy_list, 0x9000)),
@@ -780,6 +809,11 @@ def test_legacy_oath_uses_legacy_commands_and_response_framing():
             (bytes([0, 0x05, 0, 0]), (legacy_calculate_all, 0x9000)),
             (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
             (bytes([0, 0x04, 0, 0]), (legacy_calculate, 0x9000)),
+            (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
+            (
+                bytes([0, 0x01, 0, 0, len(touch_put_data)]) + touch_put_data,
+                (b"", 0x9000),
+            ),
             (bytes([0, 0x06, 0, 0]), (b"", 0x6985)),
         ]
     )
@@ -793,6 +827,10 @@ def test_legacy_oath_uses_legacy_commands_and_response_framing():
     assert [credential.id for credential in entries] == [b"Issuer:name"]
     assert next(iter(entries.values())) is not None
     assert session.calculate_code(credentials[0], timestamp=30).value == "909060"
+    session.put_credential(
+        CredentialData("touch", OATH_TYPE.TOTP, HASH_ALGORITHM.SHA1, b"secret"),
+        touch_required=True,
+    )
     assert session.version == Version(0, 0, 0)
     assert not session.locked
     assert not conn._script
