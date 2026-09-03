@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/lib.sh"
+: "${CANOKEY_DEVICE_RESTART:?canokey-usbip did not expose its restart helper}"
 
 FIDO_INITIAL_PIN="123456"
 FIDO_PIN="654321"
@@ -23,12 +24,40 @@ case "$fido_status" in
     ;;
 esac
 
-# Keep this as the first device operation. Firmware 2.0.0 and newer only allow
-# the standard CTAP reset command shortly after power-up.
+# Restart in the background and issue reset as soon as PC/SC exposes the card.
+# Waiting for the harness's complete readiness check can consume the reset window.
 section "ckman fido reset"
-capture_without_secrets \
-  "FIDO application data reset." \
-  "${CKMAN[@]}" fido reset --force
+restart_stdout="$CANOKEY_USBIP_WORK_DIR/fido-restart.stdout"
+restart_stderr="$CANOKEY_USBIP_WORK_DIR/fido-restart.stderr"
+reset_stdout="$CANOKEY_USBIP_WORK_DIR/fido-reset.stdout"
+reset_stderr="$CANOKEY_USBIP_WORK_DIR/fido-reset.stderr"
+"$CANOKEY_DEVICE_RESTART" >"$restart_stdout" 2>"$restart_stderr" &
+restart_pid=$!
+
+reset_complete=false
+while kill -0 "$restart_pid" 2>/dev/null; do
+  if "${CKMAN[@]}" fido reset --force >"$reset_stdout" 2>"$reset_stderr"; then
+    reset_complete=true
+    break
+  fi
+  sleep 0.2
+done
+
+if ! wait "$restart_pid"; then
+  cat "$restart_stdout"
+  cat "$restart_stderr" >&2
+  exit 1
+fi
+if [[ "$reset_complete" != true ]] && \
+  "${CKMAN[@]}" fido reset --force >"$reset_stdout" 2>"$reset_stderr"; then
+  reset_complete=true
+fi
+if [[ "$reset_complete" != true ]]; then
+  cat "$reset_stdout"
+  cat "$reset_stderr" >&2
+  exit 1
+fi
+grep -Fq "FIDO application data reset." "$reset_stdout"
 
 section "ckman fido access change-pin (set)"
 capture_without_secrets \

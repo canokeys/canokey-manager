@@ -23,10 +23,12 @@ repository does not duplicate those commit SHAs.
 
 The FIDO test resets the application, sets, verifies, and changes its PIN, then
 provisions a resident credential with `python-fido2` so its CLI list/delete
-lifecycle can be verified. The PIV and OATH tests provision data, verify round
-trips, and clean it up. On firmware 1.3, the OATH lifecycle uses its
-matrix-selected legacy dialect and
-still executes reset, info, TOTP/HOTP with SHA1/SHA256, touch metadata, URI and
+lifecycle can be verified. It restarts the virtual device and issues the reset
+as soon as PC/SC exposes the card, satisfying the reset window on newer
+firmware. The PIV and OATH tests provision data, verify round trips, and clean
+it up. On firmware 1.3, the OATH lifecycle uses its
+matrix-selected legacy dialect and still executes reset, info, TOTP/HOTP with
+SHA1/SHA256, touch metadata, URI and
 PSKC import, generated secrets, list, calculate, and delete. Only the confirmed
 missing password, rename, SHA512, and full-HMAC features report `UNSUPPORTED`
 or a pytest skip. The OpenPGP test changes and recovers PINs, provisions a
