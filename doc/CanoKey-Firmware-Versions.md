@@ -10,6 +10,8 @@ The exact core commit selects a reproducible firmware build, but it is not a
 feature-version API. `ckman` feature decisions use the admin applet firmware
 version. USB/IP tests assert that the admin version matches the firmware ID
 mapped from the exact core commit before executing any lifecycle command.
+The integration workflow obtains that mapping from the pinned `canokey-usbip`
+catalog and executes every historical release from 1.3 through 3.0.1.
 
 ## Milestones (quick reference)
 

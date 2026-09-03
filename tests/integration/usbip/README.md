@@ -5,6 +5,11 @@ real USB, CCID, PC/SC, and CanoKey firmware stack provided by
 `canokey-usbip/compat/run`. Every device operation explicitly selects the
 reader from `CANOKEY_PCSC_READER`.
 
+The workflow resolves every historical release from the pinned
+`canokey-usbip` firmware catalog and runs each one as an independent matrix
+job. The catalog is the only source of firmware-to-core mappings; this
+repository does not duplicate those commit SHAs.
+
 ## Command coverage
 
 - Top level: `info`, `apdu`
@@ -55,6 +60,10 @@ equivalent: U2F `VERSION`, CTAP2 `getInfo`, and `ckman fido info`, all over the
 real PC/SC connection. Together, the FIDO job executes four applicable tests
 without collecting the three YK4 FIPS-only tests.
 
+On firmware 1.3, the `fido-pcsc` matrix entry is explicitly unsupported, so
+these four standard PC/SC tests report `UNSUPPORTED` skips. On every cataloged
+firmware from 1.5.2 onward, all four tests execute and must pass.
+
 The selected common upstream tests also cover invalid-AID handling and the
 general `ykman info` behavior. Tests for OTP, YubiHSM Auth, Security Domain,
 SCP, and USB mode mutation remain out of the runner: those applications are not
@@ -78,6 +87,10 @@ firmware fails the device-test gate until its behavior is validated and the
 matrix is updated. Hardware provisioning state, including attestation
 certificates and preinstalled keys, is always probed at runtime rather than
 inferred from firmware.
+
+All eight cataloged releases from 1.3 through 3.0.1 run this same test
+lifecycle. Matrix jobs use `fail-fast: false` so a difference in one release
+does not hide results from the others.
 
 YubiKey release gates and CanoKey firmware gates are independent. Tests retain
 their upstream YubiKey version predicates. On CanoKey, the same test body uses
