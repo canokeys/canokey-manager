@@ -312,6 +312,12 @@ def change(ctx, password, clear, new_password, remember):
                 "Enter the new password", hide_input=True, confirmation_prompt=True
             )
         key = session.derive_key(new_password)
+        try:
+            session.set_key(key)
+        except NotSupportedError as e:
+            raise CliFail(str(e))
+        except ApduError as e:
+            _fail_scp(ctx, e)
         if remember:
             keys.put_secret(device_id, key.hex())
             keys.write()
@@ -319,13 +325,7 @@ def change(ctx, password, clear, new_password, remember):
         elif device_id in keys:
             del keys[device_id]
             keys.write()
-        try:
-            session.set_key(key)
-            click.echo("Password updated.")
-        except NotSupportedError as e:
-            raise CliFail(str(e))
-        except ApduError as e:
-            _fail_scp(ctx, e)
+        click.echo("Password updated.")
 
 
 @access.command()

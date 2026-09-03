@@ -27,6 +27,7 @@ jobs:
           ref: ${{ env.CANOKEY_USBIP_SHA }}
           path: external/canokey-usbip
           submodules: false
+          persist-credentials: false
 
       - name: Export historical release matrix
         id: catalog
@@ -62,6 +63,7 @@ jobs:
           ref: ${{ env.CANOKEY_USBIP_SHA }}
           path: external/canokey-usbip
           submodules: false
+          persist-credentials: false
 
       - name: Report runner environment
         shell: bash
