@@ -702,7 +702,7 @@ class ManagementSession:
                 challenge_response_timeout=0,
                 device_flags=DEVICE_FLAG(0),
             ),
-            serial=backend.read_serial() or None,
+            serial=backend.read_serial(),
             version=self.version,
             form_factor=FORM_FACTOR.from_str(name),
             supported_capabilities={

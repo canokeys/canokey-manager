@@ -32,8 +32,6 @@ mapped from the exact core commit before executing any lifecycle command.
 - PIV slot 9C defaults to PIN policy ONCE whenever metadata is available through 3.0.1, rather than YubiKey's ALWAYS.
 - OpenPGP: RSA private key import uses CRT format; VERIFY with a wrong PIN returns 6982 instead of 63Cx.
 - Admin applet: default PIN `123456`, 3 retries; READ_SN/READ_CONFIG require an explicit Le.
-- An all-zero admin READ_SN value means that no serial is provisioned and is
-  exposed as `None` in `DeviceInfo`.
 - Admin PIN handling: use empty-Lc VERIFY to inspect validation state without consuming a retry. Never guess the default PIN; request an explicit PIN when the admin applet is not already verified.
 - CCID interface string is "OpenPGP PIV OATH"; the ATR contains "CanoKey".
 
