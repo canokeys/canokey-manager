@@ -295,7 +295,7 @@ jobs:
           set +e
           external/canokey-usbip/compat/run \
             --core-ref "$CANOKEY_CORE_REF" \
-            --timeout 600 \
+            --timeout 240 \
             --require usb \
             --require ccid \
             --require pcsc \

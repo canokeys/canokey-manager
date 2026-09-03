@@ -134,6 +134,9 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **PIV SELECT state**: SELECT does not clear prior PIN/management-key security
   state through 1.6.2; 2.0.0 adds the reset. Tests that specifically assert
   re-selection clears authentication are unsupported on the older releases.
+  Before performing a PIV reset on those releases, ckman explicitly logs out a
+  verified PIN with standard VERIFY P1=FF so the retry-blocking reset sequence
+  cannot loop on the preserved state.
 - **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
 - **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
 - **OpenPGP attestation**: the YubiKey-specific attestation key, certificate,

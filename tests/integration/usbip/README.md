@@ -102,7 +102,8 @@ reported by individual applets are never compared to CanoKey firmware.
 - PIV factory object framing before/after 1.6.1 and empty-slot metadata status
   before/after 3.0.0, including Bio probing; audited legacy responses are
   normalized and still tested
-- PIV SELECT security-state reset, available from firmware 2.0.0
+- PIV SELECT security-state reset, available from firmware 2.0.0; older
+  firmware is explicitly deauthenticated before each standard PIV reset
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OATH full-HMAC responses and duplicate rename rejection, available from 2.0.0;
   ordinary truncated calculations and renames continue to run on older firmware

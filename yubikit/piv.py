@@ -705,6 +705,7 @@ class PivSession:
     ):
         self._canokey_missing_object_wrapping = False
         self._canokey_legacy_empty_slot_status = False
+        self._canokey_select_preserves_security_state = False
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
             wrapping_status = canokey.get_feature_status(
@@ -714,6 +715,10 @@ class PivSession:
                 firmware_version,
                 canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
             )
+            select_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+            )
             for feature, status in (
                 (
                     canokey.CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
@@ -722,6 +727,10 @@ class PivSession:
                 (
                     canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
                     metadata_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+                    select_status,
                 ),
             ):
                 if status == canokey.FeatureStatus.UNKNOWN:
@@ -734,6 +743,9 @@ class PivSession:
             )
             self._canokey_legacy_empty_slot_status = (
                 metadata_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_select_preserves_security_state = (
+                select_status == canokey.FeatureStatus.UNSUPPORTED
             )
         self.protocol = SmartCardProtocol(connection)
         self.protocol.select(AID.PIV)
@@ -773,6 +785,10 @@ class PivSession:
         values for PIN, PUK, and management key.
         """
         logger.debug("Preparing PIV reset")
+
+        # CanoKey: before 2.0, SELECT did not clear a previously verified PIN.
+        if self._canokey_select_preserves_security_state:
+            self.protocol.send_apdu(0, INS_VERIFY, 0xFF, PIN_P2)
 
         try:
             if self.get_bio_metadata().configured:

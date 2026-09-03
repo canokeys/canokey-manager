@@ -16,10 +16,13 @@ from yubikit.core.smartcard import SW, ApduError
 from yubikit.piv import (
     INS_GENERATE_ASYMMETRIC,
     INS_MOVE_KEY,
+    INS_RESET,
+    INS_VERIFY,
     KEY_TYPE,
     MANAGEMENT_KEY_TYPE,
     OBJECT_ID,
     PIN_POLICY,
+    PIN_P2,
     SLOT,
     TOUCH_POLICY,
     Chuid,
@@ -28,6 +31,37 @@ from yubikit.piv import (
     _do_check_key_support,
     decompress_certificate,
 )
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_reset_deauthenticates_only_when_select_preserves_security_state(legacy):
+    class Protocol:
+        def __init__(self):
+            self.commands = []
+
+        def send_apdu(self, *args):
+            self.commands.append(args)
+
+    protocol = Protocol()
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, protocol)
+    session._canokey_select_preserves_security_state = legacy
+    test_session = cast(Any, session)
+
+    def unsupported():
+        raise NotSupportedError()
+
+    test_session.get_bio_metadata = unsupported
+    test_session.get_pin_attempts = lambda: 0
+    test_session.get_puk_metadata = lambda: SimpleNamespace(attempts_remaining=0)
+    test_session.get_management_key_metadata = unsupported
+
+    session.reset()
+
+    expected = [(0, INS_RESET, 0, 0)]
+    if legacy:
+        expected.insert(0, (0, INS_VERIFY, 0xFF, PIN_P2))
+    assert protocol.commands == expected
 
 
 def test_list_keys_ignores_only_empty_slots():
