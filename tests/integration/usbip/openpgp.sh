@@ -79,7 +79,10 @@ section "ckman openpgp keys info"
 "${CKMAN[@]}" openpgp keys info sig
 
 section "ckman openpgp keys set-touch"
-"${CKMAN[@]}" openpgp keys set-touch \
+run_versioned_feature \
+  "ckman openpgp keys set-touch" \
+  "openpgp-uif" \
+  "${CKMAN[@]}" openpgp keys set-touch \
   --admin-pin "$OPENPGP_ADMIN_PIN" \
   --force \
   sig off

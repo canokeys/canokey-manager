@@ -1,6 +1,9 @@
 #  vim: set fileencoding=utf-8 :
 
+from types import SimpleNamespace
+
 import pytest
+from ykman.oath import calculate_steam
 
 from yubikit.oath import (
     HASH_ALGORITHM,
@@ -10,6 +13,27 @@ from yubikit.oath import (
     _format_cred_id,
     _parse_cred_id,
 )
+
+
+@pytest.mark.parametrize(
+    ("truncated", "response"),
+    [
+        (True, bytes.fromhex("01234567")),
+        (False, bytes.fromhex("0000012345670000000000000000000000000002")),
+    ],
+)
+def test_calculate_steam_accepts_audited_canokey_truncated_response(
+    truncated, response
+):
+    class Session:
+        _canokey_truncated_calculate_response = truncated
+
+        def calculate(self, credential_id, challenge):
+            assert credential_id == b"steam"
+            return response
+
+    credential = SimpleNamespace(id=b"steam")
+    assert calculate_steam(Session(), credential, timestamp=30) == "FR3RK"
 
 
 @pytest.mark.parametrize(

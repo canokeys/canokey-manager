@@ -100,7 +100,8 @@ reported by individual applets are never compared to CanoKey firmware.
 - PIV retry counter configuration, metadata-based key info/export, import PIN
   policies, and attestation
 - PIV factory object framing before/after 1.6.1 and empty-slot metadata status
-  before/after 3.0.0; audited legacy responses are normalized and still tested
+  before/after 3.0.0, including Bio probing; audited legacy responses are
+  normalized and still tested
 - PIV SELECT security-state reset, available from firmware 2.0.0
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OATH full-HMAC responses and duplicate rename rejection, available from 2.0.0;
@@ -110,6 +111,7 @@ reported by individual applets are never compared to CanoKey firmware.
   responses are normalized and the OpenPGP lifecycle still runs
 - OpenPGP RSA4096 generation, available from firmware 2.0.0; RSA imports and
   smaller generation sizes remain independently tested
+- OpenPGP UIF touch policy, unavailable on 1.3 and available from 1.5.2
 - OpenPGP `GET CHALLENGE`, available from firmware 3.0.0
 - OpenPGP attestation key and signing-key attestation
 

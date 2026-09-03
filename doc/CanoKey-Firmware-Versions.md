@@ -45,6 +45,8 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - OATH uses the legacy instruction set: PUT 01 / DELETE 02 / LIST 03 / CALCULATE 04 / CALCULATE_ALL 05 / SEND_REMAINING 06 / SET_DEFAULT 55; SELECT returns no version TLV and there is no password protection
 - PIV reports 5.0.0 and supports RSA2048, ECCP256, and ECCP384
 - OpenPGP GET DATA 65/6E/7A returns the contents without the constructed outer tag
+- OpenPGP standard UIF data objects D6/D7/D8 are absent; touch-policy commands
+  using those objects are unsupported
 - CTAP2 gains Ed25519: makeCredential accepts alg -8; credential ID grows to 68 bytes (U2F key handles likewise)
 - Note: getInfo does not advertise Ed25519; hosts must probe. Credentials created by older firmware (64-byte IDs) may not survive the upgrade.
 
@@ -112,9 +114,9 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **OATH dialects**: catalog version 1.3 uses the legacy instruction set (send-remaining 06h, no version TLV, no password protection); 1.5.2 and newer use the YubiKey set (send-remaining A5h). A locked OATH applet answers A5h with 6982, not 6985.
 - **OATH data limits**: HOTP counters start at 1; CALCULATE rejects challenges longer than 8 bytes; LIST/CALCULATE_ALL may silently drop records that exactly fill the response buffer.
 - **OATH full response**: 1.5.2 through 1.6.2 always return the truncated
-  tag-76h response even for P2=0. ckman accepts that known response for callers
-  needing the four dynamic-truncation bytes, while full-HMAC vector tests are
-  explicitly unsupported until 2.0.0.
+  tag-76h response even for P2=0. Its four-byte payload has already undergone
+  dynamic truncation; ckman uses it directly for Steam codes, while full-HMAC
+  vector tests are explicitly unsupported until 2.0.0.
 - **OATH rename collision**: duplicate destination detection is absent through
   1.6.2 and available from 2.0.0. Ordinary rename remains tested on old
   firmware; only the collision-error assertion is gated.
@@ -125,8 +127,9 @@ catalog and executes every historical release from 1.3 through 3.0.1.
   error.
 - **PIV empty metadata**: 2.0.0 and 2.0.1 return 6900 for GET METADATA on an
   empty defined key slot and an empty successful response for key slots not
-  implemented by those releases. ckman maps only those exact GET METADATA
-  results to standard 6A88. Other APDU errors and malformed non-empty responses
+  implemented by those releases, including the biometric metadata slot. ckman
+  maps only those exact GET METADATA results to standard empty-slot or
+  unsupported-Bio results. Other APDU errors and malformed non-empty responses
   are preserved.
 - **PIV SELECT state**: SELECT does not clear prior PIN/management-key security
   state through 1.6.2; 2.0.0 adds the reset. Tests that specifically assert
@@ -137,6 +140,8 @@ catalog and executes every historical release from 1.3 through 3.0.1.
   and GET_ATTESTATION command are unavailable in every cataloged firmware
   through 3.0.1. Standard `sig`, `dec`, and `aut` key metadata, UIF, and
   certificate objects remain supported and must be tested independently.
+- **OpenPGP UIF**: standard D6/D7/D8 UIF data objects are absent in 1.3 and
+  available from 1.5.2. The touch-policy lifecycle is skipped only on 1.3.
 - **OpenPGP certificate selection**: CanoKey numbers SELECT DATA certificate
   occurrences as `sig=0`, `dec=1`, `aut=2`; YubiKey uses the reverse order.
   This is consistent across all cataloged CanoKey firmware.

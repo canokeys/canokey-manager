@@ -165,6 +165,23 @@ def test_get_slot_metadata_normalizes_confirmed_legacy_empty_response():
     assert exc_info.value.sw == SW.REFERENCE_DATA_NOT_FOUND
 
 
+@pytest.mark.parametrize("legacy", [True, False])
+def test_get_bio_metadata_handles_empty_response_only_for_confirmed_legacy(legacy):
+    class Protocol:
+        def send_apdu(self, *args):
+            return b""
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_legacy_empty_slot_status = legacy
+
+    if legacy:
+        with pytest.raises(NotSupportedError):
+            session.get_bio_metadata()
+    else:
+        assert not session.get_bio_metadata().configured
+
+
 @pytest.mark.parametrize(
     "value",
     [

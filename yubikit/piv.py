@@ -1160,15 +1160,19 @@ class PivSession:
         """
         logger.debug("Getting bio metadata")
         try:
-            data = Tlv.parse_dict(
-                self.protocol.send_apdu(0, INS_GET_METADATA, 0, SLOT_OCC_AUTH)
-            )
+            response = self.protocol.send_apdu(0, INS_GET_METADATA, 0, SLOT_OCC_AUTH)
         except ApduError as e:
             if e.sw in (SW.REFERENCE_DATA_NOT_FOUND, SW.INVALID_INSTRUCTION):
                 raise NotSupportedError(
                     "Biometric verification not supported by this YuibKey"
                 )
             raise
+        # CanoKey: 2.0.x returned success with no data for this unknown slot.
+        if self._canokey_legacy_empty_slot_status and not response:
+            raise NotSupportedError(
+                "Biometric verification not supported by this YuibKey"
+            )
+        data = Tlv.parse_dict(response)
         return BioMetadata(
             1 == data.get(TAG_METADATA_BIO_CONFIGURED, b"\x00")[0],
             data.get(TAG_METADATA_RETRIES, b"\x00")[0],

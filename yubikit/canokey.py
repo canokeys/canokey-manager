@@ -73,6 +73,7 @@ class CanoKeyFeature(str, Enum):
     OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
     OPENPGP_DATA_OBJECT_WRAPPING = "openpgp-data-object-wrapping"
     OPENPGP_RSA4096_GENERATION = "openpgp-rsa4096-generation"
+    OPENPGP_UIF = "openpgp-uif"
     OPENPGP_ECDSA_P384_SIGNING = "openpgp-ecdsa-p384-signing"
     OPENPGP_ATTESTATION = "openpgp-attestation"
     PIV_OBJECT_RESPONSE_WRAPPING = "piv-object-response-wrapping"
@@ -184,6 +185,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     ),
     CanoKeyFeature.OPENPGP_RSA4096_GENERATION: FeatureRule(
         (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.OPENPGP_UIF: FeatureRule(
+        (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
     ),
     CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.OPENPGP_ATTESTATION: FeatureRule((), CATALOG_LATEST_VERSION),

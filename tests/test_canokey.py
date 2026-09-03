@@ -406,6 +406,16 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             FeatureStatus.SUPPORTED,
         ),
         (
+            CanoKeyFeature.OPENPGP_UIF,
+            Version(1, 3, 0),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_UIF,
+            Version(1, 5, 2),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
             CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
             Version(1, 5, 2),
             FeatureStatus.UNSUPPORTED,
