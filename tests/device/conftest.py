@@ -3,11 +3,10 @@ import time
 from functools import partial
 
 import pytest
-
 from ykman._cli.util import find_scp11_params
 from ykman.device import list_all_devices, read_info
 from ykman.pcsc import list_devices
-from yubikit.core import TRANSPORT, PID, _override_version
+from yubikit.core import PID, TRANSPORT, _override_version
 from yubikit.core.fido import FidoConnection
 from yubikit.core.otp import OtpConnection
 from yubikit.core.smartcard import SmartCardConnection

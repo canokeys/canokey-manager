@@ -25,6 +25,17 @@ run_applet_tests() {
 status=0
 
 run_applet_tests \
+  "common PC/SC" \
+  tests/device/test_ccid.py \
+  tests/device/cli/test_misc.py || status=1
+
+run_applet_tests \
+  "FIDO over PC/SC" \
+  tests/device/test_interfaces.py \
+  tests/device/cli/test_fido.py \
+  tests/device/test_fido.py || status=1
+
+run_applet_tests \
   "OATH" \
   tests/device/cli/test_oath.py \
   tests/device/test_oath.py || status=1

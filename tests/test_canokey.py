@@ -15,9 +15,10 @@ from yubikit.canokey import (
     INS_VERIFY,
     AdminPinError,
     AdminPinRequired,
-    CanoKeyFeature,
     CanoKeyAdminSession,
+    CanoKeyFeature,
     FeatureStatus,
+    UnknownFeatureError,
     get_feature_status,
     parse_firmware_version,
 )
@@ -286,6 +287,21 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             Version(3, 0, 2),
             FeatureStatus.UNKNOWN,
         ),
+        (
+            CanoKeyFeature.FIDO_PCSC,
+            Version(1, 3, 0),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_PCSC,
+            Version(1, 5, 2),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_PCSC,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
     ],
 )
 def test_firmware_feature_matrix(feature, version, expected):
@@ -297,6 +313,11 @@ def test_every_feature_has_an_audited_rule():
     assert all(
         rule.known_through == CATALOG_LATEST_VERSION for rule in FEATURE_MATRIX.values()
     )
+
+
+def test_unknown_firmware_feature_is_not_automatically_enabled():
+    with pytest.raises(UnknownFeatureError, match="support is unknown"):
+        canokey.require_feature(Version(3, 0, 2), CanoKeyFeature.FIDO_PCSC)
 
 
 def test_catalog_versions_are_ordered_and_unique():
@@ -429,7 +450,7 @@ def test_reset_ctap_supported():
         [
             (select_apdu(), (b"", 0x9000)),
             (bytes([0, INS_VERIFY, 0, 0]), (b"", 0x9000)),
-            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.3", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.1", 0x9000)),
             (bytes([0, INS_RESET_CTAP, 0, 0]), (b"", 0x9000)),
         ],
         pid=PID.CK_FIDO_CCID,

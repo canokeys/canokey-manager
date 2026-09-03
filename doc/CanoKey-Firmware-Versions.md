@@ -53,6 +53,9 @@ mapped from the exact core commit before executing any lifecycle command.
 - OpenPGP: terminated state returns 6285; PUT DATA length checks tightened
 - PIV: factory CHUID/CCC are now populated (randomized GUID)
 - CCID: SELECT of the FIDO AID over CCID is no longer rejected
+- **FIDO over PC/SC is available**: ckman can select the FIDO AID and issue
+  CTAP2 commands through the CCID interface. Firmware 1.3 is explicitly
+  unsupported for this transport path.
 
 ### 1.6.1
 - OpenPGP: GET DATA 0xFA (algorithm information) added, returned as a **bare TLV list without the outer 0xFA tag**; Ed25519 public key read-back off-by-one fixed
@@ -114,7 +117,18 @@ The resulting states match the upstream device-test model:
 
 - **supported**: the command must succeed; failure is fatal.
 - **unsupported**: report the firmware-specific reason and continue.
-- **unknown**: probe the command and accept only its explicit unsupported error.
+- **unknown**: do not enable or skip the feature. Device tests fail until the
+  firmware/feature combination is validated and the matrix is updated.
+
+`fido-pcsc` is unsupported on 1.3 and supported from 1.5.2 through the latest
+audited catalog firmware (3.0.1). The FIDO device and CLI tests exercise this
+path through `SmartCardCtapDevice`; transport, permission, and APDU failures are
+test failures and are never converted into an unsupported result.
+
+CanoKey CTAP1 responses over PC/SC pass through `SmartCardProtocol`, which
+separates the APDU status word from its data. The CanoKey FIDO adapter restores
+that status word before returning the frame to `python-fido2`; this is required
+by its `CTAPHID.MSG` contract. The CTAP2/CBOR path is unchanged.
 
 Applet-reported PIV, OATH, and OpenPGP protocol versions are synthetic and must
 not be used to select these rules. Provisioning-dependent state such as an

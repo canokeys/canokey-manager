@@ -70,6 +70,7 @@ class CanoKeyFeature(str, Enum):
     OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
     OPENPGP_ECDSA_P384_SIGNING = "openpgp-ecdsa-p384-signing"
     OPENPGP_ATTESTATION = "openpgp-attestation"
+    FIDO_PCSC = "fido-pcsc"
 
 
 class FeatureStatus(str, Enum):
@@ -78,6 +79,10 @@ class FeatureStatus(str, Enum):
     SUPPORTED = "supported"
     UNSUPPORTED = "unsupported"
     UNKNOWN = "unknown"
+
+
+class UnknownFeatureError(CommandError):
+    """Support has not been audited for this firmware and feature."""
 
 
 @dataclass(frozen=True)
@@ -160,6 +165,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     ),
     CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.OPENPGP_ATTESTATION: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.FIDO_PCSC: FeatureRule(
+        (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
+    ),
 }
 
 
@@ -186,14 +194,15 @@ def get_feature_status(version: Version, feature: CanoKeyFeature) -> FeatureStat
 
 
 def require_feature(version: Version, feature: CanoKeyFeature) -> None:
-    """Reject a feature known to be unavailable on the given firmware.
-
-    Unknown newer firmware is allowed to continue so the protocol operation can
-    probe support at runtime.
-    """
-    if get_feature_status(version, feature) == FeatureStatus.UNSUPPORTED:
+    """Require audited support for a firmware-dependent feature."""
+    status = get_feature_status(version, feature)
+    if status == FeatureStatus.UNSUPPORTED:
         raise NotSupportedError(
             f"{feature.value} is not supported by CanoKey firmware {version}"
+        )
+    if status == FeatureStatus.UNKNOWN:
+        raise UnknownFeatureError(
+            f"{feature.value} support is unknown for CanoKey firmware {version}"
         )
 
 

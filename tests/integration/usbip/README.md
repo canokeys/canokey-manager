@@ -22,10 +22,45 @@ the applet at the end.
 
 After the executable smoke lifecycle, `device-tests.sh` runs the reusable
 upstream CLI and protocol device tests for each applet against the same real
-PC/SC reader. The suite covers prompt and error paths, OATH vectors and PSKC,
-PIV certificate and cryptographic operations, and OpenPGP signing, decryption,
-and key agreement. Pytest reports capability exclusions with their skip
-reasons; an ordinary test failure remains fatal.
+PC/SC reader. The suite covers FIDO U2F version reporting, CTAP2 discovery and
+`fido info`, prompt and error paths, OATH vectors and PSKC, PIV certificate and
+cryptographic operations, and OpenPGP signing, decryption, and key agreement.
+Pytest reports capability exclusions with their skip reasons; an ordinary test
+failure remains fatal.
+
+### Upstream ykman reuse
+
+The ykman 5.9.2 baseline contains 24 device-test modules and 472 statically
+collected test instances. This runner selects 15 of those upstream modules and
+310 instances. The module reuse is therefore 62.5%, and the instance collection
+reuse is 65.7%. These are collection metrics, not pass-rate claims: pytest's
+pass/skip/fail summary remains the source of truth for a particular firmware
+run.
+
+The baseline has four FIDO-related upstream instances, but only one applies to
+CanoKey:
+
+- `test_interfaces.py::test_switch_interfaces` runs unchanged in substance and
+  repeatedly opens `FidoConnection`; the CanoKey compatibility decorator only
+  applies the audited `fido-pcsc` firmware gate.
+- The three cases in `test_fips_u2f_commands.py` exercise YubiKey 4 FIPS vendor
+  APDUs, not standard U2F or CTAP2 behavior. They are excluded instead of being
+  collected only to skip.
+
+Thus FIDO's upstream applicability on CanoKey is 1/4 (25%), and the runner
+executes the one applicable upstream instance.
+
+The three fork-added FIDO instances cover gaps with no upstream ykman 5.9.2
+equivalent: U2F `VERSION`, CTAP2 `getInfo`, and `ckman fido info`, all over the
+real PC/SC connection. Together, the FIDO job executes four applicable tests
+without collecting the three YK4 FIPS-only tests.
+
+The selected common upstream tests also cover invalid-AID handling and the
+general `ykman info` behavior. Tests for OTP, YubiHSM Auth, Security Domain,
+SCP, and USB mode mutation remain out of the runner: those applications are not
+available on the audited CanoKey firmware, or the test can disconnect the sole
+USB/IP device. Collecting them only to skip them would inflate reuse without
+increasing exercised behavior.
 
 ## Firmware-dependent commands
 
@@ -39,10 +74,10 @@ the lifecycle. Ordinary command failures remain fatal.
 
 Feature rules have three states. Supported commands must succeed, known
 unsupported commands are reported without execution, and unknown newer
-firmware is probed at runtime. A runtime rejection is accepted only when it
-matches the feature's explicit unsupported error. Hardware provisioning state,
-including attestation certificates and preinstalled keys, is always probed at
-runtime rather than inferred from firmware.
+firmware fails the device-test gate until its behavior is validated and the
+matrix is updated. Hardware provisioning state, including attestation
+certificates and preinstalled keys, is always probed at runtime rather than
+inferred from firmware.
 
 YubiKey release gates and CanoKey firmware gates are independent. Tests retain
 their upstream YubiKey version predicates. On CanoKey, the same test body uses
@@ -57,8 +92,9 @@ reported by individual applets are never compared to CanoKey firmware.
 
 ## Not covered by the current hosted-runner path
 
-- `fido`: the GitHub-hosted Azure kernel exposes the USB HID interface but does
-  not bind it to `usbhid`, so no `hidraw` FIDO transport is available.
+- FIDO over HID: the GitHub-hosted Azure kernel exposes the USB HID interface
+  but does not bind it to `usbhid`. FIDO is instead exercised over the audited
+  PC/SC path; this does not claim HID coverage.
 - `otp`: CanoKey does not advertise the Yubico OTP capability.
 - `hsmauth`: CanoKey does not advertise the YubiHSM Auth capability.
 - `securitydomain`: the catalog firmware does not advertise this capability.

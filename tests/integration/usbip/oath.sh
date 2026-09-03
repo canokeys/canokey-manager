@@ -8,12 +8,16 @@ OATH_SECRET="JBSWY3DPEHPK3PXP"
 OATH_PASSWORD="usbip-oath-password"
 OATH_NEW_PASSWORD="usbip-oath-password-2"
 
-if [[ "$(firmware_feature_status oath-modern-commands)" == "unsupported" ]]; then
+oath_status="$(firmware_feature_status oath-modern-commands)"
+if [[ "$oath_status" == "unsupported" ]]; then
   section "ckman oath command lifecycle"
   unsupported_feature \
     "the modern ckman OATH command lifecycle" \
     "Firmware before 1.5.2 uses the legacy CanoKey OATH instruction set."
   exit 0
+elif [[ "$oath_status" == "unknown" ]]; then
+  echo "ERROR: UNKNOWN: oath-modern-commands has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+  exit 1
 fi
 
 section "ckman oath reset"

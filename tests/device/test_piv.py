@@ -9,7 +9,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
-from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
+from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from ykman.piv import (
     check_key,
     generate_csr,
@@ -209,12 +209,15 @@ def skip_unsupported_key_type(session, key_type, info, pin_policy=PIN_POLICY.DEF
 
         if (
             feature
-            and get_feature_status(info.version, feature) == FeatureStatus.UNSUPPORTED
+            and condition.canokey_feature_status(info, feature)
+            == FeatureStatus.UNSUPPORTED
         ):
             pytest.skip(f"CanoKey firmware {info.version} does not support {key_type}")
         if (
             pin_policy != PIN_POLICY.DEFAULT
-            and get_feature_status(info.version, CanoKeyFeature.PIV_GENERATE_POLICIES)
+            and condition.canokey_feature_status(
+                info, CanoKeyFeature.PIV_GENERATE_POLICIES
+            )
             == FeatureStatus.UNSUPPORTED
         ):
             pytest.skip(
@@ -238,8 +241,8 @@ def expected_default_pin_policy(info, slot, upstream_policy):
     if (
         condition.is_canokey(info)
         and slot == SLOT.SIGNATURE
-        and get_feature_status(
-            info.version, CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS
+        and condition.canokey_feature_status(
+            info, CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS
         )
         == FeatureStatus.UNSUPPORTED
     ):

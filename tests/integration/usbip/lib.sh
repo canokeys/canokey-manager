@@ -33,16 +33,16 @@ capture_without_secrets() {
   grep -Fq "$expected" <<<"$output"
 }
 
-FEATURE_AVAILABLE=false
-
 firmware_feature_status() {
   uv run python "$script_dir/firmware.py" \
     status "$CANOKEY_FIRMWARE_VERSION" "$1"
 }
 
-probe_feature() {
+FEATURE_AVAILABLE=false
+
+probe_provisioning_state() {
   local description="$1"
-  local unsupported_pattern="$2"
+  local absent_pattern="$2"
   shift 2
 
   local stdout_file="$CANOKEY_USBIP_WORK_DIR/optional.stdout"
@@ -51,15 +51,15 @@ probe_feature() {
 
   if "$@" >"$stdout_file" 2>"$stderr_file"; then
     FEATURE_AVAILABLE=true
-    echo "$description is supported."
+    echo "$description is present."
     return 0
   else
     status=$?
   fi
 
-  if grep -Eiq "$unsupported_pattern" "$stdout_file" "$stderr_file"; then
+  if grep -Fqi "$absent_pattern" "$stdout_file" "$stderr_file"; then
     FEATURE_AVAILABLE=false
-    echo "UNSUPPORTED: $description is not available on CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}; continuing."
+    echo "$description is not provisioned; continuing."
     return 0
   fi
 
@@ -75,8 +75,7 @@ unsupported_feature() {
 run_versioned_feature() {
   local description="$1"
   local feature="$2"
-  local unsupported_pattern="$3"
-  shift 3
+  shift 2
 
   local status
   status="$(firmware_feature_status "$feature")"
@@ -92,7 +91,8 @@ run_versioned_feature() {
         "The firmware feature matrix marks ${feature} as unavailable."
       ;;
     unknown)
-      probe_feature "$description" "$unsupported_pattern" "$@"
+      echo "ERROR: UNKNOWN: ${feature} has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+      return 1
       ;;
     *)
       echo "ERROR: unknown firmware feature status: $status" >&2

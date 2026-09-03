@@ -275,12 +275,15 @@ class OathSession:
         read_on_success = False
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
-            read_on_success = (
-                get_feature_status(
-                    firmware_version, CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX
-                )
-                == FeatureStatus.UNSUPPORTED
+            status = get_feature_status(
+                firmware_version, CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX
             )
+            if status == FeatureStatus.UNKNOWN:
+                raise canokey.UnknownFeatureError(
+                    "oath-response-chaining-fix support is unknown for CanoKey "
+                    f"firmware {firmware_version}"
+                )
+            read_on_success = status == FeatureStatus.UNSUPPORTED
         self.protocol = SmartCardProtocol(
             connection, INS_SEND_REMAINING, read_on_success=read_on_success
         )
