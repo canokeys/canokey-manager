@@ -81,6 +81,7 @@ class CanoKeyFeature(str, Enum):
     PIV_OBJECT_RESPONSE_WRAPPING = "piv-object-response-wrapping"
     PIV_EMPTY_SLOT_METADATA_STATUS = "piv-empty-slot-metadata-status"
     FIDO_PCSC = "fido-pcsc"
+    FIDO_CREDENTIAL_MANAGEMENT = "fido-credential-management"
 
 
 class FeatureStatus(str, Enum):
@@ -208,6 +209,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     ),
     CanoKeyFeature.FIDO_PCSC: FeatureRule(
         (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.FIDO_CREDENTIAL_MANAGEMENT: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
     ),
 }
 

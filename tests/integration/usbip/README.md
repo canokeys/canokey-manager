@@ -12,15 +12,20 @@ repository does not duplicate those commit SHAs.
 
 ## Command coverage
 
-- Top level: `info`, `apdu`
+- Top level: `list` (normal, serial-only, and reader output), `info`, `apdu`
+- FIDO: `info`, `reset`; `access change-pin`, `access verify-pin`, and, from
+  firmware 2.0.0 onward, `credentials list` and `credentials delete`
 - PIV: `info`, `reset`; every command under `access`, `keys`, `certificates`,
   and `objects`
 - OATH: `info`, `reset`; every command under `access` and `accounts`
 - OpenPGP: `info`, `reset`; all commands under `access`, `keys`, and
   `certificates`, subject to the CanoKey-specific negative cases below
 
-The PIV and OATH tests provision data, verify round trips, and clean it up. On
-firmware 1.3, the OATH lifecycle uses its matrix-selected legacy dialect and
+The FIDO test resets the application, sets, verifies, and changes its PIN, then
+provisions a resident credential with `python-fido2` so its CLI list/delete
+lifecycle can be verified. The PIV and OATH tests provision data, verify round
+trips, and clean it up. On firmware 1.3, the OATH lifecycle uses its
+matrix-selected legacy dialect and
 still executes reset, info, TOTP/HOTP with SHA1/SHA256, touch metadata, URI and
 PSKC import, generated secrets, list, calculate, and delete. Only the confirmed
 missing password, rename, SHA512, and full-HMAC features report `UNSUPPORTED`
@@ -61,8 +66,10 @@ executes the one applicable upstream instance.
 
 The three fork-added FIDO instances cover gaps with no upstream ykman 5.9.2
 equivalent: U2F `VERSION`, CTAP2 `getInfo`, and `ckman fido info`, all over the
-real PC/SC connection. Together, the FIDO job executes four applicable tests
-without collecting the three YK4 FIPS-only tests.
+real PC/SC connection. Together, the FIDO pytest job executes four applicable
+tests without collecting the three YK4 FIPS-only tests. The preceding
+black-box lifecycle additionally covers the standard reset and PIN commands
+and, where available, credential management.
 
 On firmware 1.3, the `fido-pcsc` matrix entry is explicitly unsupported, so
 these four standard PC/SC tests report `UNSUPPORTED` skips. On every cataloged
@@ -122,6 +129,8 @@ reported by individual applets are never compared to CanoKey firmware.
 - OpenPGP UIF touch policy, unavailable on 1.3 and available from 1.5.2
 - OpenPGP `GET CHALLENGE`, available from firmware 3.0.0
 - OpenPGP attestation key and signing-key attestation
+- FIDO reset and PIN management over PC/SC from firmware 1.5.2 onward;
+  credential management from firmware 2.0.0 onward
 
 ## Not covered by the current hosted-runner path
 
@@ -133,8 +142,6 @@ reported by individual applets are never compared to CanoKey firmware.
 - `securitydomain`: the catalog firmware does not advertise this capability.
 - `config`: mutating USB application state can disconnect the sole test device;
   CanoKey configuration behavior needs a lifecycle that can reattach it.
-- `list`: this command intentionally rejects the global `--reader` selector and
-  therefore is outside this explicitly selected-reader integration path.
 - `script`: this executes arbitrary user-provided Python and does not add device
   protocol coverage beyond the commands above.
 

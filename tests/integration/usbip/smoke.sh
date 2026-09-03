@@ -17,14 +17,18 @@ export PYTHON_KEYRING_BACKEND="tests.integration.usbip.keyring_backend.Keyring"
 
 source "$script_dir/lib.sh"
 
-section "ckman info"
-device_info="$("${CKMAN[@]}" info)"
-printf '%s\n' "$device_info"
-
 export CANOKEY_FIRMWARE_VERSION_NORMALIZED
 CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
   uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_VERSION"
 )"
+
+# FIDO reset has a short post-power-up window on newer firmware.
+"$script_dir/fido.sh"
+
+section "ckman info"
+device_info="$("${CKMAN[@]}" info)"
+printf '%s\n' "$device_info"
+
 reported_firmware="$(
   sed -n 's/^Firmware version:[[:space:]]*//p' <<<"$device_info"
 )"
@@ -42,6 +46,20 @@ if [[ -n "${CANOKEY_FIRMWARE_ID:-}" ]]; then
   fi
 fi
 echo "CanoKey firmware identity verified: ${reported_firmware}."
+
+section "ckman list"
+list_output="$(uv run ckman list)"
+printf '%s\n' "$list_output"
+grep -Fq "CanoKey" <<<"$list_output"
+
+reported_serial="$(
+  sed -n 's/^Serial number:[[:space:]]*//p' <<<"$device_info"
+)"
+serials_output="$(uv run ckman list --serials)"
+grep -Fxq "$reported_serial" <<<"$serials_output"
+
+readers_output="$(uv run ckman list --readers)"
+grep -Fxq "$CANOKEY_PCSC_READER" <<<"$readers_output"
 
 section "ckman apdu"
 run_versioned_feature \
