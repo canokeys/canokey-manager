@@ -150,6 +150,21 @@ def test_get_slot_metadata_normalizes_only_confirmed_legacy_empty_status(
     assert exc_info.value.sw == expected_sw
 
 
+def test_get_slot_metadata_normalizes_confirmed_legacy_empty_response():
+    class Protocol:
+        def send_apdu(self, *args):
+            return b""
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = Version(5, 3, 0)
+    session._canokey_legacy_empty_slot_status = True
+
+    with pytest.raises(ApduError) as exc_info:
+        session.get_slot_metadata(SLOT.RETIRED3)
+    assert exc_info.value.sw == SW.REFERENCE_DATA_NOT_FOUND
+
+
 @pytest.mark.parametrize(
     "value",
     [

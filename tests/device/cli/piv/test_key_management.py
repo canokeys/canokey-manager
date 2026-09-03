@@ -418,6 +418,7 @@ class TestKeyManagement:
     def test_generate_csr_eccp256(self, ykman_cli, keys, tmp_file):
         self._test_generate_csr(ykman_cli, keys, tmp_file, "ECCP256")
 
+    @condition.canokey_feature(CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE)
     def test_import_verify_correct_cert_succeeds_with_pin(
         self, ykman_cli, keys, tmp_file
     ):

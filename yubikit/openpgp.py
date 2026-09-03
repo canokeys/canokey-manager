@@ -986,18 +986,36 @@ class OpenPgpSession:
         scp_key_params: ScpKeyParams | None = None,
     ):
         self._canokey_missing_data_object_wrapping = False
+        self._canokey_has_algorithm_information = True
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
-            status = canokey.get_feature_status(
+            wrapping_status = canokey.get_feature_status(
                 firmware_version, canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING
             )
-            if status == canokey.FeatureStatus.UNKNOWN:
-                raise canokey.UnknownFeatureError(
-                    "openpgp-data-object-wrapping support is unknown for CanoKey "
-                    f"firmware {firmware_version}"
-                )
+            algorithm_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+            )
+            for feature, status in (
+                (
+                    canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING,
+                    wrapping_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
+                    algorithm_status,
+                ),
+            ):
+                if status == canokey.FeatureStatus.UNKNOWN:
+                    raise canokey.UnknownFeatureError(
+                        f"{feature.value} support is unknown for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
             self._canokey_missing_data_object_wrapping = (
-                status == canokey.FeatureStatus.UNSUPPORTED
+                wrapping_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_has_algorithm_information = (
+                algorithm_status == canokey.FeatureStatus.SUPPORTED
             )
         self.protocol = SmartCardProtocol(connection)
         try:
@@ -1456,12 +1474,13 @@ class OpenPgpSession:
         :param attributes: The algorithm attributes to set.
         """
         logger.debug(f"Setting Algorithm Attributes for {key_ref.name}")
-        supported = self.get_algorithm_information()
-        if self.version[0] > 0:  # Don't check support on major version 0
-            if key_ref not in supported:
-                raise NotSupportedError("Key slot not supported")
-            if attributes not in supported[key_ref]:
-                raise NotSupportedError("Algorithm attributes not supported")
+        if self._canokey_has_algorithm_information:
+            supported = self.get_algorithm_information()
+            if self.version[0] > 0:  # Don't check support on major version 0
+                if key_ref not in supported:
+                    raise NotSupportedError("Key slot not supported")
+                if attributes not in supported[key_ref]:
+                    raise NotSupportedError("Algorithm attributes not supported")
 
         self.put_data(key_ref.algorithm_attributes_do, attributes)
         logger.info("Algorithm Attributes have been changed")

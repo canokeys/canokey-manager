@@ -46,7 +46,7 @@ class TestFunctions:
             session.calculate(cred.id, challenge)
         session.calculate(new_id, challenge)
 
-    @condition.min_version_or_canokey(CanoKeyFeature.OATH_MODERN_COMMANDS, 5, 3)
+    @condition.min_version_or_canokey(CanoKeyFeature.OATH_RENAME_COLLISION_CHECK, 5, 3)
     def test_rename_to_existing(self, session):
         cred = session.put_credential(CRED_DATA)
         new_id = session.rename_credential(cred.id, "newname", "newissuer")
@@ -157,6 +157,7 @@ def _ids_hmac(params):
 
 
 class TestHmacVectors:
+    @condition.canokey_feature(CanoKeyFeature.OATH_FULL_RESPONSE)
     @pytest.mark.parametrize("params", HMAC_PARAMS, ids=_ids_hmac)
     def test_vector(self, info, session, params):
         key, challenge, hash_algorithm, expected = params

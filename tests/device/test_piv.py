@@ -354,6 +354,7 @@ class TestKeyManagement:
             == "alice"
         )
 
+    @condition.canokey_feature(CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE)
     def test_generate_self_signed_certificate_requires_pin(self, session, keys, scp):
         session.verify_pin(keys.pin)
         public_key = generate_key(session, scp, keys, SLOT.AUTHENTICATION)

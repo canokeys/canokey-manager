@@ -297,6 +297,14 @@ def test_import_decrypt_rsa(session, keys, key_size, info):
 @pytest.mark.parametrize("key_size", [2048, 3072, 4096])
 def test_generate_rsa(session, keys, key_size, info):
     if condition.is_canokey(info):
+        if (
+            key_size == 4096
+            and condition.canokey_feature_status(
+                info, CanoKeyFeature.OPENPGP_RSA4096_GENERATION
+            )
+            == FeatureStatus.UNSUPPORTED
+        ):
+            pytest.skip("CanoKey firmware does not support OpenPGP RSA4096 generation")
         skip_unsupported_rsa_size(session, key_size, KEY_REF.SIG)
     elif key_size != 2048:
         if info.version[0] < 4:

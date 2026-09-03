@@ -273,17 +273,28 @@ class OathSession:
         scp_key_params: ScpKeyParams | None = None,
     ):
         read_on_success = False
+        self._canokey_truncated_calculate_response = False
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
-            status = get_feature_status(
+            chaining_status = get_feature_status(
                 firmware_version, CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX
             )
-            if status == FeatureStatus.UNKNOWN:
-                raise canokey.UnknownFeatureError(
-                    "oath-response-chaining-fix support is unknown for CanoKey "
-                    f"firmware {firmware_version}"
-                )
-            read_on_success = status == FeatureStatus.UNSUPPORTED
+            full_response_status = get_feature_status(
+                firmware_version, CanoKeyFeature.OATH_FULL_RESPONSE
+            )
+            for feature, status in (
+                (CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX, chaining_status),
+                (CanoKeyFeature.OATH_FULL_RESPONSE, full_response_status),
+            ):
+                if status == FeatureStatus.UNKNOWN:
+                    raise canokey.UnknownFeatureError(
+                        f"{feature.value} support is unknown for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
+            read_on_success = chaining_status == FeatureStatus.UNSUPPORTED
+            self._canokey_truncated_calculate_response = (
+                full_response_status == FeatureStatus.UNSUPPORTED
+            )
         self.protocol = SmartCardProtocol(
             connection, INS_SEND_REMAINING, read_on_success=read_on_success
         )
@@ -495,16 +506,19 @@ class OathSession:
         :param challenge: The challenge.
         """
         logger.debug(f"Calculating response for credential: {credential_id!r}")
-        resp = Tlv.unpack(
-            TAG_RESPONSE,
-            self.protocol.send_apdu(
-                0,
-                INS_CALCULATE,
-                0,
-                0,
-                Tlv(TAG_NAME, credential_id) + Tlv(TAG_CHALLENGE, challenge),
-            ),
+        response = self.protocol.send_apdu(
+            0,
+            INS_CALCULATE,
+            0,
+            0,
+            Tlv(TAG_NAME, credential_id) + Tlv(TAG_CHALLENGE, challenge),
         )
+        response_tag = (
+            TAG_TRUNCATED
+            if self._canokey_truncated_calculate_response
+            else TAG_RESPONSE
+        )
+        resp = Tlv.unpack(response_tag, response)
         return resp[1:]
 
     def delete_credential(self, credential_id: bytes) -> None:

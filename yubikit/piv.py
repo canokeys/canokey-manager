@@ -1138,6 +1138,9 @@ class PivSession:
             if self._canokey_legacy_empty_slot_status and e.sw == 0x6900:
                 raise ApduError(e.data, SW.REFERENCE_DATA_NOT_FOUND) from e
             raise
+        # CanoKey: 2.0.x returned success with no data for unknown slots.
+        if self._canokey_legacy_empty_slot_status and not response:
+            raise ApduError(b"", SW.REFERENCE_DATA_NOT_FOUND)
         data = Tlv.parse_dict(response)
         policy = data[TAG_METADATA_POLICY]
         return SlotMetadata(

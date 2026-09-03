@@ -164,6 +164,56 @@ def test_openpgp_data_object_compatibility_preserves_apdu_errors():
     assert exc_info.value.sw == SW.SECURITY_CONDITION_NOT_SATISFIED
 
 
+def test_openpgp_without_algorithm_information_still_writes_attributes():
+    written = []
+
+    session = object.__new__(OpenPgpSession)
+    session._canokey_has_algorithm_information = False
+    session.get_algorithm_information = lambda: pytest.fail(
+        "unexpected capability read"
+    )
+    session.put_data = lambda data_object, value: written.append((data_object, value))
+
+    attributes = b"attributes"
+    session.set_algorithm_attributes(KEY_REF.SIG, attributes)
+
+    assert written == [(KEY_REF.SIG.algorithm_attributes_do, attributes)]
+
+
+@pytest.mark.parametrize(
+    ("legacy", "tag"),
+    [(True, 0x76), (False, 0x75)],
+)
+def test_oath_calculate_uses_audited_response_form(legacy, tag):
+    from yubikit.oath import OathSession
+
+    class Protocol:
+        def send_apdu(self, *args):
+            return bytes(Tlv(tag, b"\x06hash"))
+
+    session = object.__new__(OathSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_truncated_calculate_response = legacy
+
+    assert session.calculate(b"credential", b"challenge") == b"hash"
+
+
+def test_oath_calculate_legacy_compatibility_preserves_apdu_errors():
+    from yubikit.oath import OathSession
+
+    class Protocol:
+        def send_apdu(self, *args):
+            raise ApduError(b"error", SW.SECURITY_CONDITION_NOT_SATISFIED)
+
+    session = object.__new__(OathSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_truncated_calculate_response = True
+
+    with pytest.raises(ApduError) as exc_info:
+        session.calculate(b"credential", b"challenge")
+    assert exc_info.value.sw == SW.SECURITY_CONDITION_NOT_SATISFIED
+
+
 @pytest.mark.parametrize(
     ("connection", "key_ref", "expected_occurrence"),
     [
@@ -256,6 +306,26 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             FeatureStatus.UNKNOWN,
         ),
         (
+            CanoKeyFeature.OATH_FULL_RESPONSE,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_FULL_RESPONSE,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_RENAME_COLLISION_CHECK,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OATH_RENAME_COLLISION_CHECK,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
             CanoKeyFeature.OPENPGP_ALGORITHM_INFORMATION,
             Version(1, 5, 2),
             FeatureStatus.UNSUPPORTED,
@@ -286,6 +356,16 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             FeatureStatus.SUPPORTED,
         ),
         (
+            CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
             CanoKeyFeature.CTAP_RESET,
             Version(2, 0, 1),
             FeatureStatus.UNSUPPORTED,
@@ -312,6 +392,16 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
         ),
         (
             CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_RSA4096_GENERATION,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_RSA4096_GENERATION,
             Version(2, 0, 0),
             FeatureStatus.SUPPORTED,
         ),

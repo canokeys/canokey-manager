@@ -52,6 +52,8 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - OpenPGP ECDH returns a bare shared secret; UIF data objects and the general-feature-management template are available
 - Admin READ_CONFIG is 5 bytes; CONFIG controls NDEF and WebUSB; FACTORY_RESET is rejected over NFC
 - **OATH reworked to the YubiKey instruction set**: LIST A1 / CALCULATE A2 / VALIDATE A3 / SEND_REMAINING A5 / SET_CODE 03 / RENAME 05; CALCULATE_ALL moves to SELECT with P1=00; SELECT returns a version TLV (reports 5.5.5) plus a session handle, and a challenge when a password is set; all commands except SELECT/VALIDATE answer 6982 until validated; SHA512 added
+- OATH CALCULATE ignores P2 and always returns the five-byte truncated form
+  (tag 76h); RENAME does not reject a destination name that already exists
 - Admin: EXPORT_OATH (06h) removed
 - OpenPGP: terminated state returns 6285; PUT DATA length checks tightened
 - PIV: factory CHUID/CCC are now populated (randomized GUID), but their stored
@@ -73,9 +75,12 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 
 ### 2.0.0
 - **CTAP upgraded to FIDO 2.1**: getInfo adds FIDO_2_1, pinUvAuthProtocols=[1,2], credMgmt / largeBlobs / credProtect / credBlob / largeBlobKey; authenticatorReset limited to 10 s after power-up
-- **PIV**: reported version 5.0.0 → **5.3.0**; GET METADATA (F7h) added; retired key slots 82/83 (certificates 5FC10D/0E); Printed Information object 5FC109 (read requires PIN); Ed25519 (0x22) always available; RSA3072/4096 (custom IDs 0x50/0x51), X25519 (0x52), secp256k1 (0x53), SM2 (0x54) require enabling via admin config (INS 40h, P1=07h); GENERATE accepts PIN/touch policy TLVs
+- **PIV**: reported version 5.0.0 → **5.3.0**; GET METADATA (F7h) added; retired key slots 82/83 (certificates 5FC10D/0E); Printed Information object 5FC109 (read requires PIN); Ed25519 (0x22) always available; RSA3072/4096 (custom IDs 0x50/0x51), X25519 (0x52), secp256k1 (0x53), SM2 (0x54) require enabling via admin config (INS 40h, P1=07h); GENERATE accepts PIN/touch policy TLVs; SELECT now clears PIN and management-key security state
 - OpenPGP: GET DATA 65/6E/7A responses gain their constructed outer tags (0xFA stays bare); algorithm information gains RSA3072 and SM2
-- OATH: CALCULATE can return the full HMAC digest (P2=0, tag 0x77)
+- OpenPGP: RSA4096 key generation becomes functional (1.6.x advertises it
+  but its generator only accepts RSA2048)
+- OATH: CALCULATE can return the full HMAC digest (P2=0, tag 0x75), and
+  RENAME rejects duplicate destination names
 
 ### 2.0.1
 - CTAP: authData no longer carries the ED flag when no extension output exists; getNextAssertion no longer requires user presence
@@ -106,14 +111,26 @@ catalog and executes every historical release from 1.3 through 3.0.1.
   audited pre-2.0 firmware; 2.0.0 and newer responses remain untouched.
 - **OATH dialects**: catalog version 1.3 uses the legacy instruction set (send-remaining 06h, no version TLV, no password protection); 1.5.2 and newer use the YubiKey set (send-remaining A5h). A locked OATH applet answers A5h with 6982, not 6985.
 - **OATH data limits**: HOTP counters start at 1; CALCULATE rejects challenges longer than 8 bytes; LIST/CALCULATE_ALL may silently drop records that exactly fill the response buffer.
+- **OATH full response**: 1.5.2 through 1.6.2 always return the truncated
+  tag-76h response even for P2=0. ckman accepts that known response for callers
+  needing the four dynamic-truncation bytes, while full-HMAC vector tests are
+  explicitly unsupported until 2.0.0.
+- **OATH rename collision**: duplicate destination detection is absent through
+  1.6.2 and available from 2.0.0. Ordinary rename remains tested on old
+  firmware; only the collision-error assertion is gated.
 - **PIV algorithms**: RSA1024 never exists. Extended algorithms on 2.0.x need admin config (40h, P1=07h) and use custom IDs; 3.0.0+ enables them by default with standard IDs.
 - **PIV object framing**: factory CHUID/CCC data in 1.5.2 omits the 0x53
   container. ckman accepts only the known CHUID (30h) and CCC (F0h) legacy
   forms on audited pre-1.6.1 firmware; other malformed object data remains an
   error.
 - **PIV empty metadata**: 2.0.0 and 2.0.1 return 6900 for GET METADATA on an
-  empty key slot. ckman maps only that exact command/status combination to
-  standard 6A88. Other APDU errors are preserved.
+  empty defined key slot and an empty successful response for key slots not
+  implemented by those releases. ckman maps only those exact GET METADATA
+  results to standard 6A88. Other APDU errors and malformed non-empty responses
+  are preserved.
+- **PIV SELECT state**: SELECT does not clear prior PIN/management-key security
+  state through 1.6.2; 2.0.0 adds the reset. Tests that specifically assert
+  re-selection clears authentication are unsupported on the older releases.
 - **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
 - **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
 - **OpenPGP attestation**: the YubiKey-specific attestation key, certificate,
@@ -123,6 +140,9 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **OpenPGP certificate selection**: CanoKey numbers SELECT DATA certificate
   occurrences as `sig=0`, `dec=1`, `aut=2`; YubiKey uses the reverse order.
   This is consistent across all cataloged CanoKey firmware.
+- **OpenPGP RSA generation**: 1.6.x algorithm information advertises RSA4096,
+  but GENERATE accepts only RSA2048. RSA4096 generation is available from
+  2.0.0; import capability is tested independently.
 
 ## ckman feature matrix
 
@@ -145,6 +165,11 @@ The same matrix records protocol-correct framing/status boundaries for
 (1.6.1+), and `piv-empty-slot-metadata-status` (3.0.0+). Known older forms are
 normalized narrowly so their commands still execute; an unknown newer
 firmware fails closed instead of inheriting either compatibility path.
+
+It also records the independently confirmed 2.0.0 boundaries for
+`oath-full-response`, `oath-rename-collision-check`,
+`piv-select-resets-security-state`, and `openpgp-rsa4096-generation`. Tests gate
+only the missing semantics; adjacent supported operations continue to execute.
 
 CanoKey CTAP1 responses over PC/SC pass through `SmartCardProtocol`, which
 separates the APDU status word from its data. The CanoKey FIDO adapter restores
