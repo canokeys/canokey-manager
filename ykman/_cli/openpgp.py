@@ -82,7 +82,7 @@ def _require_canokey_feature(ctx, feature):
     if canokey.is_canokey(session.protocol.connection):
         try:
             canokey.require_feature(ctx.obj["info"].version, feature)
-        except NotSupportedError as e:
+        except (NotSupportedError, canokey.UnknownFeatureError) as e:
             raise CliFail(str(e))
 
 
@@ -205,14 +205,7 @@ def set_pin_retries(
     Set the number of retry attempts for the User PIN, Reset Code, and Admin PIN.
     """
     session = ctx.obj["session"]
-    if canokey.is_canokey(session.protocol.connection):
-        try:
-            canokey.require_feature(
-                ctx.obj["info"].version,
-                canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
-            )
-        except NotSupportedError as e:
-            raise CliFail(str(e))
+    _require_canokey_feature(ctx, canokey.CanoKeyFeature.OPENPGP_SET_RETRIES)
 
     if admin_pin is None:
         admin_pin = click_prompt("Enter Admin PIN", hide_input=True)

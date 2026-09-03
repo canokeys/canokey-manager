@@ -6,6 +6,7 @@ source "$script_dir/lib.sh"
 
 FIDO_INITIAL_PIN="123456"
 FIDO_PIN="654321"
+FIDO_CONFIG_PIN="789012"
 
 fido_status="$(firmware_feature_status fido-pcsc)"
 case "$fido_status" in
@@ -64,6 +65,10 @@ capture_without_secrets \
   "PIN verified." \
   "${CKMAN[@]}" fido access verify-pin --pin "$FIDO_PIN"
 
+section "FIDO makeCredential/getAssertion"
+export CKMAN_TEST_FIDO_PIN="$FIDO_PIN"
+uv run python "$script_dir/check-fido-assertion.py" "$CANOKEY_PCSC_READER"
+
 credential_status="$(firmware_feature_status fido-credential-management)"
 case "$credential_status" in
   supported) ;;
@@ -80,13 +85,19 @@ case "$credential_status" in
 esac
 
 section "Provision resident FIDO credential"
-export CKMAN_TEST_FIDO_PIN="$FIDO_PIN"
 credential_id="$(
   uv run python "$script_dir/seed-fido-credential.py" "$CANOKEY_PCSC_READER"
 )"
 [[ "$credential_id" =~ ^[0-9a-f]+$ ]]
 
 section "ckman fido credentials list"
+credentials_output="$(
+  "${CKMAN[@]}" fido credentials list --pin "$FIDO_PIN"
+)"
+printf '%s\n' "$credentials_output"
+grep -Fq "ckman.usbip.test" <<<"$credentials_output"
+grep -Fq "usbip-user" <<<"$credentials_output"
+
 credentials_file="$CANOKEY_USBIP_WORK_DIR/fido-credentials.csv"
 "${CKMAN[@]}" fido credentials list \
   --pin "$FIDO_PIN" \
@@ -113,3 +124,73 @@ uv run python "$script_dir/check-fido-credentials.py" \
   "$credential_id" \
   absent
 echo "FIDO credential lifecycle cleanup complete."
+
+config_status="$(firmware_feature_status fido-authenticator-config)"
+case "$config_status" in
+  supported)
+    section "ckman fido config toggle-always-uv"
+    read_always_uv() {
+      "${CKMAN[@]}" fido info |
+        sed -n 's/^Always Require UV:[[:space:]]*//p'
+    }
+    initial_always_uv="$(read_always_uv)"
+    case "$initial_always_uv" in
+      On)
+        first_toggle="off"
+        second_toggle="on"
+        ;;
+      Off)
+        first_toggle="on"
+        second_toggle="off"
+        ;;
+      *)
+        echo "ERROR: unexpected Always Require UV state: ${initial_always_uv:-missing}" >&2
+        exit 1
+        ;;
+    esac
+    capture_without_secrets \
+      "Always Require UV is ${first_toggle}." \
+      "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
+    [[ "$(read_always_uv)" == "${first_toggle^}" ]]
+    capture_without_secrets \
+      "Always Require UV is ${second_toggle}." \
+      "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
+    [[ "$(read_always_uv)" == "$initial_always_uv" ]]
+
+    section "ckman fido access set-min-length"
+    capture_without_secrets \
+      "Minimum PIN length set." \
+      "${CKMAN[@]}" fido access set-min-length --pin "$FIDO_PIN" 6
+    minimum_pin_length="$(
+      "${CKMAN[@]}" fido info |
+        sed -n 's/^Minimum PIN length:[[:space:]]*//p'
+    )"
+    [[ "$minimum_pin_length" == 6 ]]
+
+    section "ckman fido access force-change"
+    capture_without_secrets \
+      "Force PIN change set." \
+      "${CKMAN[@]}" fido access force-change --pin "$FIDO_PIN"
+    "${CKMAN[@]}" fido info | grep -Fq "must be changed before it can be used"
+    expect_failure \
+      "Verifying a FIDO PIN marked for forced change" \
+      "${CKMAN[@]}" fido access verify-pin --pin "$FIDO_PIN"
+    capture_without_secrets \
+      "FIDO PIN updated." \
+      "${CKMAN[@]}" fido access change-pin \
+      --pin "$FIDO_PIN" \
+      --new-pin "$FIDO_CONFIG_PIN"
+    capture_without_secrets \
+      "PIN verified." \
+      "${CKMAN[@]}" fido access verify-pin --pin "$FIDO_CONFIG_PIN"
+    ;;
+  unsupported)
+    unsupported_feature \
+      "ckman fido authenticator configuration" \
+      "Authenticator Configuration is unavailable."
+    ;;
+  unknown)
+    echo "ERROR: UNKNOWN: fido-authenticator-config has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+    exit 1
+    ;;
+esac

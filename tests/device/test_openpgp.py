@@ -5,7 +5,6 @@ import pytest
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
-
 from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT, InvalidPinError
 from yubikit.core.smartcard import AID, ApduError
@@ -146,27 +145,29 @@ def test_change_admin(session, keys):
     session.verify_admin(keys.admin)
 
 
-@condition.canokey(False)  # CanoKey does not support SET PIN RETRIES
-def test_change_pin_retries(session, keys, version):
+@condition.canokey_feature(CanoKeyFeature.OPENPGP_SET_RETRIES)
+def test_change_pin_retries(session, keys, version, info):
+    attempts = (5, 5, 15) if condition.is_canokey(info) else (5, 0, 25)
     with pytest.raises(ApduError):
-        session.set_pin_attempts(5, 0, 25)
+        session.set_pin_attempts(*attempts)
 
     session.verify_admin(keys.admin)
-    session.set_pin_attempts(5, 0, 25)
+    session.set_pin_attempts(*attempts)
 
-    assert session.get_pin_status().attempts_user == 5
-    if version >= (4, 0, 0):
-        # NEO returns 3 if no reset code is set
-        assert session.get_pin_status().attempts_reset == 0
-    assert session.get_pin_status().attempts_admin == 25
+    status = session.get_pin_status()
+    assert status.attempts_user == attempts[0]
+    if condition.is_canokey(info) or version >= (4, 0, 0):
+        # CanoKey and YubiKey 4+ report zero when no reset code is set.
+        assert status.attempts_reset == 0
+    assert status.attempts_admin == attempts[2]
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_pin(NON_DEFAULT_PIN)
-        assert e.value.attempts_remaining == 4
+    assert e.value.attempts_remaining == 4
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_admin(NON_DEFAULT_ADMIN_PIN)
-        assert e.value.attempts_remaining == 24
+    assert e.value.attempts_remaining == attempts[2] - 1
 
 
 def test_import_requires_admin(session):

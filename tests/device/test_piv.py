@@ -8,8 +8,6 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
-
-from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from ykman.piv import (
     check_key,
     generate_csr,
@@ -19,6 +17,7 @@ from ykman.piv import (
     pivman_set_mgm_key,
 )
 from ykman.util import parse_certificates, parse_private_key
+from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT, NotSupportedError
 from yubikit.core.smartcard import AID, ApduError
 from yubikit.management import CAPABILITY, RELEASE_TYPE, ManagementSession
@@ -708,7 +707,7 @@ class TestUnblockPin:
         assert session.get_pin_attempts() == 3
         session.verify_pin(NON_DEFAULT_PIN)
 
-    @condition.capability(CAPABILITY.OTP)  # Yubico only
+    @condition.capability_or_canokey(CanoKeyFeature.PIV_SET_RETRIES, CAPABILITY.OTP)
     def test_set_pin_retries_requires_pin_and_mgm_key(
         self, session, version, default_keys, scp
     ):
@@ -735,7 +734,7 @@ class TestUnblockPin:
         session.verify_pin(keys.pin)
         session.set_pin_attempts(4, 4)
 
-    @condition.capability(CAPABILITY.OTP)  # Yubico only
+    @condition.capability_or_canokey(CanoKeyFeature.PIV_SET_RETRIES, CAPABILITY.OTP)
     def test_set_pin_retries_sets_pin_and_puk_tries(self, session, default_keys, scp):
         keys = default_keys
         pin_tries = 9
@@ -773,7 +772,17 @@ class TestMetadata:
     def test_management_key_metadata(self, session, info):
         data = session.get_management_key_metadata()
         default_type = data.key_type
-        if condition.is_canokey(info) or info.version < (5, 7, 0):
+        if condition.is_canokey(info):
+            expected_type = (
+                MANAGEMENT_KEY_TYPE.AES192
+                if condition.canokey_feature_status(
+                    info, CanoKeyFeature.PIV_DEFAULT_MANAGEMENT_KEY_AES192
+                )
+                == FeatureStatus.SUPPORTED
+                else MANAGEMENT_KEY_TYPE.TDES
+            )
+            assert data.key_type == expected_type
+        elif info.version < (5, 7, 0):
             assert data.key_type == MANAGEMENT_KEY_TYPE.TDES
         else:
             assert data.key_type == MANAGEMENT_KEY_TYPE.AES192
@@ -782,9 +791,7 @@ class TestMetadata:
 
         session.authenticate(DEFAULT_MANAGEMENT_KEY)
         new_type = (
-            MANAGEMENT_KEY_TYPE.TDES
-            if condition.is_canokey(info)
-            else MANAGEMENT_KEY_TYPE.AES192
+            default_type if condition.is_canokey(info) else MANAGEMENT_KEY_TYPE.AES192
         )
         session.set_management_key(new_type, NON_DEFAULT_MANAGEMENT_KEY)
         assert session.management_key_type == new_type
@@ -800,7 +807,10 @@ class TestMetadata:
 
         if CAPABILITY.PIV not in info.fips_capable:
             session.set_management_key(
-                MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY
+                default_type
+                if condition.is_canokey(info)
+                else MANAGEMENT_KEY_TYPE.TDES,
+                NON_DEFAULT_MANAGEMENT_KEY,
             )
             data = session.get_management_key_metadata()
             assert data.default_value is False
@@ -870,8 +880,7 @@ class TestMetadata:
 
 class TestMoveAndDelete:
     @pytest.fixture(autouse=True)
-    @condition.canokey(False)  # CanoKey PIV has no MOVE KEY instruction
-    @condition.min_version(5, 7)
+    @condition.min_version_or_canokey(CanoKeyFeature.PIV_MOVE_KEY, 5, 7)
     def preconditions(self):
         pass
 

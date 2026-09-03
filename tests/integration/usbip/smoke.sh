@@ -22,8 +22,6 @@ CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
   uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_VERSION"
 )"
 
-"$script_dir/fido.sh"
-
 section "ckman info"
 device_info="$("${CKMAN[@]}" info)"
 printf '%s\n' "$device_info"
@@ -46,6 +44,8 @@ if [[ -n "${CANOKEY_FIRMWARE_ID:-}" ]]; then
 fi
 echo "CanoKey firmware identity verified: ${reported_firmware}."
 
+"$script_dir/fido.sh"
+
 section "ckman list"
 list_output="$(uv run ckman list)"
 printf '%s\n' "$list_output"
@@ -54,6 +54,7 @@ grep -Fq "CanoKey" <<<"$list_output"
 reported_serial="$(
   sed -n 's/^Serial number:[[:space:]]*//p' <<<"$device_info"
 )"
+[[ "$reported_serial" =~ ^[0-9]+$ ]]
 serials_output="$(uv run ckman list --serials)"
 grep -Fxq "$reported_serial" <<<"$serials_output"
 
@@ -61,6 +62,9 @@ readers_output="$(uv run ckman list --readers)"
 grep -Fxq "$CANOKEY_PCSC_READER" <<<"$readers_output"
 
 section "ckman apdu"
+capture_without_secrets \
+  "RECV (SW=9000)" \
+  "${CKMAN[@]}" apdu --app openpgp --no-pretty 00ca004f=
 run_versioned_feature \
   "ckman apdu OpenPGP GET CHALLENGE" \
   "openpgp-get-challenge" \

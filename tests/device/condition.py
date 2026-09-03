@@ -2,7 +2,6 @@ from inspect import Parameter, isgeneratorfunction, signature
 
 import pytest
 from makefun import wraps
-
 from yubikit import canokey as canokey_support
 from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
 
@@ -63,6 +62,20 @@ def capability(capability, transport=None):
             in info.config.enabled_capabilities.get(transport or device.transport, [])
         ),
         f"Requires {capability}",
+    )
+
+
+def capability_or_canokey(canokey_feature: CanoKeyFeature, capability, transport=None):
+    """Use a YubiKey capability gate or the CanoKey firmware matrix."""
+    return check(
+        lambda info, device: (
+            _has_canokey_feature(info, canokey_feature)
+            if is_canokey(info)
+            else capability
+            in info.config.enabled_capabilities.get(transport or device.transport, [])
+        ),
+        f"UNSUPPORTED: requires YubiKey capability {capability} or CanoKey feature "
+        f"{canokey_feature.value}",
     )
 
 

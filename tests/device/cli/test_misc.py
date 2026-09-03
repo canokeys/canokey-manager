@@ -7,7 +7,7 @@ class TestYkmanInfo:
     def test_ykman_info(self, ykman_cli, info):
         output = ykman_cli("info").output
         assert "Device type:" in output
-        if info.serial:
+        if info.serial is not None:
             assert "Serial number:" in output
         assert "Firmware version:" in output
 

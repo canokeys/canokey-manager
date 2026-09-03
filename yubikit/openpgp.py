@@ -985,10 +985,12 @@ class OpenPgpSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_firmware_version: Version | None = None
         self._canokey_missing_data_object_wrapping = False
         self._canokey_has_algorithm_information = True
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            self._canokey_firmware_version = firmware_version
             wrapping_status = canokey.get_feature_status(
                 firmware_version, canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING
             )
@@ -1183,11 +1185,17 @@ class OpenPgpSession:
         :param reset_attempts: The Reset Code attempts.
         :param admin_attempts: The Admin PIN attempts.
         """
-        if self.version[0] == 1:
-            # YubiKey NEO
-            require_version(self.version, (1, 0, 7))
+        if self._canokey_firmware_version is not None:
+            canokey.require_feature(
+                self._canokey_firmware_version,
+                canokey.CanoKeyFeature.OPENPGP_SET_RETRIES,
+            )
         else:
-            require_version(self.version, (4, 3, 1))
+            if self.version[0] == 1:
+                # YubiKey NEO
+                require_version(self.version, (1, 0, 7))
+            else:
+                require_version(self.version, (4, 3, 1))
 
         attempts = (user_attempts, reset_attempts, admin_attempts)
         logger.debug(f"Setting PIN attempts to {attempts}")

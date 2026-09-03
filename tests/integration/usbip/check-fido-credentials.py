@@ -11,6 +11,13 @@ EXPECTED = {
     "user_display_name": "USB/IP user",
     "user_id": "636b6d616e2d75736269702d757365722d6964",
 }
+FIELDNAMES = [
+    "credential_id",
+    "rp_id",
+    "user_name",
+    "user_display_name",
+    "user_id",
+]
 
 
 def main() -> int:
@@ -21,11 +28,10 @@ def main() -> int:
     args = parser.parse_args()
 
     with args.csv_file.open(newline="") as csv_file:
-        rows = [
-            row
-            for row in csv.DictReader(csv_file)
-            if row.get("credential_id") == args.credential_id
-        ]
+        reader = csv.DictReader(csv_file)
+        if reader.fieldnames != FIELDNAMES:
+            parser.error(f"unexpected CSV header: {reader.fieldnames!r}")
+        rows = [row for row in reader if row.get("credential_id") == args.credential_id]
     if args.state == "absent":
         if rows:
             parser.error("deleted credential is still present")
