@@ -22,7 +22,6 @@ CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
   uv run python "$script_dir/firmware.py" normalize "$CANOKEY_FIRMWARE_VERSION"
 )"
 
-# FIDO reset has a short post-power-up window on newer firmware.
 "$script_dir/fido.sh"
 
 section "ckman info"

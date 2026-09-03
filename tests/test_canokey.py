@@ -541,6 +541,21 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
             Version(3, 0, 2),
             FeatureStatus.UNKNOWN,
         ),
+        (
+            CanoKeyFeature.FIDO_RESET_REQUIRES_POWER_CYCLE,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_RESET_REQUIRES_POWER_CYCLE,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.FIDO_RESET_REQUIRES_POWER_CYCLE,
+            Version(3, 0, 2),
+            FeatureStatus.UNKNOWN,
+        ),
     ],
 )
 def test_firmware_feature_matrix(feature, version, expected):

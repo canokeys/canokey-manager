@@ -3,7 +3,6 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/lib.sh"
-: "${CANOKEY_DEVICE_RESTART:?canokey-usbip did not expose its restart helper}"
 
 FIDO_INITIAL_PIN="123456"
 FIDO_PIN="654321"
@@ -24,40 +23,25 @@ case "$fido_status" in
     ;;
 esac
 
-# Restart in the background and issue reset as soon as PC/SC exposes the card.
-# Waiting for the harness's complete readiness check can consume the reset window.
-section "ckman fido reset"
-restart_stdout="$CANOKEY_USBIP_WORK_DIR/fido-restart.stdout"
-restart_stderr="$CANOKEY_USBIP_WORK_DIR/fido-restart.stderr"
-reset_stdout="$CANOKEY_USBIP_WORK_DIR/fido-reset.stdout"
-reset_stderr="$CANOKEY_USBIP_WORK_DIR/fido-reset.stderr"
-"$CANOKEY_DEVICE_RESTART" >"$restart_stdout" 2>"$restart_stderr" &
-restart_pid=$!
-
-reset_complete=false
-while kill -0 "$restart_pid" 2>/dev/null; do
-  if "${CKMAN[@]}" fido reset --force >"$reset_stdout" 2>"$reset_stderr"; then
-    reset_complete=true
-    break
-  fi
-  sleep 0.2
-done
-
-if ! wait "$restart_pid"; then
-  cat "$restart_stdout"
-  cat "$restart_stderr" >&2
-  exit 1
-fi
-if [[ "$reset_complete" != true ]] && \
-  "${CKMAN[@]}" fido reset --force >"$reset_stdout" 2>"$reset_stderr"; then
-  reset_complete=true
-fi
-if [[ "$reset_complete" != true ]]; then
-  cat "$reset_stdout"
-  cat "$reset_stderr" >&2
-  exit 1
-fi
-grep -Fq "FIDO application data reset." "$reset_stdout"
+reset_window_status="$(
+  firmware_feature_status fido-reset-requires-power-cycle
+)"
+case "$reset_window_status" in
+  unsupported)
+    section "ckman fido reset"
+    capture_without_secrets \
+      "FIDO application data reset." \
+      "${CKMAN[@]}" fido reset --force
+    ;;
+  supported)
+    section "ckman fido reset"
+    echo "NOT RUN: firmware requires reset shortly after power-up, before the hosted PC/SC path exposes the card."
+    ;;
+  unknown)
+    echo "ERROR: UNKNOWN: the FIDO reset window has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+    exit 1
+    ;;
+esac
 
 section "ckman fido access change-pin (set)"
 capture_without_secrets \

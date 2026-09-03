@@ -13,23 +13,22 @@ repository does not duplicate those commit SHAs.
 ## Command coverage
 
 - Top level: `list` (normal, serial-only, and reader output), `info`, `apdu`
-- FIDO: `info`, `reset`; `access change-pin`, `access verify-pin`, and, from
-  firmware 2.0.0 onward, `credentials list` and `credentials delete`
+- FIDO: `info`; `reset` on firmware 1.5.2 through 1.6.2; `access change-pin`,
+  `access verify-pin`, and, from firmware 2.0.0 onward, `credentials list` and
+  `credentials delete`
 - PIV: `info`, `reset`; every command under `access`, `keys`, `certificates`,
   and `objects`
 - OATH: `info`, `reset`; every command under `access` and `accounts`
 - OpenPGP: `info`, `reset`; all commands under `access`, `keys`, and
   `certificates`, subject to the CanoKey-specific negative cases below
 
-The FIDO test resets the application, sets, verifies, and changes its PIN, then
-provisions a resident credential with `python-fido2` so its CLI list/delete
-lifecycle can be verified. It restarts the virtual device and issues the reset
-as soon as PC/SC exposes the card, satisfying the reset window on newer
-firmware. The PIV and OATH tests provision data, verify round trips, and clean
-it up. On firmware 1.3, the OATH lifecycle uses its
-matrix-selected legacy dialect and still executes reset, info, TOTP/HOTP with
-SHA1/SHA256, touch metadata, URI and
-PSKC import, generated secrets, list, calculate, and delete. Only the confirmed
+The FIDO test resets the application where the command has no power-up window,
+sets, verifies, and changes its PIN, then provisions a resident credential with
+`python-fido2` so its CLI list/delete lifecycle can be verified. The PIV and
+OATH tests provision data, verify round trips, and clean it up. On firmware
+1.3, the OATH lifecycle uses its matrix-selected legacy dialect and still
+executes reset, info, TOTP/HOTP with SHA1/SHA256, touch metadata, URI and PSKC
+import, generated secrets, list, calculate, and delete. Only the confirmed
 missing password, rename, SHA512, and full-HMAC features report `UNSUPPORTED`
 or a pytest skip. The OpenPGP test changes and recovers PINs, provisions a
 standard signing key, tests key metadata and touch policy, and verifies a
@@ -131,14 +130,18 @@ reported by individual applets are never compared to CanoKey firmware.
 - OpenPGP UIF touch policy, unavailable on 1.3 and available from 1.5.2
 - OpenPGP `GET CHALLENGE`, available from firmware 3.0.0
 - OpenPGP attestation key and signing-key attestation
-- FIDO reset and PIN management over PC/SC from firmware 1.5.2 onward;
-  credential management from firmware 2.0.0 onward
+- FIDO reset without a power-cycle window from firmware 1.5.2 through 1.6.2;
+  PIN management over PC/SC from firmware 1.5.2 onward; credential management
+  from firmware 2.0.0 onward
 
 ## Not covered by the current hosted-runner path
 
 - FIDO over HID: the GitHub-hosted Azure kernel exposes the USB HID interface
   but does not bind it to `usbhid`. FIDO is instead exercised over the audited
   PC/SC path; this does not claim HID coverage.
+- FIDO reset on firmware 2.0.0 and newer: the firmware requires reset within
+  ten seconds of power-up, before the hosted PC/SC path exposes the card. The
+  command remains covered on firmware 1.5.2 through 1.6.2.
 - `otp`: CanoKey does not advertise the Yubico OTP capability.
 - `hsmauth`: CanoKey does not advertise the YubiHSM Auth capability.
 - `securitydomain`: the catalog firmware does not advertise this capability.
