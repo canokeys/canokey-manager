@@ -157,8 +157,8 @@ def test_change_pin_retries(session, keys, version, info):
     status = session.get_pin_status()
     assert status.attempts_user == attempts[0]
     if condition.is_canokey(info) or version >= (4, 0, 0):
-        # NEO returns 3 if no reset code is set
-        assert status.attempts_reset == attempts[1]
+        # CanoKey and YubiKey 4+ report zero when no reset code is set.
+        assert status.attempts_reset == 0
     assert status.attempts_admin == attempts[2]
 
     with pytest.raises(InvalidPinError) as e:
