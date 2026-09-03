@@ -169,10 +169,13 @@ def test_openpgp_without_algorithm_information_still_writes_attributes():
 
     session = object.__new__(OpenPgpSession)
     session._canokey_has_algorithm_information = False
-    session.get_algorithm_information = lambda: pytest.fail(
+    test_session = cast(Any, session)
+    test_session.get_algorithm_information = lambda: pytest.fail(
         "unexpected capability read"
     )
-    session.put_data = lambda data_object, value: written.append((data_object, value))
+    test_session.put_data = lambda data_object, value: written.append(
+        (data_object, value)
+    )
 
     attributes = b"attributes"
     session.set_algorithm_attributes(KEY_REF.SIG, attributes)
