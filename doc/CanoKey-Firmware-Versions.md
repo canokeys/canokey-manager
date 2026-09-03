@@ -44,6 +44,7 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - Admin READ_VERSION, READ_SN, and READ_CONFIG provide device identification and configuration
 - OATH uses the legacy instruction set: PUT 01 / DELETE 02 / LIST 03 / CALCULATE 04 / CALCULATE_ALL 05 / SEND_REMAINING 06 / SET_DEFAULT 55; SELECT returns no version TLV and there is no password protection
 - PIV reports 5.0.0 and supports RSA2048, ECCP256, and ECCP384
+- OpenPGP GET DATA 65/6E/7A returns the contents without the constructed outer tag
 - CTAP2 gains Ed25519: makeCredential accepts alg -8; credential ID grows to 68 bytes (U2F key handles likewise)
 - Note: getInfo does not advertise Ed25519; hosts must probe. Credentials created by older firmware (64-byte IDs) may not survive the upgrade.
 
@@ -53,7 +54,8 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **OATH reworked to the YubiKey instruction set**: LIST A1 / CALCULATE A2 / VALIDATE A3 / SEND_REMAINING A5 / SET_CODE 03 / RENAME 05; CALCULATE_ALL moves to SELECT with P1=00; SELECT returns a version TLV (reports 5.5.5) plus a session handle, and a challenge when a password is set; all commands except SELECT/VALIDATE answer 6982 until validated; SHA512 added
 - Admin: EXPORT_OATH (06h) removed
 - OpenPGP: terminated state returns 6285; PUT DATA length checks tightened
-- PIV: factory CHUID/CCC are now populated (randomized GUID)
+- PIV: factory CHUID/CCC are now populated (randomized GUID), but their stored
+  responses omit the required 0x53 container tag
 - CCID: SELECT of the FIDO AID over CCID is no longer rejected
 - **FIDO over PC/SC is available**: ckman can select the FIDO AID and issue
   CTAP2 commands through the CCID interface. Firmware 1.3 is explicitly
@@ -61,7 +63,8 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 
 ### 1.6.1
 - OpenPGP: GET DATA 0xFA (algorithm information) added, returned as a **bare TLV list without the outer 0xFA tag**; Ed25519 public key read-back off-by-one fixed
-- PIV: factory CCC/CHUID wrapped in the proper 0x53 container tag
+- PIV: factory CCC/CHUID are wrapped in the proper 0x53 container tag from this
+  release onward
 - USB sends gain a ~50 ms timeout instead of blocking forever
 - PIV: certificate capacity raised to 3000 bytes; new GET DATA RESPONSE (INS C0h) for chained reads; PUT DATA accepts command chaining (CLA=10h); over-capacity writes return 6700 instead of 6A84
 
@@ -81,7 +84,7 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - Admin: Reset CTAP (09h), CTAP SM2 config read/write (11h/12h), Reset Pass (13h), pass slot config (43h/44h), NFC switch (14h) added; CONFIG P1=03/06/07 removed
 - **pass applet added** (touch-typing slots; configured through the admin applet, no own AID)
 - OATH: SELECT version becomes 6.0.0; SET_DEFAULT (55h) repurposed to configure pass slots
-- **PIV**: reported version 5.3.0 → **5.7.0**; extended algorithm IDs switch to standard YubiKey values (Ed25519 0x22→0xE0, RSA3072 0x50→0x05, RSA4096 0x51→0x16, X25519 0x52→0xE1) and are **enabled by default**; GET METADATA on an empty slot returns 6A88; algorithm extension config INS EEh added
+- **PIV**: reported version 5.3.0 → **5.7.0**; extended algorithm IDs switch to standard YubiKey values (Ed25519 0x22→0xE0, RSA3072 0x50→0x05, RSA4096 0x51→0x16, X25519 0x52→0xE1) and are **enabled by default**; GET METADATA on an empty slot returns standard 6A88 instead of the 6900 used by 2.0.x; algorithm extension config INS EEh added
 - OpenPGP: GET_CHALLENGE (84h) added; extended capabilities byte 0x34 → 0x74
 - PIV fingerprint (5FC103) and facial image (5FC108) objects added (read requires PIN)
 
@@ -98,9 +101,19 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - **Device information**: read firmware version and serial from the admin applet (INS 31h/32h, explicit Le required). PIV/OATH/OpenPGP report synthetic YubiKey-style versions that must not be used for feature decisions.
 - **Resets**: OATH reset exists only via the admin applet; PIV and OpenPGP resets work via their own applets (PIV requires PIN+PUK blocked; OpenPGP via TERMINATE+ACTIVATE); CTAP reset via admin 09h needs 3.0.0+.
 - **OpenPGP algorithm information**: it is absent in catalog versions 1.3 and 1.5.2, and is a bare TLV list in 1.6.1 through 3.0.1.
+- **OpenPGP constructed data objects**: GET DATA 65/6E/7A omits its
+  constructed outer tag through 1.6.2. ckman restores only those three tags on
+  audited pre-2.0 firmware; 2.0.0 and newer responses remain untouched.
 - **OATH dialects**: catalog version 1.3 uses the legacy instruction set (send-remaining 06h, no version TLV, no password protection); 1.5.2 and newer use the YubiKey set (send-remaining A5h). A locked OATH applet answers A5h with 6982, not 6985.
 - **OATH data limits**: HOTP counters start at 1; CALCULATE rejects challenges longer than 8 bytes; LIST/CALCULATE_ALL may silently drop records that exactly fill the response buffer.
 - **PIV algorithms**: RSA1024 never exists. Extended algorithms on 2.0.x need admin config (40h, P1=07h) and use custom IDs; 3.0.0+ enables them by default with standard IDs.
+- **PIV object framing**: factory CHUID/CCC data in 1.5.2 omits the 0x53
+  container. ckman accepts only the known CHUID (30h) and CCC (F0h) legacy
+  forms on audited pre-1.6.1 firmware; other malformed object data remains an
+  error.
+- **PIV empty metadata**: 2.0.0 and 2.0.1 return 6900 for GET METADATA on an
+  empty key slot. ckman maps only that exact command/status combination to
+  standard 6A88. Other APDU errors are preserved.
 - **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
 - **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
 - **OpenPGP attestation**: the YubiKey-specific attestation key, certificate,
@@ -126,6 +139,12 @@ The resulting states match the upstream device-test model:
 audited catalog firmware (3.0.1). The FIDO device and CLI tests exercise this
 path through `SmartCardCtapDevice`; transport, permission, and APDU failures are
 test failures and are never converted into an unsupported result.
+
+The same matrix records protocol-correct framing/status boundaries for
+`openpgp-data-object-wrapping` (2.0.0+), `piv-object-response-wrapping`
+(1.6.1+), and `piv-empty-slot-metadata-status` (3.0.0+). Known older forms are
+normalized narrowly so their commands still execute; an unknown newer
+firmware fails closed instead of inheriting either compatibility path.
 
 CanoKey CTAP1 responses over PC/SC pass through `SmartCardProtocol`, which
 separates the APDU status word from its data. The CanoKey FIDO adapter restores

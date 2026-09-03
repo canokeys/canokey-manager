@@ -99,8 +99,12 @@ reported by individual applets are never compared to CanoKey firmware.
 
 - PIV retry counter configuration, metadata-based key info/export, import PIN
   policies, and attestation
+- PIV factory object framing before/after 1.6.1 and empty-slot metadata status
+  before/after 3.0.0; audited legacy responses are normalized and still tested
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OpenPGP retry counter configuration
+- OpenPGP 65/6E/7A constructed response framing before/after 2.0.0; legacy
+  responses are normalized and the OpenPGP lifecycle still runs
 - OpenPGP `GET CHALLENGE`, available from firmware 3.0.0
 - OpenPGP attestation key and signing-key attestation
 

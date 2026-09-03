@@ -985,6 +985,20 @@ class OpenPgpSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_missing_data_object_wrapping = False
+        if canokey.is_canokey(connection):
+            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            status = canokey.get_feature_status(
+                firmware_version, canokey.CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING
+            )
+            if status == canokey.FeatureStatus.UNKNOWN:
+                raise canokey.UnknownFeatureError(
+                    "openpgp-data-object-wrapping support is unknown for CanoKey "
+                    f"firmware {firmware_version}"
+                )
+            self._canokey_missing_data_object_wrapping = (
+                status == canokey.FeatureStatus.UNSUPPORTED
+            )
         self.protocol = SmartCardProtocol(connection)
         try:
             self.protocol.select(AID.OPENPGP)
@@ -1063,7 +1077,15 @@ class OpenPgpSession:
         :param do: The Data Object to get.
         """
         logger.debug(f"Reading Data Object {do.name} ({do:X})")
-        return self.protocol.send_apdu(0, INS.GET_DATA, do >> 8, do & 0xFF)
+        response = self.protocol.send_apdu(0, INS.GET_DATA, do >> 8, do & 0xFF)
+        # CanoKey: firmware before 2.0 omits these constructed outer tags.
+        if self._canokey_missing_data_object_wrapping and do in (
+            DO.CARDHOLDER_RELATED_DATA,
+            DO.APPLICATION_RELATED_DATA,
+            DO.SECURITY_SUPPORT_TEMPLATE,
+        ):
+            return bytes(Tlv(do, response))
+        return response
 
     def put_data(self, do: DO, data: bytes | SupportsBytes) -> None:
         """Write a Data Object to the YubiKey.

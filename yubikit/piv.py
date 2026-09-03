@@ -703,6 +703,38 @@ class PivSession:
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        self._canokey_missing_object_wrapping = False
+        self._canokey_legacy_empty_slot_status = False
+        if canokey.is_canokey(connection):
+            firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
+            wrapping_status = canokey.get_feature_status(
+                firmware_version, canokey.CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING
+            )
+            metadata_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
+            )
+            for feature, status in (
+                (
+                    canokey.CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
+                    wrapping_status,
+                ),
+                (
+                    canokey.CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
+                    metadata_status,
+                ),
+            ):
+                if status == canokey.FeatureStatus.UNKNOWN:
+                    raise canokey.UnknownFeatureError(
+                        f"{feature.value} support is unknown for CanoKey firmware "
+                        f"{firmware_version}"
+                    )
+            self._canokey_missing_object_wrapping = (
+                wrapping_status == canokey.FeatureStatus.UNSUPPORTED
+            )
+            self._canokey_legacy_empty_slot_status = (
+                metadata_status == canokey.FeatureStatus.UNSUPPORTED
+            )
         self.protocol = SmartCardProtocol(connection)
         self.protocol.select(AID.PIV)
 
@@ -1099,7 +1131,14 @@ class PivSession:
         slot = SLOT(slot)
         logger.debug(f"Getting metadata for slot {slot}")
         require_version(self.version, (5, 3, 0))
-        data = Tlv.parse_dict(self.protocol.send_apdu(0, INS_GET_METADATA, 0, slot))
+        try:
+            response = self.protocol.send_apdu(0, INS_GET_METADATA, 0, slot)
+        except ApduError as e:
+            # CanoKey: 2.0.x used 6900 for an empty key slot.
+            if self._canokey_legacy_empty_slot_status and e.sw == 0x6900:
+                raise ApduError(e.data, SW.REFERENCE_DATA_NOT_FOUND) from e
+            raise
+        data = Tlv.parse_dict(response)
         policy = data[TAG_METADATA_POLICY]
         return SlotMetadata(
             KEY_TYPE(data[TAG_METADATA_ALGO][0]),
@@ -1226,15 +1265,22 @@ class PivSession:
             expected = TAG_OBJ_DATA
 
         try:
+            response = self.protocol.send_apdu(
+                0,
+                INS_GET_DATA,
+                0x3F,
+                0xFF,
+                Tlv(TAG_OBJ_ID, int2bytes(object_id)),
+            )
+            # CanoKey: factory CCC/CHUID omitted the 53h container before 1.6.1.
+            if self._canokey_missing_object_wrapping and (
+                (object_id == OBJECT_ID.CHUID and response.startswith(b"\x30"))
+                or (object_id == OBJECT_ID.CAPABILITY and response.startswith(b"\xf0"))
+            ):
+                response = bytes(Tlv(TAG_OBJ_DATA, response))
             return Tlv.unpack(
                 expected,
-                self.protocol.send_apdu(
-                    0,
-                    INS_GET_DATA,
-                    0x3F,
-                    0xFF,
-                    Tlv(TAG_OBJ_ID, int2bytes(object_id)),
-                ),
+                response,
             )
         except ValueError as e:
             raise BadResponseError("Malformed object data", e)

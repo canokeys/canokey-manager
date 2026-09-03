@@ -22,10 +22,17 @@ from yubikit.canokey import (
     get_feature_status,
     parse_firmware_version,
 )
-from yubikit.core import PID, TRANSPORT, BadResponseError, NotSupportedError, Version
+from yubikit.core import (
+    PID,
+    TRANSPORT,
+    BadResponseError,
+    NotSupportedError,
+    Tlv,
+    Version,
+)
 from yubikit.core.smartcard import SW, ApduError, SmartCardConnection
 from yubikit.management import ManagementSession
-from yubikit.openpgp import KEY_REF, OpenPgpSession
+from yubikit.openpgp import DO, KEY_REF, OpenPgpSession
 
 
 class FakeConnection(SmartCardConnection):
@@ -114,6 +121,47 @@ def test_openpgp_version_read_propagates_unexpected_error():
     session.protocol = cast(Any, Protocol())
     with pytest.raises(ApduError):
         session._read_version()
+
+
+@pytest.mark.parametrize(
+    ("legacy", "data_object", "expected_wrapped"),
+    [
+        (True, DO.CARDHOLDER_RELATED_DATA, True),
+        (True, DO.APPLICATION_RELATED_DATA, True),
+        (True, DO.SECURITY_SUPPORT_TEMPLATE, True),
+        (True, DO.AID, False),
+        (False, DO.APPLICATION_RELATED_DATA, False),
+    ],
+)
+def test_openpgp_wraps_only_confirmed_legacy_data_objects(
+    legacy, data_object, expected_wrapped
+):
+    raw = bytes(Tlv(DO.AID, b"test"))
+
+    class Protocol:
+        def send_apdu(self, *args):
+            return raw
+
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_missing_data_object_wrapping = legacy
+
+    expected = bytes(Tlv(data_object, raw)) if expected_wrapped else raw
+    assert session.get_data(data_object) == expected
+
+
+def test_openpgp_data_object_compatibility_preserves_apdu_errors():
+    class Protocol:
+        def send_apdu(self, *args):
+            raise ApduError(b"error", SW.SECURITY_CONDITION_NOT_SATISFIED)
+
+    session = object.__new__(OpenPgpSession)
+    session.protocol = cast(Any, Protocol())
+    session._canokey_missing_data_object_wrapping = True
+
+    with pytest.raises(ApduError) as exc_info:
+        session.get_data(DO.APPLICATION_RELATED_DATA)
+    assert exc_info.value.sw == SW.SECURITY_CONDITION_NOT_SATISFIED
 
 
 @pytest.mark.parametrize(
@@ -254,6 +302,36 @@ def test_parse_firmware_version_normalizes_catalog_short_version():
         ),
         (
             CanoKeyFeature.OPENPGP_GET_CHALLENGE,
+            Version(3, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING,
+            Version(1, 6, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING,
+            Version(2, 0, 0),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
+            Version(1, 5, 2),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING,
+            Version(1, 6, 1),
+            FeatureStatus.SUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
+            Version(2, 0, 1),
+            FeatureStatus.UNSUPPORTED,
+        ),
+        (
+            CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS,
             Version(3, 0, 0),
             FeatureStatus.SUPPORTED,
         ),

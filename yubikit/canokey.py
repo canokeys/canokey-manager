@@ -68,8 +68,11 @@ class CanoKeyFeature(str, Enum):
     PIV_SIGNATURE_DEFAULT_ALWAYS = "piv-signature-default-always"
     OPENPGP_SET_RETRIES = "openpgp-set-retries"
     OPENPGP_GET_CHALLENGE = "openpgp-get-challenge"
+    OPENPGP_DATA_OBJECT_WRAPPING = "openpgp-data-object-wrapping"
     OPENPGP_ECDSA_P384_SIGNING = "openpgp-ecdsa-p384-signing"
     OPENPGP_ATTESTATION = "openpgp-attestation"
+    PIV_OBJECT_RESPONSE_WRAPPING = "piv-object-response-wrapping"
+    PIV_EMPTY_SLOT_METADATA_STATUS = "piv-empty-slot-metadata-status"
     FIDO_PCSC = "fido-pcsc"
 
 
@@ -163,8 +166,17 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     CanoKeyFeature.OPENPGP_GET_CHALLENGE: FeatureRule(
         (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
     ),
+    CanoKeyFeature.OPENPGP_DATA_OBJECT_WRAPPING: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.OPENPGP_ATTESTATION: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING: FeatureRule(
+        (FirmwareRange(Version(1, 6, 1)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_EMPTY_SLOT_METADATA_STATUS: FeatureRule(
+        (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.FIDO_PCSC: FeatureRule(
         (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
     ),
