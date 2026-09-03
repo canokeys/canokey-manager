@@ -108,6 +108,15 @@ All nine cataloged releases from 1.3 through 3.1.0 run this same test
 lifecycle. Matrix jobs use `fail-fast: false` so a difference in one release
 does not hide results from the others.
 
+The pinned USB/IP harness automatically applies a 3.1.0 core compatibility
+patch while fabricating blank storage. Its legacy sequence repeats
+initialization through a factory-reset APDU before USB/IP enables NFC or touch
+simulation. Core 3.1.0 requires strong user presence for that reset, so an
+optimized harness build otherwise silently continues without installing the
+FIDO attestation private key. The patch removes only that redundant reset on a
+newly created filesystem; the production firmware command path and the
+subsequent ckman tests are unchanged.
+
 YubiKey release gates and CanoKey firmware gates are independent. Tests retain
 their upstream YubiKey version predicates. On CanoKey, the same test body uses
 the admin firmware version and the feature matrix instead; synthetic versions

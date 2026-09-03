@@ -2,7 +2,7 @@
 
 Reference for ckman (yubikey-manager fork) development. Only **host-visible protocol changes** are recorded: instructions, APDU/SW behavior, TLV formats, reported version numbers, algorithms, applet additions/removals, and USB enumeration. Internal refactors, build system, and test-only changes are omitted.
 
-The version set matches `canokey-usbip` commit `b283be52f83a1f9b8931da9c9a4b33e2df78c96e`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
+The version set matches `canokey-usbip` commit `3207ac38a6a2fcd4b50ef0c71cc93d6e1bf7721c`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
 
 Device information (firmware version, serial number) must always be read through the **admin applet**. No other channel is reliable across versions; do not add dependencies on any other applet for device identification.
 

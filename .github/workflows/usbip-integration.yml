@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: b283be52f83a1f9b8931da9c9a4b33e2df78c96e
+  CANOKEY_USBIP_SHA: 3207ac38a6a2fcd4b50ef0c71cc93d6e1bf7721c
 
 jobs:
   firmware-catalog:
@@ -256,12 +256,6 @@ jobs:
           CANOKEY_USBIP_DEBUG: "1"
         run: |
           cd "$GITHUB_WORKSPACE"
-
-          if [[ "$CANOKEY_FIRMWARE_ID" == "3.1.0" ]]; then
-            sed -i \
-              '/^option(CANOKEY_CORE_DEBUG_OUTPUT /s/ OFF)$/ ON)/' \
-              external/canokey-usbip/CMakeLists.txt
-          fi
 
           capture_usb_bindings() {
             output="$RUNNER_TEMP/canokey-usbip-artifacts/usb-drivers.txt"
