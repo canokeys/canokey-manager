@@ -21,8 +21,8 @@ from yubikit.piv import (
     KEY_TYPE,
     MANAGEMENT_KEY_TYPE,
     OBJECT_ID,
-    PIN_POLICY,
     PIN_P2,
+    PIN_POLICY,
     SLOT,
     TOUCH_POLICY,
     Chuid,
@@ -83,13 +83,21 @@ def test_list_keys_propagates_unexpected_apdu_error():
 
 
 @pytest.mark.parametrize(
-    ("pid", "version", "expected_ins"),
+    ("pid", "version", "canokey_move_key", "expected_ins"),
     [
-        (PID.CK_FIDO_CCID, Version(5, 0, 0), INS_GENERATE_ASYMMETRIC),
-        (PID.YK4_FIDO_CCID, Version(5, 7, 0), INS_MOVE_KEY),
+        (
+            PID.CK_FIDO_CCID,
+            Version(5, 0, 0),
+            False,
+            INS_GENERATE_ASYMMETRIC,
+        ),
+        (PID.CK_FIDO_CCID, Version(6, 0, 0), True, INS_MOVE_KEY),
+        (PID.YK4_FIDO_CCID, Version(5, 7, 0), False, INS_MOVE_KEY),
     ],
 )
-def test_delete_key_uses_device_specific_command(pid, version, expected_ins):
+def test_delete_key_uses_device_specific_command(
+    pid, version, canokey_move_key, expected_ins
+):
     class Protocol:
         connection = SimpleNamespace(pid=pid, atr=None)
 
@@ -102,9 +110,26 @@ def test_delete_key_uses_device_specific_command(pid, version, expected_ins):
     session = object.__new__(PivSession)
     session.protocol = cast(Any, Protocol())
     session._version = version
+    session._canokey_move_key = canokey_move_key
     session.delete_key(SLOT.AUTHENTICATION)
 
     assert session.protocol.commands[0][1] == expected_ins
+
+
+def test_move_key_rejects_legacy_canokey_before_sending_apdu():
+    class Protocol:
+        connection = SimpleNamespace(pid=PID.CK_FIDO_CCID, atr=None)
+
+        def send_apdu(self, *args):
+            pytest.fail(f"unexpected APDU: {args}")
+
+    session = object.__new__(PivSession)
+    session.protocol = cast(Any, Protocol())
+    session._version = Version(5, 7, 0)
+    session._canokey_move_key = False
+
+    with pytest.raises(NotSupportedError, match="not supported"):
+        session.move_key(SLOT.AUTHENTICATION, SLOT.SIGNATURE)
 
 
 @pytest.mark.parametrize(

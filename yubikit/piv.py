@@ -706,6 +706,7 @@ class PivSession:
         self._canokey_missing_object_wrapping = False
         self._canokey_legacy_empty_slot_status = False
         self._canokey_select_preserves_security_state = False
+        self._canokey_move_key = False
         if canokey.is_canokey(connection):
             firmware_version = canokey.CanoKeyAdminSession(connection).read_version()
             wrapping_status = canokey.get_feature_status(
@@ -718,6 +719,10 @@ class PivSession:
             select_status = canokey.get_feature_status(
                 firmware_version,
                 canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
+            )
+            move_key_status = canokey.get_feature_status(
+                firmware_version,
+                canokey.CanoKeyFeature.PIV_MOVE_KEY,
             )
             for feature, status in (
                 (
@@ -732,6 +737,7 @@ class PivSession:
                     canokey.CanoKeyFeature.PIV_SELECT_RESETS_SECURITY_STATE,
                     select_status,
                 ),
+                (canokey.CanoKeyFeature.PIV_MOVE_KEY, move_key_status),
             ):
                 if status == canokey.FeatureStatus.UNKNOWN:
                     raise canokey.UnknownFeatureError(
@@ -747,6 +753,7 @@ class PivSession:
             self._canokey_select_preserves_security_state = (
                 select_status == canokey.FeatureStatus.UNSUPPORTED
             )
+            self._canokey_move_key = move_key_status == canokey.FeatureStatus.SUPPORTED
         self.protocol = SmartCardProtocol(connection)
         self.protocol.select(AID.PIV)
 
@@ -1500,7 +1507,13 @@ class PivSession:
         :param from_slot: The slot containing the key to move.
         :param to_slot: The new slot to move the key to.
         """
-        require_version(self.version, (5, 7, 0))
+        if canokey.is_canokey(self.protocol.connection):
+            if not self._canokey_move_key:
+                raise NotSupportedError(
+                    "Moving PIV keys is not supported by this CanoKey firmware"
+                )
+        else:
+            require_version(self.version, (5, 7, 0))
         from_slot = SLOT(from_slot)
         to_slot = SLOT(to_slot)
         logger.debug(f"Moving key from slot {from_slot} to {to_slot}")
@@ -1516,9 +1529,8 @@ class PivSession:
         """
         slot = SLOT(slot)
         logger.debug(f"Deleting key in slot {slot}")
-        if canokey.is_canokey(self.protocol.connection):
-            # All cataloged CanoKey firmware can overwrite a slot but has no
-            # MOVE KEY instruction. Keep this compatibility behavior explicit.
+        if canokey.is_canokey(self.protocol.connection) and not self._canokey_move_key:
+            # Legacy CanoKey firmware can overwrite a slot but cannot delete it.
             data: bytes = Tlv(TAG_GEN_ALGORITHM, int2bytes(KEY_TYPE.ECCP256))
             self.protocol.send_apdu(
                 0, INS_GENERATE_ASYMMETRIC, 0, slot, Tlv(0xAC, data)

@@ -180,6 +180,15 @@ def _fname(fobj):
     return getattr(fobj, "name", fobj)
 
 
+def _require_canokey_feature(ctx, feature):
+    session = ctx.obj["session"]
+    if canokey.is_canokey(session.protocol.connection):
+        try:
+            canokey.require_feature(ctx.obj["info"].version, feature)
+        except (NotSupportedError, canokey.UnknownFeatureError) as e:
+            raise CliFail(str(e))
+
+
 @click_group(connections=[SmartCardConnection])
 @click.pass_context
 @click_postpone_execution
@@ -307,13 +316,7 @@ def set_pin_retries(ctx, management_key, pin, pin_retries, puk_retries, force):
     """
     session = ctx.obj["session"]
     info = ctx.obj["info"]
-    if canokey.is_canokey(session.protocol.connection):
-        try:
-            canokey.require_feature(
-                info.version, canokey.CanoKeyFeature.PIV_SET_RETRIES
-            )
-        except NotSupportedError as e:
-            raise CliFail(str(e))
+    _require_canokey_feature(ctx, canokey.CanoKeyFeature.PIV_SET_RETRIES)
     if CAPABILITY.PIV in info.fips_capable:
         if not (
             session.get_pin_metadata().default_value
@@ -928,8 +931,7 @@ def export(ctx, slot, public_key_output, format, verify, pin):
     )
 
 
-# Disable unsupported command
-# @keys.command("move")
+@keys.command("move")
 @click.pass_context
 @click_management_key_option
 @click_pin_option
@@ -947,6 +949,7 @@ def move_key(ctx, management_key, pin, source, dest):
     """
     if source == dest:
         raise CliFail("SOURCE must be different from DEST.")
+    _require_canokey_feature(ctx, canokey.CanoKeyFeature.PIV_MOVE_KEY)
     session = ctx.obj["session"]
     _ensure_authenticated(ctx, pin, management_key)
     try:

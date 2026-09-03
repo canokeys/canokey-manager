@@ -71,46 +71,64 @@ openssl req \
   -out "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem" \
   2>/dev/null
 
-section "Provision OpenPGP signing key"
+section "Provision OpenPGP SIG/DEC/AUT keys"
 CKMAN_TEST_OPENPGP_ADMIN_PIN="$OPENPGP_ADMIN_PIN" \
+  CKMAN_TEST_OPENPGP_PIN="$OPENPGP_RECOVERY_PIN" \
   uv run python "$script_dir/seed-openpgp-key.py" "$CANOKEY_PCSC_READER"
 
-section "ckman openpgp keys info"
-"${CKMAN[@]}" openpgp keys info sig
+for key in sig dec aut; do
+  section "ckman openpgp keys info ${key}"
+  "${CKMAN[@]}" openpgp keys info "$key"
+done
 
 section "ckman openpgp keys set-touch"
-run_versioned_feature \
-  "ckman openpgp keys set-touch" \
-  "openpgp-uif" \
-  "${CKMAN[@]}" openpgp keys set-touch \
-  --admin-pin "$OPENPGP_ADMIN_PIN" \
-  --force \
-  sig off
+uif_status="$(firmware_feature_status openpgp-uif)"
+case "$uif_status" in
+  supported)
+    for key in sig dec aut; do
+      "${CKMAN[@]}" openpgp keys set-touch \
+        --admin-pin "$OPENPGP_ADMIN_PIN" \
+        --force \
+        "$key" off
+    done
+    ;;
+  unsupported)
+    unsupported_feature \
+      "ckman openpgp keys set-touch" \
+      "The firmware feature matrix marks openpgp-uif as unavailable."
+    ;;
+  unknown)
+    echo "ERROR: UNKNOWN: openpgp-uif has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+    exit 1
+    ;;
+esac
 
-section "ckman openpgp certificates import"
-"${CKMAN[@]}" openpgp certificates import \
-  --admin-pin "$OPENPGP_ADMIN_PIN" \
-  sig "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem"
-
-section "ckman openpgp certificates export"
-"${CKMAN[@]}" openpgp certificates export \
-  sig "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem"
 openssl x509 \
   -in "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem" \
   -outform DER \
   -out "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.der"
-openssl x509 \
-  -in "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.pem" \
-  -outform DER \
-  -out "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
-cmp \
-  "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.der" \
-  "$CANOKEY_USBIP_WORK_DIR/openpgp-exported-certificate.der"
-
-section "ckman openpgp certificates delete"
-"${CKMAN[@]}" openpgp certificates delete \
-  --admin-pin "$OPENPGP_ADMIN_PIN" \
-  sig
+for key in sig dec aut; do
+  section "ckman openpgp certificates ${key} lifecycle"
+  "${CKMAN[@]}" openpgp certificates import \
+    --admin-pin "$OPENPGP_ADMIN_PIN" \
+    "$key" "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.pem"
+  "${CKMAN[@]}" openpgp certificates export \
+    "$key" "$CANOKEY_USBIP_WORK_DIR/openpgp-${key}-certificate.pem"
+  openssl x509 \
+    -in "$CANOKEY_USBIP_WORK_DIR/openpgp-${key}-certificate.pem" \
+    -outform DER \
+    -out "$CANOKEY_USBIP_WORK_DIR/openpgp-${key}-certificate.der"
+  cmp \
+    "$CANOKEY_USBIP_WORK_DIR/openpgp-test-certificate.der" \
+    "$CANOKEY_USBIP_WORK_DIR/openpgp-${key}-certificate.der"
+  "${CKMAN[@]}" openpgp certificates delete \
+    --admin-pin "$OPENPGP_ADMIN_PIN" \
+    "$key"
+  expect_failure \
+    "Exporting the deleted OpenPGP ${key} certificate" \
+    "${CKMAN[@]}" openpgp certificates export \
+    "$key" "$CANOKEY_USBIP_WORK_DIR/openpgp-deleted-${key}-certificate.pem"
+done
 
 section "ckman openpgp keys import attestation key"
 run_versioned_feature \

@@ -5,7 +5,6 @@ import pytest
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
-
 from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT, InvalidPinError
 from yubikit.core.smartcard import AID, ApduError
@@ -146,7 +145,7 @@ def test_change_admin(session, keys):
     session.verify_admin(keys.admin)
 
 
-@condition.canokey(False)  # CanoKey does not support SET PIN RETRIES
+@condition.canokey_feature(CanoKeyFeature.OPENPGP_SET_RETRIES)
 def test_change_pin_retries(session, keys, version):
     with pytest.raises(ApduError):
         session.set_pin_attempts(5, 0, 25)

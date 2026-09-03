@@ -75,6 +75,15 @@ openssl req \
   -days 1 \
   -out "$CANOKEY_USBIP_WORK_DIR/piv-import-certificate.pem" \
   2>/dev/null
+openssl genpkey \
+  -algorithm RSA \
+  -pkeyopt rsa_keygen_bits:3072 \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-rsa3072-private.pem" \
+  2>/dev/null
+openssl genpkey \
+  -algorithm X25519 \
+  -out "$CANOKEY_USBIP_WORK_DIR/piv-x25519-private.pem" \
+  2>/dev/null
 
 section "ckman piv keys generate"
 "${CKMAN[@]}" piv keys generate \
@@ -222,6 +231,72 @@ section "ckman piv certificates import for imported key"
 "${CKMAN[@]}" piv certificates export \
   9c "$CANOKEY_USBIP_WORK_DIR/piv-import-exported-certificate.pem"
 
+section "ckman piv keys move"
+run_versioned_feature \
+  "ckman piv keys move" \
+  "piv-move-key" \
+  "${CKMAN[@]}" piv keys move \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  9c 9d
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  "${CKMAN[@]}" piv keys info 9d
+  expect_failure \
+    "Reading the emptied PIV source slot" \
+    "${CKMAN[@]}" piv keys info 9c
+  "${CKMAN[@]}" piv keys move \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    9d 9c
+fi
+
+section "ckman piv retired key slots"
+run_versioned_feature \
+  "PIV retired key slots" \
+  "piv-retired-slots" \
+  "${CKMAN[@]}" piv keys generate \
+  --algorithm ECCP256 \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  82 "$CANOKEY_USBIP_WORK_DIR/piv-retired-public.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  "${CKMAN[@]}" piv keys delete \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    82
+fi
+
+section "ckman piv extended algorithm CLI paths"
+run_versioned_feature \
+  "PIV standard extended algorithm IDs" \
+  "piv-standard-algorithm-ids" \
+  "${CKMAN[@]}" piv keys import \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  83 "$CANOKEY_USBIP_WORK_DIR/piv-rsa3072-private.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  "${CKMAN[@]}" piv keys info 83
+  "${CKMAN[@]}" piv keys delete \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    83
+fi
+
+run_versioned_feature \
+  "PIV Ed25519 and X25519 CLI paths" \
+  "piv-ed25519-x25519-fixes" \
+  "${CKMAN[@]}" piv keys generate \
+  --algorithm ED25519 \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  84 "$CANOKEY_USBIP_WORK_DIR/piv-ed25519-public.pem"
+if [[ "$FEATURE_AVAILABLE" == true ]]; then
+  "${CKMAN[@]}" piv keys import \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    85 "$CANOKEY_USBIP_WORK_DIR/piv-x25519-private.pem"
+  "${CKMAN[@]}" piv keys info 84
+  "${CKMAN[@]}" piv keys info 85
+  "${CKMAN[@]}" piv keys delete \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    84
+  "${CKMAN[@]}" piv keys delete \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    85
+fi
+
 section "ckman piv objects generate"
 "${CKMAN[@]}" piv objects generate \
   --management-key "$PIV_MANAGEMENT_KEY" \
@@ -247,6 +322,33 @@ section "ckman piv objects import"
 cmp \
   "$CANOKEY_USBIP_WORK_DIR/piv-chuid.bin" \
   "$CANOKEY_USBIP_WORK_DIR/piv-chuid-roundtrip.bin"
+
+section "ckman piv PIN-protected objects"
+protected_object_status="$(firmware_feature_status piv-protected-objects)"
+case "$protected_object_status" in
+  supported)
+    printf 'ckman USB/IP protected PIV object\n' \
+      >"$CANOKEY_USBIP_WORK_DIR/piv-printed.bin"
+    "${CKMAN[@]}" piv objects import \
+      --management-key "$PIV_MANAGEMENT_KEY" \
+      printed "$CANOKEY_USBIP_WORK_DIR/piv-printed.bin"
+    "${CKMAN[@]}" piv objects export \
+      --pin "$PIV_RECOVERY_PIN" \
+      printed "$CANOKEY_USBIP_WORK_DIR/piv-printed-roundtrip.bin"
+    cmp \
+      "$CANOKEY_USBIP_WORK_DIR/piv-printed.bin" \
+      "$CANOKEY_USBIP_WORK_DIR/piv-printed-roundtrip.bin"
+    ;;
+  unsupported)
+    unsupported_feature \
+      "PIV PIN-protected data objects" \
+      "The Printed Information object is unavailable."
+    ;;
+  unknown)
+    echo "ERROR: UNKNOWN: piv-protected-objects has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+    exit 1
+    ;;
+esac
 
 section "ckman piv certificates delete imported certificate"
 "${CKMAN[@]}" piv certificates delete \

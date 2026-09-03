@@ -83,6 +83,11 @@ class CanoKeyFeature(str, Enum):
     FIDO_PCSC = "fido-pcsc"
     FIDO_CREDENTIAL_MANAGEMENT = "fido-credential-management"
     FIDO_RESET_REQUIRES_POWER_CYCLE = "fido-reset-requires-power-cycle"
+    FIDO_AUTHENTICATOR_CONFIG = "fido-authenticator-config"
+    PIV_MOVE_KEY = "piv-move-key"
+    PIV_RETIRED_SLOTS = "piv-retired-slots"
+    PIV_PROTECTED_OBJECTS = "piv-protected-objects"
+    PIV_DEFAULT_MANAGEMENT_KEY_AES192 = "piv-default-management-key-aes192"
 
 
 class FeatureStatus(str, Enum):
@@ -127,6 +132,7 @@ CATALOG_VERSIONS = (
     Version(2, 0, 1),
     Version(3, 0, 0),
     Version(3, 0, 1),
+    Version(3, 1, 0),
 )
 CATALOG_LATEST_VERSION = CATALOG_VERSIONS[-1]
 
@@ -183,11 +189,15 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     CanoKeyFeature.OATH_RESPONSE_CHAINING_FIX: FeatureRule(
         (FirmwareRange(Version(3, 0, 1)),), CATALOG_LATEST_VERSION
     ),
-    CanoKeyFeature.PIV_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
-    CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS: FeatureRule(
-        (), CATALOG_LATEST_VERSION
+    CanoKeyFeature.PIV_SET_RETRIES: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
     ),
-    CanoKeyFeature.OPENPGP_SET_RETRIES: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.PIV_SIGNATURE_DEFAULT_ALWAYS: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.OPENPGP_SET_RETRIES: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.OPENPGP_GET_CHALLENGE: FeatureRule(
         (FirmwareRange(Version(3, 0, 0)),), CATALOG_LATEST_VERSION
     ),
@@ -200,7 +210,9 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     CanoKeyFeature.OPENPGP_UIF: FeatureRule(
         (FirmwareRange(Version(1, 5, 2)),), CATALOG_LATEST_VERSION
     ),
-    CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule((), CATALOG_LATEST_VERSION),
+    CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
+    ),
     CanoKeyFeature.OPENPGP_ATTESTATION: FeatureRule((), CATALOG_LATEST_VERSION),
     CanoKeyFeature.PIV_OBJECT_RESPONSE_WRAPPING: FeatureRule(
         (FirmwareRange(Version(1, 6, 1)),), CATALOG_LATEST_VERSION
@@ -216,6 +228,21 @@ FEATURE_MATRIX: dict[CanoKeyFeature, FeatureRule] = {
     ),
     CanoKeyFeature.FIDO_RESET_REQUIRES_POWER_CYCLE: FeatureRule(
         (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.FIDO_AUTHENTICATOR_CONFIG: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_MOVE_KEY: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_RETIRED_SLOTS: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_PROTECTED_OBJECTS: FeatureRule(
+        (FirmwareRange(Version(2, 0, 0)),), CATALOG_LATEST_VERSION
+    ),
+    CanoKeyFeature.PIV_DEFAULT_MANAGEMENT_KEY_AES192: FeatureRule(
+        (FirmwareRange(Version(3, 1, 0)),), CATALOG_LATEST_VERSION
     ),
 }
 

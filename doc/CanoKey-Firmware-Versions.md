@@ -2,7 +2,7 @@
 
 Reference for ckman (yubikey-manager fork) development. Only **host-visible protocol changes** are recorded: instructions, APDU/SW behavior, TLV formats, reported version numbers, algorithms, applet additions/removals, and USB enumeration. Internal refactors, build system, and test-only changes are omitted.
 
-The version set matches `canokey-usbip` commit `f7953f70d353316ff8ed29589039c3d23ef99c79`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
+The version set matches `canokey-usbip` commit `b283be52f83a1f9b8931da9c9a4b33e2df78c96e`, `compat/config/firmwares.yaml`. Intermediate firmware changes are folded into the next cataloged snapshot.
 
 Device information (firmware version, serial number) must always be read through the **admin applet**. No other channel is reliable across versions; do not add dependencies on any other applet for device identification.
 
@@ -11,7 +11,7 @@ feature-version API. `ckman` feature decisions use the admin applet firmware
 version. USB/IP tests assert that the admin version matches the firmware ID
 mapped from the exact core commit before executing any lifecycle command.
 The integration workflow obtains that mapping from the pinned `canokey-usbip`
-catalog and executes every historical release from 1.3 through 3.0.1.
+catalog and executes every historical release from 1.3 through 3.1.0.
 
 ## Milestones (quick reference)
 
@@ -25,13 +25,17 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 | 2.0.1 | `be6325b8c4e6d40e86b2943f65083ed6b71f8259` | CTAP authData and getNextAssertion fixes |
 | 3.0.0 | `7cb33508a69ce4d281a053e1e53e6d006469076b` | PIV reports 5.7.0; pass applet; admin, OATH, and OpenPGP extensions |
 | 3.0.1 | `69e562bcb07eedda015aae6064870c8548571e2b` | PIV Ed25519 and X25519 fixes; OATH and CTAP concurrency fixes |
+| 3.1.0 | `e1ee3710d97f2d6350d67fa0937a7ee2974a3e9c` | FIDO authenticator config; PIV 6.0, move/delete, retry configuration, and attestation; OpenPGP retry and P-384 fixes |
 
 ## Invariants across all versions (safe to rely on)
 
 - APDU layer: a command without Le (case-1) is answered with 61xx chaining; GET RESPONSE without Le never yields data; explicit Le=0x00 means 256 bytes; extended APDU Le is clamped to 1340 bytes; command chaining (CLA=10h) is supported. **ckman must always use short APDUs with an explicit Le.**
 - OATH has no reset instruction (INS 04h); OATH reset is only available through the admin applet (INS 05h).
-- PIV: no MOVE KEY (INS FFh is SET_MANAGEMENT_KEY); management key is always 3-key TDES, default `0102..08` ×3; PIN/PUK are fixed-length 8 bytes, FF-padded, defaults `123456` / `12345678`.
-- PIV slot 9C defaults to PIN policy ONCE whenever metadata is available through 3.0.1, rather than YubiKey's ALWAYS.
+- PIV before 3.1.0 has no MOVE KEY; PIN/PUK are fixed-length 8 bytes,
+  FF-padded, defaults `123456` / `12345678`.
+- PIV uses 3-key TDES management keys and defaults slot 9C to PIN policy
+  ONCE through 3.0.1. Firmware 3.1.0 uses AES-192 and the standard ALWAYS
+  default for slot 9C.
 - OpenPGP: RSA private key import uses CRT format; VERIFY with a wrong PIN returns 6982 instead of 63Cx.
 - Admin applet: default PIN `123456`, 3 retries; READ_SN/READ_CONFIG require an explicit Le.
 - Admin PIN handling: use empty-Lc VERIFY to inspect validation state without consuming a retry. Never guess the default PIN; request an explicit PIN when the admin applet is not already verified.
@@ -104,14 +108,33 @@ catalog and executes every historical release from 1.3 through 3.0.1.
 - PIV: Ed25519 general-authenticate signing fixed; X25519 private key import becomes little-endian; import tags constrained (06 generic / 07 Ed25519 / 08 X25519)
 - OATH: SEND_REMAINING chain fixed (no longer returns wrong data when records exactly fill the buffer)
 - CTAP: CCID/HID concurrency handling fixed
-- OpenPGP: P-384 is advertised and supports key import/generation and ECDH, but ECDSA signing with a SHA-256 digest returns 6700. The later core commit `e3da9ffffdef299defdcb589ed90b08c3b353505` adds the missing digest padding; no cataloged firmware contains it yet.
+- OpenPGP: P-384 is advertised and supports key import/generation and ECDH,
+  but ECDSA signing with a SHA-256 digest returns 6700.
+
+### 3.1.0
+- CTAP advertises FIDO_2_3, authenticator configuration, Always UV, minimum
+  PIN length, and force-PIN-change. Credential and assertion responses use the
+  new streaming paths over both HID and PC/SC.
+- PIV reports 6.0.0. SET_PIN_RETRIES and MOVE/DELETE KEY are available, slot
+  9C uses the standard ALWAYS PIN policy, and the default management key type
+  is AES-192. Retired slots and data objects remain available.
+- PIV adds YubiKey-compatible attestation for generated keys. The operation
+  still depends on an F9 key and certificate being provisioned; the USB/IP
+  device probes this state instead of inferring it from the version.
+- PIV extended algorithms add secp521r1, ML-DSA-65, and ML-KEM-768 alongside
+  the existing Ed25519, X25519, and larger RSA algorithms. ckman 5.9 exposes
+  only the algorithms represented by its `KEY_TYPE` API.
+- OpenPGP SET_PIN_RETRIES is available, P-384 digest padding is fixed, and
+  algorithm information is returned with its outer FA tag.
 
 ## ckman implementation notes
 
 - **APDU format**: always short APDUs with an explicit Le. Never rely on case-1 (no Le) commands or Le-less GET RESPONSE — they loop forever on 61xx.
 - **Device information**: read firmware version and serial from the admin applet (INS 31h/32h, explicit Le required). PIV/OATH/OpenPGP report synthetic YubiKey-style versions that must not be used for feature decisions.
 - **Resets**: OATH reset exists only via the admin applet; PIV and OpenPGP resets work via their own applets (PIV requires PIN+PUK blocked; OpenPGP via TERMINATE+ACTIVATE); CTAP reset via admin 09h needs 3.0.0+.
-- **OpenPGP algorithm information**: it is absent in catalog versions 1.3 and 1.5.2, and is a bare TLV list in 1.6.1 through 3.0.1.
+- **OpenPGP algorithm information**: it is absent in catalog versions 1.3 and
+  1.5.2, a bare TLV list in 1.6.1 through 3.0.1, and wrapped in its outer FA
+  tag from 3.1.0.
 - **OpenPGP constructed data objects**: GET DATA 65/6E/7A omits its
   constructed outer tag through 1.6.2. ckman restores only those three tags on
   audited pre-2.0 firmware; 2.0.0 and newer responses remain untouched.
@@ -157,11 +180,13 @@ catalog and executes every historical release from 1.3 through 3.0.1.
   Before performing a PIV reset on those releases, ckman explicitly logs out a
   verified PIN with standard VERIFY P1=FF so the retry-blocking reset sequence
   cannot loop on the preserved state.
-- **PIV management key**: TDES only; SET_MANAGEMENT_KEY requires LC=27 and the `03 9B 18` prefix. The PIN-protected management key feature (pivman objects) is unavailable — hosts must not set a new key before confirming they can store it.
-- **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable in every cataloged firmware through 3.0.1; map 6D00 to "not supported".
+- **PIV management key**: TDES only through 3.0.1; 3.1.0 defaults to AES-192.
+  The PIN-protected management key feature (pivman objects) is unavailable.
+- **PIN retries**: PIV/OpenPGP SET_PIN_RETRIES is unavailable through 3.0.1
+  and available from 3.1.0.
 - **OpenPGP attestation**: the YubiKey-specific attestation key, certificate,
   and GET_ATTESTATION command are unavailable in every cataloged firmware
-  through 3.0.1. Standard `sig`, `dec`, and `aut` key metadata, UIF, and
+  through 3.1.0. Standard `sig`, `dec`, and `aut` key metadata, UIF, and
   certificate objects remain supported and must be tested independently.
 - **OpenPGP UIF**: standard D6/D7/D8 UIF data objects are absent in 1.3 and
   available from 1.5.2. The touch-policy lifecycle is skipped only on 1.3.
@@ -184,7 +209,7 @@ The resulting states match the upstream device-test model:
   firmware/feature combination is validated and the matrix is updated.
 
 `fido-pcsc` is unsupported on 1.3 and supported from 1.5.2 through the latest
-audited catalog firmware (3.0.1). The FIDO device and CLI tests exercise this
+audited catalog firmware (3.1.0). The FIDO device and CLI tests exercise this
 path through `SmartCardCtapDevice`; transport, permission, and APDU failures are
 test failures and are never converted into an unsupported result.
 
@@ -200,6 +225,12 @@ including legacy commands and touch support on 1.3, modern commands from
 `oath-rename-collision-check`,
 `piv-select-resets-security-state`, and `openpgp-rsa4096-generation`. Tests gate
 only the missing semantics; adjacent supported operations continue to execute.
+
+Firmware 3.1.0 additionally enables `fido-authenticator-config`,
+`piv-move-key`, PIV/OpenPGP retry configuration, the standard PIV signature
+PIN default, the AES-192 PIV management-key default, and OpenPGP P-384
+signing. These remain unsupported on older catalog entries rather than being
+selected from synthetic applet versions.
 
 CanoKey CTAP1 responses over PC/SC pass through `SmartCardProtocol`, which
 separates the APDU status word from its data. The CanoKey FIDO adapter restores

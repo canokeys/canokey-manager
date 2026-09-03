@@ -14,8 +14,9 @@ repository does not duplicate those commit SHAs.
 
 - Top level: `list` (normal, serial-only, and reader output), `info`, `apdu`
 - FIDO: `info`; `reset` on firmware 1.5.2 through 1.6.2; `access change-pin`,
-  `access verify-pin`, and, from firmware 2.0.0 onward, `credentials list` and
-  `credentials delete`
+  `access verify-pin`; from firmware 2.0.0 onward, `credentials list` and
+  `credentials delete`; and on 3.1.0, `access force-change`,
+  `access set-min-length`, and `config toggle-always-uv`
 - PIV: `info`, `reset`; every command under `access`, `keys`, `certificates`,
   and `objects`
 - OATH: `info`, `reset`; every command under `access` and `accounts`
@@ -23,17 +24,20 @@ repository does not duplicate those commit SHAs.
   `certificates`, subject to the CanoKey-specific negative cases below
 
 The FIDO test resets the application where the command has no power-up window,
-sets, verifies, and changes its PIN, then provisions a resident credential with
-`python-fido2` so its CLI list/delete lifecycle can be verified. The PIV and
+sets, verifies, and changes its PIN, then verifies a signed assertion on every
+supported PC/SC firmware. From 2.0.0 onward it provisions two resident
+credentials, verifies the getNextAssertion path, and checks the CLI's table and
+CSV list/delete lifecycle. The PIV and
 OATH tests provision data, verify round trips, and clean it up. On firmware
 1.3, the OATH lifecycle uses its matrix-selected legacy dialect and still
 executes reset, info, TOTP/HOTP with SHA1/SHA256, touch metadata, URI and PSKC
 import, generated secrets, list, calculate, and delete. Only the confirmed
 missing password, rename, SHA512, and full-HMAC features report `UNSUPPORTED`
 or a pytest skip. The OpenPGP test changes and recovers PINs, provisions a
-standard signing key, tests key metadata and touch policy, and verifies a
-certificate round trip. When supported, it also exercises the separate
-attestation feature. It resets the applet at the end.
+standard SIG, DEC, and AUT keys, verifies signing, decryption and internal
+authentication, tests each key's metadata and touch policy, and verifies a
+certificate round trip in all three slots. When supported, it also exercises
+the separate attestation feature. It resets the applet at the end.
 
 After the executable smoke lifecycle, `device-tests.sh` runs the reusable
 upstream CLI and protocol device tests for each applet against the same real
@@ -100,7 +104,7 @@ matrix is updated. Hardware provisioning state, including attestation
 certificates and preinstalled keys, is always probed at runtime rather than
 inferred from firmware.
 
-All eight cataloged releases from 1.3 through 3.0.1 run this same test
+All nine cataloged releases from 1.3 through 3.1.0 run this same test
 lifecycle. Matrix jobs use `fail-fast: false` so a difference in one release
 does not hide results from the others.
 
@@ -110,7 +114,7 @@ the admin firmware version and the feature matrix instead; synthetic versions
 reported by individual applets are never compared to CanoKey firmware.
 
 - PIV retry counter configuration, metadata-based key info/export, import PIN
-  policies, and attestation
+  policies, retired slots, PIN-protected objects, and attestation
 - PIV factory object framing before/after 1.6.1 and empty-slot metadata status
   before/after 3.0.0, including Bio probing; audited legacy responses are
   normalized and still tested
@@ -133,6 +137,8 @@ reported by individual applets are never compared to CanoKey firmware.
 - FIDO reset without a power-cycle window from firmware 1.5.2 through 1.6.2;
   PIN management over PC/SC from firmware 1.5.2 onward; credential management
   from firmware 2.0.0 onward
+- FIDO authenticator configuration and PIV MOVE KEY from firmware 3.1.0;
+  PIV/OpenPGP retry configuration is also enabled only from 3.1.0
 
 ## Not covered by the current hosted-runner path
 
@@ -145,8 +151,9 @@ reported by individual applets are never compared to CanoKey firmware.
 - `otp`: CanoKey does not advertise the Yubico OTP capability.
 - `hsmauth`: CanoKey does not advertise the YubiHSM Auth capability.
 - `securitydomain`: the catalog firmware does not advertise this capability.
-- `config`: mutating USB application state can disconnect the sole test device;
-  CanoKey configuration behavior needs a lifecycle that can reattach it.
+- `config`: CanoKey's admin configuration protocol, including the 3.1.0
+  extensions, is not wire-compatible with YubiKey management configuration.
+  The ckman command is therefore unsupported rather than merely untested.
 - `script`: this executes arbitrary user-provided Python and does not add device
   protocol coverage beyond the commands above.
 

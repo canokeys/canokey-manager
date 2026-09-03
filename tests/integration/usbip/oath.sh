@@ -139,9 +139,11 @@ else
     --password "$OATH_PASSWORD"
   remembered_accounts="$("${CKMAN[@]}" oath accounts list)"
   grep -Fq "usbip-generated" <<<"$remembered_accounts"
+  [[ "$(jq 'length' "$XDG_DATA_HOME/ykman/oath_keys.json")" -eq 1 ]]
 
   section "ckman oath access forget remembered password"
   "${CKMAN[@]}" oath access forget
+  [[ "$(jq 'length' "$XDG_DATA_HOME/ykman/oath_keys.json")" -eq 0 ]]
   password_accounts="$("${CKMAN[@]}" oath accounts list --password "$OATH_PASSWORD")"
   grep -Fq "usbip-generated" <<<"$password_accounts"
 

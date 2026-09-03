@@ -1183,11 +1183,12 @@ class OpenPgpSession:
         :param reset_attempts: The Reset Code attempts.
         :param admin_attempts: The Admin PIN attempts.
         """
-        if self.version[0] == 1:
-            # YubiKey NEO
-            require_version(self.version, (1, 0, 7))
-        else:
-            require_version(self.version, (4, 3, 1))
+        if not canokey.is_canokey(self.protocol.connection):
+            if self.version[0] == 1:
+                # YubiKey NEO
+                require_version(self.version, (1, 0, 7))
+            else:
+                require_version(self.version, (4, 3, 1))
 
         attempts = (user_attempts, reset_attempts, admin_attempts)
         logger.debug(f"Setting PIN attempts to {attempts}")
