@@ -69,14 +69,34 @@ config_status="$(firmware_feature_status fido-authenticator-config)"
 case "$config_status" in
   supported)
     section "ckman fido config toggle-always-uv"
+    initial_always_uv="$(
+      "${CKMAN[@]}" fido info |
+        sed -n 's/^Always Require UV:[[:space:]]*//p'
+    )"
+    case "$initial_always_uv" in
+      On)
+        first_toggle="off"
+        second_toggle="on"
+        ;;
+      Off)
+        first_toggle="on"
+        second_toggle="off"
+        ;;
+      *)
+        echo "ERROR: unexpected Always Require UV state: ${initial_always_uv:-missing}" >&2
+        exit 1
+        ;;
+    esac
     capture_without_secrets \
-      "Always Require UV is on." \
+      "Always Require UV is ${first_toggle}." \
       "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
-    "${CKMAN[@]}" fido info | grep -Fq "Always Require UV: On"
+    "${CKMAN[@]}" fido info |
+      grep -Fq "Always Require UV: ${first_toggle^}"
     capture_without_secrets \
-      "Always Require UV is off." \
+      "Always Require UV is ${second_toggle}." \
       "${CKMAN[@]}" fido config toggle-always-uv --pin "$FIDO_PIN"
-    "${CKMAN[@]}" fido info | grep -Fq "Always Require UV: Off"
+    "${CKMAN[@]}" fido info |
+      grep -Fq "Always Require UV: ${initial_always_uv}"
 
     section "ckman fido access set-min-length"
     capture_without_secrets \

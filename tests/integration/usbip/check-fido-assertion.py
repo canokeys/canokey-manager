@@ -25,10 +25,9 @@ def main() -> int:
     with devices[0].open_connection(SmartCardCtapDevice) as device:
         ctap2 = Ctap2(device)
         client_pin = ClientPin(ctap2)
-        permissions = (
-            ClientPin.PERMISSION.MAKE_CREDENTIAL | ClientPin.PERMISSION.GET_ASSERTION
+        make_token = client_pin.get_pin_token(
+            pin, ClientPin.PERMISSION.MAKE_CREDENTIAL, RP_ID
         )
-        token = client_pin.get_pin_token(pin, permissions, RP_ID)
         create_hash = hashlib.sha256(b"ckman USB/IP create assertion key").digest()
         response = ctap2.make_credential(
             create_hash,
@@ -36,7 +35,7 @@ def main() -> int:
             {"id": b"assertion-user", "name": "assertion-user"},
             [{"type": "public-key", "alg": -7}],
             options={"rk": False},
-            pin_uv_param=client_pin.protocol.authenticate(token, create_hash),
+            pin_uv_param=client_pin.protocol.authenticate(make_token, create_hash),
             pin_uv_protocol=client_pin.protocol.VERSION,
         )
         credential_data = response.auth_data.credential_data
@@ -44,11 +43,16 @@ def main() -> int:
             raise RuntimeError("authenticator did not return credential data")
 
         assertion_hash = hashlib.sha256(b"ckman USB/IP get assertion").digest()
+        assertion_token = client_pin.get_pin_token(
+            pin, ClientPin.PERMISSION.GET_ASSERTION, RP_ID
+        )
         assertion = ctap2.get_assertion(
             RP_ID,
             assertion_hash,
             [{"type": "public-key", "id": credential_data.credential_id}],
-            pin_uv_param=client_pin.protocol.authenticate(token, assertion_hash),
+            pin_uv_param=client_pin.protocol.authenticate(
+                assertion_token, assertion_hash
+            ),
             pin_uv_protocol=client_pin.protocol.VERSION,
         )
         if assertion.credential["id"] != credential_data.credential_id:
