@@ -718,6 +718,8 @@ class ManagementSession:
             logger.debug(f"is_nfc_en={is_nfc_en}")
             if not is_nfc_en:
                 info.config.enabled_capabilities[TRANSPORT.NFC] = CAPABILITY(0)
+        except canokey.UnknownFeatureError:
+            raise
         except Exception:
             logger.debug("Failed to read NFC status", exc_info=True)
         return info

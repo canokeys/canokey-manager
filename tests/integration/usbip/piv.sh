@@ -22,7 +22,6 @@ section "ckman piv access set-retries"
 run_versioned_feature \
   "ckman piv access set-retries" \
   "piv-set-retries" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" piv access set-retries \
   --management-key "$PIV_DEFAULT_MANAGEMENT_KEY" \
   --pin "$PIV_DEFAULT_PIN" \
@@ -87,14 +86,12 @@ section "ckman piv keys info"
 run_versioned_feature \
   "ckman piv keys info" \
   "piv-metadata" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" piv keys info 9a
 
 section "ckman piv keys export"
 run_versioned_feature \
   "ckman piv keys export" \
   "piv-metadata" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" piv keys export \
     --verify \
     --pin "$PIV_RECOVERY_PIN" \
@@ -105,10 +102,10 @@ if [[ "$FEATURE_AVAILABLE" == true ]]; then
     "$CANOKEY_USBIP_WORK_DIR/piv-exported-public.pem"
 fi
 
-section "Probe PIV attestation support"
-probe_feature \
+section "Probe PIV attestation provisioning"
+probe_provisioning_state \
   "PIV attestation certificate" \
-  "no certificate found" \
+  "Error: No certificate found" \
   "${CKMAN[@]}" piv certificates export \
   f9 "$CANOKEY_USBIP_WORK_DIR/piv-attestation-root.pem"
 if [[ "$FEATURE_AVAILABLE" == true ]]; then
@@ -196,28 +193,16 @@ elif [[ "$policy_status" == unsupported ]]; then
     --management-key "$PIV_MANAGEMENT_KEY" \
     9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
 else
-  probe_feature \
-    "PIV key import PIN policy" \
-    "not supported|invalid instruction|incorrect parameter" \
-    "${CKMAN[@]}" piv keys import \
-      --management-key "$PIV_MANAGEMENT_KEY" \
-      --pin-policy always \
-      9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
-  if [[ "$FEATURE_AVAILABLE" != true ]]; then
-    "${CKMAN[@]}" piv keys import \
-      --management-key "$PIV_MANAGEMENT_KEY" \
-      9c "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
-  fi
+  echo "ERROR: UNKNOWN: piv-generate-policies has not been validated for CanoKey firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}" >&2
+  exit 1
 fi
 run_versioned_feature \
   "ckman piv keys info for imported key" \
   "piv-metadata" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" piv keys info 9c
 run_versioned_feature \
   "ckman piv keys export for imported key" \
   "piv-metadata" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" piv keys export \
     --verify \
     --pin "$PIV_RECOVERY_PIN" \

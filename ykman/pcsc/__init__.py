@@ -138,7 +138,7 @@ class ScardYubiKeyDevice(YkmanDevice):
 
     def supports_connection(self, connection_type):
         if issubclass(SmartCardCtapDevice, connection_type):
-            return self.transport == TRANSPORT.NFC
+            return self.transport == TRANSPORT.NFC or self.pid == PID.CK_FIDO_CCID
         return issubclass(ScardSmartCardConnection, connection_type)
 
     def open_connection(self, connection_type):

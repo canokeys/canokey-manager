@@ -27,9 +27,13 @@ Keyboard access is required for the `otp` command.
 
 
 === FIDO Access
-The FIDO protocols are accessed via a USB HID interface. As with keyboard
-access, permission is granted through udev. You can find an example udev rules
-file which grants access to a large number (not just YubiKeys) of FIDO devices
+YubiKey FIDO protocols are normally accessed via a USB HID interface. As with
+keyboard access, permission is granted through udev. You can find an example
+udev rules file which grants access to a large number (not just YubiKeys) of
+FIDO devices
 https://github.com/Yubico/libu2f-host/blob/master/70-u2f.rules[here].
 
-FIDO access is required for the `fido` command.
+CanoKey firmware 1.5.2 and later can also carry FIDO over its CCID interface.
+That path uses PC/SC and requires access to `pcscd`; it does not require a
+`hidraw` device. FIDO access through either supported transport is required for
+the `fido` command.

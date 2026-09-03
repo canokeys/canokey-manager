@@ -1,3 +1,4 @@
+from yubikit.canokey import CanoKeyFeature
 from yubikit.core import TRANSPORT
 from yubikit.core.fido import FidoConnection
 from yubikit.core.otp import OtpConnection
@@ -14,6 +15,7 @@ def try_connection(device, conn_type):
 
 
 @condition.transport(TRANSPORT.USB)
+@condition.canokey_feature(CanoKeyFeature.FIDO_PCSC)
 def test_switch_interfaces(device):
     for conn_type in (
         FidoConnection,

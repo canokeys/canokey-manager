@@ -24,7 +24,6 @@ section "ckman openpgp access set-retries"
 run_versioned_feature \
   "ckman openpgp access set-retries" \
   "openpgp-set-retries" \
-  "not supported|invalid instruction" \
   "${CKMAN[@]}" openpgp access set-retries \
   --admin-pin "$OPENPGP_DEFAULT_ADMIN_PIN" \
   --force \
@@ -114,7 +113,6 @@ section "ckman openpgp keys import attestation key"
 run_versioned_feature \
   "ckman openpgp keys import attestation key" \
   "openpgp-attestation" \
-  "not supported|failed to import attestation key" \
   "${CKMAN[@]}" openpgp keys import \
   --admin-pin "$OPENPGP_ADMIN_PIN" \
   att "$CANOKEY_USBIP_WORK_DIR/openpgp-test-private.pem"

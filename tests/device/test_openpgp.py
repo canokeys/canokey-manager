@@ -6,7 +6,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
-from yubikit.canokey import CanoKeyFeature, FeatureStatus, get_feature_status
+from yubikit.canokey import CanoKeyFeature, FeatureStatus
 from yubikit.core import TRANSPORT, InvalidPinError
 from yubikit.core.smartcard import AID, ApduError
 from yubikit.management import CAPABILITY
@@ -56,8 +56,8 @@ def skip_unsupported_oid(session, oid, key_ref, info):
         condition.is_canokey(info)
         and key_ref == KEY_REF.SIG
         and oid == OID.SECP384R1
-        and get_feature_status(
-            info.version,
+        and condition.canokey_feature_status(
+            info,
             CanoKeyFeature.OPENPGP_ECDSA_P384_SIGNING,
         )
         == FeatureStatus.UNSUPPORTED

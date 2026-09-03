@@ -7,8 +7,9 @@ import pytest
 from ykman._cli.util import find_scp11_params
 from ykman.device import list_all_devices, read_info
 from ykman.pcsc import list_devices
-from yubikit.core import TRANSPORT, PID, _override_version
-from yubikit.core.fido import FidoConnection
+from yubikit.canokey import CanoKeyFeature
+from yubikit.core import PID, TRANSPORT, _override_version
+from yubikit.core.fido import FidoConnection, SmartCardCtapDevice
 from yubikit.core.otp import OtpConnection
 from yubikit.core.smartcard import SmartCardConnection
 from yubikit.core.smartcard.scp import ScpKid
@@ -97,6 +98,14 @@ def fido_connection(device, info):
     if device.supports_connection(FidoConnection):
         with device.open_connection(FidoConnection) as c:
             yield c
+
+
+@pytest.fixture(scope=connection_scope)
+@condition.canokey(True)
+@condition.canokey_feature(CanoKeyFeature.FIDO_PCSC)
+def pcsc_fido_connection(device, info):
+    with device.open_connection(SmartCardCtapDevice) as c:
+        yield c
 
 
 @pytest.fixture(scope=connection_scope)
