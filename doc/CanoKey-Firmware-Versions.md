@@ -32,6 +32,8 @@ mapped from the exact core commit before executing any lifecycle command.
 - PIV slot 9C defaults to PIN policy ONCE whenever metadata is available through 3.0.1, rather than YubiKey's ALWAYS.
 - OpenPGP: RSA private key import uses CRT format; VERIFY with a wrong PIN returns 6982 instead of 63Cx.
 - Admin applet: default PIN `123456`, 3 retries; READ_SN/READ_CONFIG require an explicit Le.
+- An all-zero admin READ_SN value means that no serial is provisioned and is
+  exposed as `None` in `DeviceInfo`.
 - Admin PIN handling: use empty-Lc VERIFY to inspect validation state without consuming a retry. Never guess the default PIN; request an explicit PIN when the admin applet is not already verified.
 - CCID interface string is "OpenPGP PIV OATH"; the ATR contains "CanoKey".
 
@@ -124,6 +126,11 @@ The resulting states match the upstream device-test model:
 audited catalog firmware (3.0.1). The FIDO device and CLI tests exercise this
 path through `SmartCardCtapDevice`; transport, permission, and APDU failures are
 test failures and are never converted into an unsupported result.
+
+CanoKey CTAP1 responses over PC/SC pass through `SmartCardProtocol`, which
+separates the APDU status word from its data. The CanoKey FIDO adapter restores
+that status word before returning the frame to `python-fido2`; this is required
+by its `CTAPHID.MSG` contract. The CTAP2/CBOR path is unchanged.
 
 Applet-reported PIV, OATH, and OpenPGP protocol versions are synthetic and must
 not be used to select these rules. Provisioning-dependent state such as an

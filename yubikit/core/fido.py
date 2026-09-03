@@ -36,6 +36,7 @@ from fido2.hid import CAPABILITY, CTAPHID
 from yubikit.core import Version
 from yubikit.core.smartcard import (
     AID,
+    SW,
     ApduError,
     SmartCardConnection,
     SmartCardProtocol,
@@ -62,7 +63,10 @@ class SmartCardCtapDevice(CtapDevice, Connection):
         connection: SmartCardConnection,
         scp_key_params: ScpKeyParams | None = None,
     ):
+        from yubikit import canokey
+
         self._capabilities = CAPABILITY(0)
+        self._is_canokey = canokey.is_canokey(connection)
 
         self.protocol = SmartCardProtocol(connection)
         resp = self.protocol.select(AID.FIDO)
@@ -98,6 +102,7 @@ class SmartCardCtapDevice(CtapDevice, Connection):
         event: Event | None = None,
         on_keepalive: Callable[[STATUS], None] | None = None,
     ) -> bytes:
+        is_ctap1 = cmd == CTAPHID.MSG
         match cmd:
             case CTAPHID.MSG:
                 cla, ins, p1, p2 = data[:4]
@@ -118,7 +123,10 @@ class SmartCardCtapDevice(CtapDevice, Connection):
         try:
             while True:
                 try:
-                    return self.protocol.send_apdu(cla, ins, p1, p2, data)
+                    response = self.protocol.send_apdu(cla, ins, p1, p2, data)
+                    if is_ctap1 and self._is_canokey:
+                        return response + struct.pack(">H", SW.OK)
+                    return response
                 except ApduError as e:
                     if e.sw == 0x9100:
                         ins, p1 = 0x11, 0x00  # NFCCTAP_GETRESPONSE
@@ -129,6 +137,8 @@ class SmartCardCtapDevice(CtapDevice, Connection):
                         if event.wait(0.1):
                             p1 = 0x11  # cancel
                         continue
+                    if is_ctap1 and self._is_canokey:
+                        return e.data + struct.pack(">H", e.sw)
                     raise CtapError(CtapError.ERR.OTHER)  # TODO: Map from SW error
         except KeyboardInterrupt:
             if ins == 0x11:

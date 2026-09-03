@@ -9,6 +9,7 @@ from yubikit.canokey import (
     CATALOG_LATEST_VERSION,
     CATALOG_VERSIONS,
     FEATURE_MATRIX,
+    INS_NFC_ENABLE,
     INS_READ_SN,
     INS_READ_VERSION,
     INS_RESET_CTAP,
@@ -361,6 +362,25 @@ def test_management_does_not_hide_unknown_canokey_firmware():
     session = ManagementSession(conn)
     with pytest.raises(UnknownFeatureError, match="nfc-status-without-pin"):
         session.read_device_info()
+
+
+def test_management_treats_unconfigured_serial_as_missing():
+    management_aid = bytes.fromhex("A000000527471117")
+    select_management = bytes([0, 0xA4, 0x04, 0, len(management_aid)]) + management_aid
+    conn = FakeConnection(
+        [
+            (select_management, (b"", 0x6A82)),
+            (select_apdu(), (b"", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.1", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 1, 0]), (b"CanoKey", 0x9000)),
+            (bytes([0, INS_READ_SN, 0, 0]), (b"\x00\x00\x00\x00", 0x9000)),
+            (bytes([0, INS_READ_VERSION, 0, 0]), (b"3.0.1", 0x9000)),
+            (bytes([0, INS_NFC_ENABLE, 0, 0]), (b"\x01", 0x9000)),
+        ],
+        pid=PID.CK_FIDO_CCID,
+    )
+
+    assert ManagementSession(conn).read_device_info().serial is None
 
 
 def test_reset_oath_accepts_explicit_default_pin():
