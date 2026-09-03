@@ -257,6 +257,12 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
 
+          if [[ "$CANOKEY_FIRMWARE_ID" == "3.1.0" ]]; then
+            sed -i \
+              '/^option(CANOKEY_CORE_DEBUG_OUTPUT /s/ OFF)$/ ON)/' \
+              external/canokey-usbip/CMakeLists.txt
+          fi
+
           capture_usb_bindings() {
             output="$RUNNER_TEMP/canokey-usbip-artifacts/usb-drivers.txt"
             for _ in {1..120}; do
