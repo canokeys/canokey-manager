@@ -32,7 +32,6 @@ run_applet_tests \
 run_applet_tests \
   "FIDO over PC/SC" \
   tests/device/test_interfaces.py \
-  tests/device/test_fips_u2f_commands.py \
   tests/device/cli/test_fido.py \
   tests/device/test_fido.py || status=1
 

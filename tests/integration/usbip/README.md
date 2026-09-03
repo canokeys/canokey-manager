@@ -31,30 +31,29 @@ failure remains fatal.
 ### Upstream ykman reuse
 
 The ykman 5.9.2 baseline contains 24 device-test modules and 472 statically
-collected test instances. This runner selects 16 of those upstream modules and
-313 instances. The module reuse is therefore 66.7%, and the instance collection
-reuse is 66.3%. These are collection metrics, not pass-rate claims: pytest's
+collected test instances. This runner selects 15 of those upstream modules and
+310 instances. The module reuse is therefore 62.5%, and the instance collection
+reuse is 65.7%. These are collection metrics, not pass-rate claims: pytest's
 pass/skip/fail summary remains the source of truth for a particular firmware
 run.
 
-For FIDO, all four upstream-related instances are collected:
+The baseline has four FIDO-related upstream instances, but only one applies to
+CanoKey:
 
 - `test_interfaces.py::test_switch_interfaces` runs unchanged in substance and
   repeatedly opens `FidoConnection`; the CanoKey compatibility decorator only
   applies the audited `fido-pcsc` firmware gate.
-- The three cases in `test_fips_u2f_commands.py` retain ykman's original YK4
-  FIPS precondition and therefore report a clear skip on CanoKey. They exercise
-  YubiKey 4 FIPS vendor APDUs, not standard U2F or CTAP2 behavior, so making
-  them pass on CanoKey would be a false reuse claim.
+- The three cases in `test_fips_u2f_commands.py` exercise YubiKey 4 FIPS vendor
+  APDUs, not standard U2F or CTAP2 behavior. They are excluded instead of being
+  collected only to skip.
 
-Thus FIDO's upstream collection reuse is 4/4 (100%), while its executable
-upstream applicability on CanoKey is 1/4 (25%). The distinction is intentional
-and visible in pytest's skip report.
+Thus FIDO's upstream applicability on CanoKey is 1/4 (25%), and the runner
+executes the one applicable upstream instance.
 
 The three fork-added FIDO instances cover gaps with no upstream ykman 5.9.2
 equivalent: U2F `VERSION`, CTAP2 `getInfo`, and `ckman fido info`, all over the
 real PC/SC connection. Together, the FIDO job executes four applicable tests
-and reports the three YK4 FIPS-only tests as not applicable.
+without collecting the three YK4 FIPS-only tests.
 
 The selected common upstream tests also cover invalid-AID handling and the
 general `ykman info` behavior. Tests for OTP, YubiHSM Auth, Security Domain,
