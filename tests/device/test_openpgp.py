@@ -146,18 +146,20 @@ def test_change_admin(session, keys):
 
 
 @condition.canokey_feature(CanoKeyFeature.OPENPGP_SET_RETRIES)
-def test_change_pin_retries(session, keys, version):
+def test_change_pin_retries(session, keys, version, info):
+    attempts = (5, 5, 15) if condition.is_canokey(info) else (5, 0, 25)
     with pytest.raises(ApduError):
-        session.set_pin_attempts(5, 0, 25)
+        session.set_pin_attempts(*attempts)
 
     session.verify_admin(keys.admin)
-    session.set_pin_attempts(5, 0, 25)
+    session.set_pin_attempts(*attempts)
 
-    assert session.get_pin_status().attempts_user == 5
-    if version >= (4, 0, 0):
+    status = session.get_pin_status()
+    assert status.attempts_user == attempts[0]
+    if condition.is_canokey(info) or version >= (4, 0, 0):
         # NEO returns 3 if no reset code is set
-        assert session.get_pin_status().attempts_reset == 0
-    assert session.get_pin_status().attempts_admin == 25
+        assert status.attempts_reset == attempts[1]
+    assert status.attempts_admin == attempts[2]
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_pin(NON_DEFAULT_PIN)
@@ -165,7 +167,7 @@ def test_change_pin_retries(session, keys, version):
 
     with pytest.raises(InvalidPinError) as e:
         session.verify_admin(NON_DEFAULT_ADMIN_PIN)
-        assert e.value.attempts_remaining == 24
+        assert e.value.attempts_remaining == attempts[2] - 1
 
 
 def test_import_requires_admin(session):

@@ -791,9 +791,7 @@ class TestMetadata:
 
         session.authenticate(DEFAULT_MANAGEMENT_KEY)
         new_type = (
-            MANAGEMENT_KEY_TYPE.TDES
-            if condition.is_canokey(info)
-            else MANAGEMENT_KEY_TYPE.AES192
+            default_type if condition.is_canokey(info) else MANAGEMENT_KEY_TYPE.AES192
         )
         session.set_management_key(new_type, NON_DEFAULT_MANAGEMENT_KEY)
         assert session.management_key_type == new_type
@@ -809,7 +807,10 @@ class TestMetadata:
 
         if CAPABILITY.PIV not in info.fips_capable:
             session.set_management_key(
-                MANAGEMENT_KEY_TYPE.TDES, NON_DEFAULT_MANAGEMENT_KEY
+                default_type
+                if condition.is_canokey(info)
+                else MANAGEMENT_KEY_TYPE.TDES,
+                NON_DEFAULT_MANAGEMENT_KEY,
             )
             data = session.get_management_key_metadata()
             assert data.default_value is False
