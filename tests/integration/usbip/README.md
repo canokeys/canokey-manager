@@ -101,6 +101,7 @@ reported by individual applets are never compared to CanoKey firmware.
   policies, and attestation
 - OATH response chaining behavior before and after the 3.0.1 firmware fix
 - OpenPGP retry counter configuration
+- OpenPGP `GET CHALLENGE`, available from firmware 3.0.0
 - OpenPGP attestation key and signing-key attestation
 
 ## Not covered by the current hosted-runner path

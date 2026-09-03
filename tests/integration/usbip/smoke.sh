@@ -44,9 +44,12 @@ fi
 echo "CanoKey firmware identity verified: ${reported_firmware}."
 
 section "ckman apdu"
-apdu_output="$("${CKMAN[@]}" apdu --app openpgp --no-pretty 84/08=)"
-printf '%s\n' "$apdu_output"
-grep -Fq "RECV (SW=9000)" <<<"$apdu_output"
+run_versioned_feature \
+  "ckman apdu OpenPGP GET CHALLENGE" \
+  "openpgp-get-challenge" \
+  capture_without_secrets \
+  "RECV (SW=9000)" \
+  "${CKMAN[@]}" apdu --app openpgp --no-pretty 84/08=
 
 "$script_dir/piv.sh"
 "$script_dir/oath.sh"
