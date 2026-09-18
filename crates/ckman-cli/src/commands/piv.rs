@@ -1145,8 +1145,11 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             let mut parameters = KeyParameters::new(*slot, imported.algorithm);
             parameters.pin_policy = pin_policy_of(*pin_policy);
             parameters.touch_policy = touch_policy_of(*touch_policy);
+            let material = imported
+                .piv_material()
+                .map_err(|error| format!("{error}"))?;
             session.run(|profile, exchange| {
-                piv::import_key(profile, parameters, imported.material, access, exchange)
+                piv::import_key(profile, parameters, material, access, exchange)
             })?;
             println!("Private key imported in slot {}.", slot_name(*slot));
             Ok(())

@@ -54,6 +54,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::piv::PivCommand,
     },
+    /// Manage the OpenPGP application.
+    Openpgp {
+        #[command(subcommand)]
+        command: commands::openpgp::OpenPgpCommand,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -74,6 +79,9 @@ fn main() -> std::process::ExitCode {
             commands::oath::run(cli.device, cli.reader.as_deref(), command)
         }
         Commands::Piv { command } => commands::piv::run(cli.device, cli.reader.as_deref(), command),
+        Commands::Openpgp { command } => {
+            commands::openpgp::run(cli.device, cli.reader.as_deref(), command)
+        }
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

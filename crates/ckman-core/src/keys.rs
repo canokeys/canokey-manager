@@ -4,6 +4,7 @@
 //! no key bytes are retained beyond it.
 
 use canokey::piv::{Algorithm, PrivateKeyMaterial};
+use canokey::SecretBytes;
 use der::asn1::{ObjectIdentifier, OctetStringRef};
 use der::{Decode, Encode};
 use zeroize::Zeroizing;
@@ -28,13 +29,105 @@ pub enum KeyError {
     RsaExponent,
 }
 
-/// A parsed private key: its PIV algorithm and the import material.
+/// Parsed key material in a neutral form; convert to the applet-specific
+/// import shape with [`ImportedKey::piv_material`] or
+/// [`ImportedKey::openpgp_key`].
+#[derive(Debug)]
+enum Material {
+    /// RSA CRT components; OpenPGP also wants the four-byte public exponent.
+    Rsa {
+        exponent: [u8; 4],
+        p: Zeroizing<Vec<u8>>,
+        q: Zeroizing<Vec<u8>>,
+        dp: Zeroizing<Vec<u8>>,
+        dq: Zeroizing<Vec<u8>>,
+        qinv: Zeroizing<Vec<u8>>,
+    },
+    /// EC scalar, Ed25519 seed or X25519 private bytes (algorithm implied by
+    /// the surrounding [`ImportedKey`]).
+    Ec(Zeroizing<Vec<u8>>),
+}
+
+/// A parsed private key: its algorithm and neutral material.
 #[derive(Debug)]
 pub struct ImportedKey {
     /// Detected algorithm.
     pub algorithm: Algorithm,
-    /// Typed import material, redacted and zeroized by libcanokey.
-    pub material: PrivateKeyMaterial,
+    material: Material,
+}
+
+impl ImportedKey {
+    /// PIV import material. The PIV applet implies public exponent 65537;
+    /// other exponents are rejected here rather than silently mismatched.
+    pub fn piv_material(&self) -> Result<PrivateKeyMaterial, KeyError> {
+        match &self.material {
+            Material::Rsa {
+                exponent,
+                p,
+                q,
+                dp,
+                dq,
+                qinv,
+            } => {
+                if exponent != &[0, 1, 0, 1] {
+                    return Err(KeyError::RsaExponent);
+                }
+                PrivateKeyMaterial::rsa_crt(
+                    self.algorithm,
+                    [p, q, dp, dq, qinv].map(|v| v.as_slice()),
+                )
+                .map_err(|_| KeyError::Encoding)
+            }
+            Material::Ec(bytes) => match self.algorithm {
+                Algorithm::Ed25519 => PrivateKeyMaterial::ed25519_seed(bytes),
+                Algorithm::X25519 => PrivateKeyMaterial::x25519_key(bytes),
+                _ => PrivateKeyMaterial::ec_scalar(self.algorithm, bytes),
+            }
+            .map_err(|_| KeyError::Encoding),
+        }
+    }
+
+    /// OpenPGP import material (4D/7F48/5F48 CRT framing is libcanokey's).
+    /// Components are left-padded to the half-modulus width the card expects.
+    pub fn openpgp_key(&self) -> Result<canokey::openpgp::PrivateKey, KeyError> {
+        let pad = |bytes: &Zeroizing<Vec<u8>>, width: usize| -> Result<SecretBytes, KeyError> {
+            if bytes.len() > width {
+                return Err(KeyError::Encoding);
+            }
+            let mut padded = SecretBytes::new(vec![0; width - bytes.len()]);
+            padded.extend(bytes);
+            Ok(padded)
+        };
+        match &self.material {
+            Material::Rsa {
+                exponent,
+                p,
+                q,
+                dp,
+                dq,
+                qinv,
+            } => {
+                let width = match self.algorithm {
+                    Algorithm::Rsa1024 => 128,
+                    Algorithm::Rsa2048 => 256,
+                    Algorithm::Rsa3072 => 384,
+                    Algorithm::Rsa4096 => 512,
+                    _ => return Err(KeyError::Unsupported),
+                } / 2;
+                Ok(canokey::openpgp::PrivateKey::Rsa {
+                    exponent: *exponent,
+                    p: pad(p, width)?,
+                    q: pad(q, width)?,
+                    q_inverse: pad(qinv, width)?,
+                    d_p: pad(dp, width)?,
+                    d_q: pad(dq, width)?,
+                })
+            }
+            Material::Ec(bytes) => Ok(canokey::openpgp::PrivateKey::Ec(SecretBytes::new(
+                bytes.to_vec(),
+            ))),
+        }
+    }
 }
 
 /// A parsed public key: its PIV algorithm and SPKI DER.
@@ -73,46 +166,35 @@ pub fn pem_decode(input: &[u8], labels: &[&str]) -> Result<(String, Vec<u8>), Ke
     Ok((label.to_string(), decoded))
 }
 
-fn rsa_material(key: &rsa::RsaPrivateKey) -> Result<PrivateKeyMaterial, KeyError> {
+fn rsa_material(key: &rsa::RsaPrivateKey) -> Result<Material, KeyError> {
     use rsa::traits::{PrivateKeyParts, PublicKeyParts};
     use rsa::BigUint;
-    if key.e() != &BigUint::from(65537u32) {
-        return Err(KeyError::RsaExponent);
-    }
     let primes = key.primes();
     if primes.len() != 2 {
         return Err(KeyError::Unsupported);
     }
     let one = BigUint::from(1u32);
     let (p, q) = (&primes[0], &primes[1]);
-    // PIV wants p, q, dP, dQ, qInv (q^{-1} mod p), half-modulus width each.
+    // Both PIV and OpenPGP want p, q, dP, dQ, qInv (q^{-1} mod p).
     let d = key.d();
     let dp = d.clone() % (p - &one);
     let dq = d.clone() % (q - &one);
     let qinv = key.crt_coefficient().ok_or(KeyError::Encoding)?;
-    let bytes = |v: &BigUint| v.to_bytes_be();
-    let algorithm = match key.n().bits() {
-        1024 => Algorithm::Rsa1024,
-        2048 => Algorithm::Rsa2048,
-        3072 => Algorithm::Rsa3072,
-        4096 => Algorithm::Rsa4096,
-        _ => return Err(KeyError::Unsupported),
-    };
-    PrivateKeyMaterial::rsa_crt(
-        algorithm,
-        [
-            &bytes(p),
-            &bytes(q),
-            &bytes(&dp),
-            &bytes(&dq),
-            &bytes(&qinv),
-        ],
-    )
-    .map_err(|_| KeyError::Encoding)
-}
-
-fn ec_scalar(algorithm: Algorithm, bytes: &[u8]) -> Result<PrivateKeyMaterial, KeyError> {
-    PrivateKeyMaterial::ec_scalar(algorithm, bytes).map_err(|_| KeyError::Encoding)
+    let bytes = |v: &BigUint| Zeroizing::new(v.to_bytes_be());
+    let exponent_bytes = key.e().to_bytes_be();
+    if exponent_bytes.len() > 4 {
+        return Err(KeyError::Unsupported);
+    }
+    let mut exponent = [0; 4];
+    exponent[4 - exponent_bytes.len()..].copy_from_slice(&exponent_bytes);
+    Ok(Material::Rsa {
+        exponent,
+        p: bytes(p),
+        q: bytes(q),
+        dp: bytes(&dp),
+        dq: bytes(&dq),
+        qinv: bytes(&qinv),
+    })
 }
 
 /// SEC1 ECPrivateKey: SEQUENCE { INTEGER 1, OCTET STRING privateKey, ... }.
@@ -139,10 +221,7 @@ fn from_sec1(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
         "1.3.132.0.34" => Algorithm::EccP384,
         _ => return Err(KeyError::Unsupported),
     };
-    Ok(ImportedKey {
-        algorithm,
-        material: ec_scalar(algorithm, bytes)?,
-    })
+    ec_imported(algorithm, bytes)
 }
 
 /// Curve 25519 PKCS#8: privateKey OCTET STRING wraps a one-field OCTET STRING.
@@ -150,15 +229,17 @@ fn from_curve25519(oid: &str, private_key: &[u8]) -> Result<ImportedKey, KeyErro
     let seed = OctetStringRef::from_der(private_key)
         .map_err(|_| KeyError::Encoding)?
         .as_bytes();
-    let material = match oid {
-        "1.3.101.112" => PrivateKeyMaterial::ed25519_seed(seed),
-        "1.3.101.110" => PrivateKeyMaterial::x25519_key(seed),
-        _ => return Err(KeyError::Unsupported),
+    if seed.len() != 32 {
+        return Err(KeyError::Encoding);
     }
-    .map_err(|_| KeyError::Encoding)?;
+    let algorithm = match oid {
+        "1.3.101.112" => Algorithm::Ed25519,
+        "1.3.101.110" => Algorithm::X25519,
+        _ => return Err(KeyError::Unsupported),
+    };
     Ok(ImportedKey {
-        algorithm: material.algorithm(),
-        material,
+        algorithm,
+        material: Material::Ec(Zeroizing::new(seed.to_vec())),
     })
 }
 
@@ -169,11 +250,7 @@ fn from_pkcs8(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
         "1.2.840.113549.1.1.1" => {
             let key = rsa::pkcs1::DecodeRsaPrivateKey::from_pkcs1_der(info.private_key)
                 .map_err(|_| KeyError::Encoding)?;
-            let material = rsa_material(&key)?;
-            Ok(ImportedKey {
-                algorithm: material.algorithm(),
-                material,
-            })
+            rsa_imported(&key)
         }
         "1.2.840.10045.2.1" => {
             let curve = info
@@ -188,10 +265,7 @@ fn from_pkcs8(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
             };
             // ECPrivateKey SEC1 structure inside privateKey.
             let scalar = from_sec1_inner(info.private_key)?;
-            Ok(ImportedKey {
-                algorithm,
-                material: ec_scalar(algorithm, &scalar)?,
-            })
+            ec_imported(algorithm, &scalar)
         }
         _ => from_curve25519(&oid, info.private_key),
     }
@@ -253,10 +327,37 @@ pub fn parse_private_key(input: &[u8], password: Option<&[u8]>) -> Result<Import
 fn from_pkcs1(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
     let key = rsa::pkcs1::DecodeRsaPrivateKey::from_pkcs1_der(der_bytes)
         .map_err(|_| KeyError::Encoding)?;
-    let material = rsa_material(&key)?;
+    rsa_imported(&key)
+}
+
+fn rsa_imported(key: &rsa::RsaPrivateKey) -> Result<ImportedKey, KeyError> {
+    use rsa::traits::PublicKeyParts;
+    let algorithm = match key.n().bits() {
+        1024 => Algorithm::Rsa1024,
+        2048 => Algorithm::Rsa2048,
+        3072 => Algorithm::Rsa3072,
+        4096 => Algorithm::Rsa4096,
+        _ => return Err(KeyError::Unsupported),
+    };
     Ok(ImportedKey {
-        algorithm: material.algorithm(),
-        material,
+        algorithm,
+        material: rsa_material(key)?,
+    })
+}
+
+fn ec_imported(algorithm: Algorithm, bytes: &[u8]) -> Result<ImportedKey, KeyError> {
+    match algorithm {
+        Algorithm::EccP256 if p256::SecretKey::from_slice(bytes).is_err() => {
+            return Err(KeyError::Encoding)
+        }
+        Algorithm::EccP384 if p384::SecretKey::from_slice(bytes).is_err() => {
+            return Err(KeyError::Encoding)
+        }
+        _ => {}
+    }
+    Ok(ImportedKey {
+        algorithm,
+        material: Material::Ec(Zeroizing::new(bytes.to_vec())),
     })
 }
 

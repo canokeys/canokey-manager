@@ -2,6 +2,7 @@ pub mod config;
 pub mod info;
 pub mod list;
 pub mod oath;
+pub mod openpgp;
 pub mod piv;
 
 use ckman_core::admin::Pin;

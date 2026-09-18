@@ -10,6 +10,7 @@ use canokey::{DeviceProfile, Operation, ProbeOptions, Step};
 pub mod admin;
 pub mod keys;
 pub mod oath;
+pub mod openpgp;
 pub mod piv;
 pub mod uri;
 pub mod x509;
