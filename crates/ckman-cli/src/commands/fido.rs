@@ -204,11 +204,11 @@ fn read_line() -> CliResult<String> {
 }
 
 fn prompt_new_pin(minimum: u64) -> CliResult<String> {
-    let pin = rpassword::prompt_password("Enter the new PIN: ")?;
+    let pin = super::prompt_password("Enter the new PIN: ")?;
     if (pin.len() as u64) < minimum || pin.len() > 63 {
         return Err(format!("the PIN must be {minimum}-63 characters").into());
     }
-    let repeated = rpassword::prompt_password("Repeat the new PIN: ")?;
+    let repeated = super::prompt_password("Repeat the new PIN: ")?;
     if pin != repeated {
         return Err("the PINs do not match".into());
     }
@@ -306,7 +306,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             }
             let pin = match pin {
                 Some(pin) => pin.clone(),
-                None => rpassword::prompt_password("Enter the current PIN: ")?,
+                None => super::prompt_password("Enter the current PIN: ")?,
             };
             let new_pin = match new_pin {
                 Some(pin) => pin.clone(),
@@ -370,7 +370,7 @@ fn config_token(
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
         Some(pin) => pin.to_string(),
-        None => rpassword::prompt_password("Enter the FIDO2 PIN: ")?,
+        None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
     link.run(|exchange| {
@@ -391,7 +391,7 @@ fn credman_token(
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
         Some(pin) => pin.to_string(),
-        None => rpassword::prompt_password("Enter the FIDO2 PIN: ")?,
+        None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
     link.run(|exchange| {

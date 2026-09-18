@@ -97,6 +97,19 @@ pub fn set_nfc<E>(
     Ok(on)
 }
 
+/// Whether the configuration read is public on this firmware.
+///
+/// Only the pinned 3.1 layout allows reading the device configuration without
+/// the Admin PIN; older known firmware answers READ CONFIG with 6982 and
+/// libcanokey rejects an unauthenticated read at construction. Callers
+/// building read-only status output must check this first instead of
+/// prompting for the Admin PIN.
+pub fn public_configuration_supported(
+    profile: &DeviceProfile,
+) -> canokey::compatibility::CapabilityStatus {
+    profile.capability(canokey::compatibility::Capability::AdminPublicConfiguration)
+}
+
 /// Destroy one applet's data and credentials using Admin authorization.
 ///
 /// This is the shared primitive behind per-applet resets (e.g. `oath reset`):
@@ -253,6 +266,103 @@ mod tests {
             DriveError::Transport(_) => panic!("no transport exchange should have happened"),
         }
         assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn configuration_read_gate_per_firmware_layout() {
+        use canokey::compatibility::Support;
+        // Before 3.1 the READ CONFIG command sits behind the firmware's Admin
+        // PIN gate, so the unauthenticated read is rejected at construction
+        // and nothing reaches the wire; `config info` must check the gate
+        // instead of prompting for a PIN (a prompt crashes TTY-less runners).
+        for firmware in [
+            &b"1.3"[..],
+            b"1.5.2",
+            b"1.6.1",
+            b"1.6.2",
+            b"2.0.0",
+            b"2.0.1",
+            b"3.0.0",
+            b"3.0.1",
+            b"3.0.3",
+        ] {
+            let profile = profile(firmware);
+            assert_eq!(
+                public_configuration_supported(&profile).support,
+                Support::Unsupported,
+                "{}",
+                String::from_utf8_lossy(firmware)
+            );
+            let mut calls = 0;
+            let error = read_configuration(&profile, None, &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!("the PIN gate must reject before any exchange")
+            })
+            .unwrap_err();
+            match error {
+                DriveError::Protocol(error) => {
+                    assert_eq!(
+                        error.kind,
+                        ErrorKind::SecurityStatusNotSatisfied,
+                        "{}",
+                        String::from_utf8_lossy(firmware)
+                    );
+                }
+                DriveError::Transport(_) => panic!("no transport exchange should have happened"),
+            }
+            assert_eq!(calls, 0);
+        }
+        // Unrecognized firmware reports Unknown and is also never read.
+        let unknown = profile(b"9.0.0");
+        assert_eq!(
+            public_configuration_supported(&unknown).support,
+            Support::Unknown
+        );
+        let mut calls = 0;
+        assert!(
+            read_configuration(&unknown, None, &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!()
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 0);
+        // 3.1.0 reads publicly (the happy path is covered by
+        // configuration_read_keeps_unknown_feature_bits).
+        assert_eq!(
+            public_configuration_supported(&profile(b"3.1.0")).support,
+            Support::Supported
+        );
+    }
+
+    #[test]
+    fn legacy_configuration_read_with_pin_uses_13_layout() {
+        // With an explicit Admin PIN the read still works on legacy firmware;
+        // the library parses the 1.3 seven-byte layout (flags plus OpenPGP
+        // touch policies/cache). This pins that only the *unauthenticated*
+        // path is gated.
+        let mut script = Script {
+            transcript: {
+                // Explicit annotation so each fixed-size array coerces to a slice.
+                let transcript: [(&[u8], &[u8]); 3] = [
+                    // 1.3 carries an explicit Le even on SELECT and VERIFY.
+                    (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+                    (b"\0\x20\0\0\x06654321\0", &[0x90, 0]),
+                    (&[0, 0x42, 0, 0, 0], &[1, 1, 0, 0, 0, 0, 30, 0x90, 0]),
+                ];
+                transcript.into_iter().collect()
+            },
+        };
+        let config =
+            read_configuration(&profile(b"1.3"), Some(pin()), &mut |c| script.exchange(c)).unwrap();
+        let AdminConfiguration::Legacy(config) = config else {
+            panic!("1.3 firmware uses a legacy layout")
+        };
+        assert!(config.led_on());
+        assert_eq!(config.ndef_enabled(), None, "absent on 1.3");
+        assert_eq!(config.openpgp_touch(), Some([0, 0, 0, 30]));
+        assert_eq!(config.raw(), &[1, 1, 0, 0, 0, 0, 30]);
+        assert!(script.transcript.is_empty());
     }
 
     #[test]

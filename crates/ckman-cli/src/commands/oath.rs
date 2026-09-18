@@ -363,7 +363,7 @@ impl OathSession {
                 Err(error) => return Err(describe_oath(&error).into()),
             }
         }
-        let password = rpassword::prompt_password("Enter the OATH password: ")?;
+        let password = super::prompt_password("Enter the OATH password: ")?;
         let key = oath::derive_key_bytes(password.as_bytes(), handle);
         session
             .validate_key(&key)
@@ -587,8 +587,8 @@ fn access_change(
     let new_password = match new_password {
         Some(password) => password.to_string(),
         None => {
-            let entered = rpassword::prompt_password("Enter the new OATH password: ")?;
-            let repeated = rpassword::prompt_password("Repeat the new OATH password: ")?;
+            let entered = super::prompt_password("Enter the new OATH password: ")?;
+            let repeated = super::prompt_password("Repeat the new OATH password: ")?;
             if entered != repeated {
                 return Err("the passwords do not match".into());
             }
@@ -632,7 +632,7 @@ fn access_remember(
     }
     let password = match password {
         Some(password) => password.to_string(),
-        None => rpassword::prompt_password("Enter the OATH password: ")?,
+        None => super::prompt_password("Enter the OATH password: ")?,
     };
     let key = oath::derive_key_bytes(password.as_bytes(), selection.handle);
     let access = oath::access_from_key(oath::access_key(&key))?;

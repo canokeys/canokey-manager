@@ -566,7 +566,7 @@ impl PivSession {
             return Ok((piv::Access::Management(piv::mutual_auth(key)?), Some(pin)));
         }
         let entered =
-            rpassword::prompt_password("Enter the management key [blank to use default key]: ")?;
+            super::prompt_password("Enter the management key [blank to use default key]: ")?;
         let (key, default) = if entered.is_empty() {
             (piv::default_management_key(), true)
         } else {
@@ -622,7 +622,7 @@ impl PivSession {
     fn resolve_pin_string(&mut self, pin: Option<&str>, prompt: &str) -> CliResult<String> {
         match pin {
             Some(pin) => Ok(pin.to_string()),
-            None => Ok(rpassword::prompt_password(format!("{prompt}: "))?),
+            None => Ok(super::prompt_password(&format!("{prompt}: "))?),
         }
     }
 
@@ -634,7 +634,7 @@ impl PivSession {
     fn resolve_puk(&mut self, puk: Option<&str>) -> CliResult<Puk> {
         let puk = match puk {
             Some(puk) => puk.to_string(),
-            None => rpassword::prompt_password("Enter PUK: ")?,
+            None => super::prompt_password("Enter PUK: ")?,
         };
         Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters".into())
     }
@@ -689,6 +689,9 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         .unwrap_or_else(|| "unknown".to_string());
     println!("PIV version:            {version}");
 
+    // GET METADATA exists only on 2.0+; on legacy firmware fall back to the
+    // baseline empty-VERIFY for the PIN counter (like the Python CLI) and
+    // skip the PUK/management records.
     let pin_meta = session.run(|profile, exchange| {
         piv::metadata(
             profile,
@@ -696,13 +699,28 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             canokey::piv::Access::None,
             exchange,
         )
-    })?;
-    let fields = pin_meta.fields();
-    if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
-        println!("WARNING: Using default PIN!");
-    }
-    if let Some((total, remaining)) = fields.retries {
-        println!("PIN tries remaining:    {remaining}/{total}");
+    });
+    match pin_meta {
+        Ok(metadata) => {
+            let fields = metadata.fields();
+            if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
+                println!("WARNING: Using default PIN!");
+            }
+            if let Some((total, remaining)) = fields.retries {
+                println!("PIN tries remaining:    {remaining}/{total}");
+            }
+        }
+        Err(_) => {
+            let status = session.run(|profile, exchange| piv::pin_status(profile, exchange))?;
+            if let Some(remaining) = status.retries_remaining {
+                let text = if remaining == 15 {
+                    "15 or more".to_string()
+                } else {
+                    remaining.to_string()
+                };
+                println!("PIN tries remaining:    {text}");
+            }
+        }
     }
     let puk_meta = session.run(|profile, exchange| {
         piv::metadata(
@@ -711,15 +729,17 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             canokey::piv::Access::None,
             exchange,
         )
-    })?;
-    let fields = puk_meta.fields();
-    if let Some((total, remaining)) = fields.retries {
-        if remaining == 0 {
-            println!("PUK is blocked");
-        } else if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
-            println!("WARNING: Using default PUK!");
+    });
+    if let Ok(puk_meta) = &puk_meta {
+        let fields = puk_meta.fields();
+        if let Some((total, remaining)) = fields.retries {
+            if remaining == 0 {
+                println!("PUK is blocked");
+            } else if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
+                println!("WARNING: Using default PUK!");
+            }
+            println!("PUK tries remaining:    {remaining}/{total}");
         }
-        println!("PUK tries remaining:    {remaining}/{total}");
     }
     let mgmt_meta = session.run(|profile, exchange| {
         piv::metadata(
@@ -728,19 +748,28 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             canokey::piv::Access::None,
             exchange,
         )
-    })?;
-    let fields = mgmt_meta.fields();
-    if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
-        println!("WARNING: Using default Management key!");
-    }
-    let algorithm = match fields.algorithm_id {
-        Some(3) => "TDES",
-        Some(10) => "AES192",
-        other => return Err(format!("unknown management key algorithm {other:?}").into()),
+    });
+    let algorithm = match &mgmt_meta {
+        Ok(metadata) => {
+            let fields = metadata.fields();
+            if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
+                println!("WARNING: Using default Management key!");
+            }
+            match fields.algorithm_id {
+                Some(3) => "TDES",
+                Some(10) => "AES192",
+                other => return Err(format!("unknown management key algorithm {other:?}").into()),
+            }
+        }
+        // No metadata on legacy firmware: the management key is 3DES there.
+        Err(_) => "TDES",
     };
     println!("Management key algorithm: {algorithm}");
 
     let pivman = session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
+    if puk_meta.is_err() && pivman.puk_blocked() {
+        println!("PUK is blocked");
+    }
     if pivman.has_derived_key() {
         println!("Management key is derived from PIN.");
     }
@@ -950,13 +979,13 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             let mut session = PivSession::connect(device, reader)?;
             let old = match pin {
                 Some(pin) => pin.clone(),
-                None => rpassword::prompt_password("Enter current PIN: ")?,
+                None => super::prompt_password("Enter current PIN: ")?,
             };
             let new = match new_pin {
                 Some(pin) => pin.clone(),
                 None => {
-                    let entered = rpassword::prompt_password("Enter new PIN: ")?;
-                    let repeated = rpassword::prompt_password("Repeat new PIN: ")?;
+                    let entered = super::prompt_password("Enter new PIN: ")?;
+                    let repeated = super::prompt_password("Repeat new PIN: ")?;
                     if entered != repeated {
                         return Err("the PINs do not match".into());
                     }
@@ -977,8 +1006,8 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                     Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters")?
                 }
                 None => {
-                    let entered = rpassword::prompt_password("Enter new PUK: ")?;
-                    let repeated = rpassword::prompt_password("Repeat new PUK: ")?;
+                    let entered = super::prompt_password("Enter new PUK: ")?;
+                    let repeated = super::prompt_password("Repeat new PUK: ")?;
                     if entered != repeated {
                         return Err("the PUKs do not match".into());
                     }
@@ -1036,8 +1065,8 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                         .into(),
                 );
             } else {
-                let entered = rpassword::prompt_password("Enter the new management key: ")?;
-                let repeated = rpassword::prompt_password("Repeat the new management key: ")?;
+                let entered = super::prompt_password("Enter the new management key: ")?;
+                let repeated = super::prompt_password("Repeat the new management key: ")?;
                 if entered != repeated {
                     return Err("the management keys do not match".into());
                 }
@@ -1073,8 +1102,8 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             let new = match new_pin {
                 Some(pin) => pin.clone(),
                 None => {
-                    let entered = rpassword::prompt_password("Enter new PIN: ")?;
-                    let repeated = rpassword::prompt_password("Repeat new PIN: ")?;
+                    let entered = super::prompt_password("Enter new PIN: ")?;
+                    let repeated = super::prompt_password("Repeat new PIN: ")?;
                     if entered != repeated {
                         return Err("the PINs do not match".into());
                     }
@@ -1133,9 +1162,9 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             let data = read_input(private_key)?;
             let password = match password {
                 Some(password) => Some(password.clone()),
-                None if data.starts_with(b"-----BEGIN ENCRYPTED") => Some(
-                    rpassword::prompt_password("Enter the private key password: ")?,
-                ),
+                None if data.starts_with(b"-----BEGIN ENCRYPTED") => {
+                    Some(super::prompt_password("Enter the private key password: ")?)
+                }
                 None => None,
             };
             let imported = keys::parse_private_key(&data, password.as_deref().map(str::as_bytes))

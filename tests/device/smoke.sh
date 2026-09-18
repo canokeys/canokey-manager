@@ -57,8 +57,12 @@ section "ckman openpgp info"
 "${CKMAN[@]}" openpgp info
 
 section "ckman fido info"
-# FIDO prefers USB HID; force the PC/SC envelope under the usbip rig.
-"${CKMAN[@]}" fido info
+# FIDO over CCID exists from firmware 1.5.2; on 1.3 the command errors
+# cleanly before any I/O, and the matrix reports it UNSUPPORTED instead.
+run_versioned_feature \
+  "ckman fido info" \
+  "fido-pcsc" \
+  "${CKMAN[@]}" fido info
 
 echo
 echo "Smoke lifecycle passed on firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}."

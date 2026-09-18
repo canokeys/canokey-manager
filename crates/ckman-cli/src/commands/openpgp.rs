@@ -362,7 +362,7 @@ impl OpenPgpSession {
     ) -> CliResult<String> {
         let value = match value {
             Some(value) => value.to_string(),
-            None => rpassword::prompt_password(format!("{prompt}: "))?,
+            None => super::prompt_password(&format!("{prompt}: "))?,
         };
         if value.len() < minimum || value.len() > 64 {
             return Err(format!("{name} must be {minimum}-64 characters").into());
@@ -386,7 +386,7 @@ impl OpenPgpSession {
 
     fn new_password(prompt: &str, minimum: usize, name: &str) -> CliResult<Password> {
         let entered = Self::password(None, prompt, minimum, name)?;
-        let repeated = rpassword::prompt_password(format!("Repeat the {name}: "))?;
+        let repeated = super::prompt_password(&format!("Repeat the {name}: "))?;
         if entered != repeated {
             return Err(format!("the {name}s do not match").into());
         }
@@ -745,9 +745,9 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             let data = read_input(private_key)?;
             let password = match password {
                 Some(password) => Some(password.clone()),
-                None if data.starts_with(b"-----BEGIN ENCRYPTED") => Some(
-                    rpassword::prompt_password("Enter the private key password: ")?,
-                ),
+                None if data.starts_with(b"-----BEGIN ENCRYPTED") => {
+                    Some(super::prompt_password("Enter the private key password: ")?)
+                }
                 None => None,
             };
             let imported =

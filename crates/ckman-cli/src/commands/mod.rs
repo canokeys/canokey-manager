@@ -83,9 +83,18 @@ pub fn single_target(
     }
 }
 
+/// Prompt for a secret without echo, with actionable context when no
+/// terminal is attached (rpassword opens /dev/tty, which fails with ENXIO on
+/// non-interactive runners).
+pub fn prompt_password(prompt: &str) -> CliResult<String> {
+    rpassword::prompt_password(prompt).map_err(|error| {
+        format!("cannot prompt for input ({prompt:?}): {error}; is a terminal attached?").into()
+    })
+}
+
 /// Prompt for the Admin PIN without echoing.
 pub fn prompt_admin_pin() -> CliResult<Pin> {
-    let entered = rpassword::prompt_password("Admin PIN: ")?;
+    let entered = prompt_password("Admin PIN: ")?;
     Pin::from_bytes(entered.as_bytes()).map_err(|error| format!("{error}").into())
 }
 

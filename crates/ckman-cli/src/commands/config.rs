@@ -1,4 +1,5 @@
 use super::{describe_drive_error, single_target, with_admin_pin_retry, CliResult};
+use canokey::compatibility::Support;
 use ckman_core::admin::{self, AdminConfiguration};
 use ckman_transport::pcsc::Pcsc;
 
@@ -74,11 +75,28 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
 fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
-    let configuration = with_admin_pin_retry(None, |pin| {
-        admin::read_configuration(&target.profile, pin, &mut |command| {
-            target.connection.exchange(command)
-        })
-    })?;
+    // READ CONFIG sits behind the firmware's Admin-PIN gate on every layout
+    // before 3.1. Do not prompt for the Admin PIN from a read-only status
+    // command: the old CLI refused to configure legacy CanoKey firmware at
+    // all, and prompting from a non-interactive runner fails on /dev/tty
+    // (ENXIO), which looks like a dropped card.
+    match admin::public_configuration_supported(&target.profile).support {
+        Support::Unsupported => {
+            println!(
+                "Configuration read is not supported by this firmware (requires 3.1 or newer)."
+            );
+            return Ok(());
+        }
+        Support::Unknown => {
+            println!("Unrecognized firmware; configuration not read.");
+            return Ok(());
+        }
+        Support::Supported => {}
+    }
+    let configuration = admin::read_configuration(&target.profile, None, &mut |command| {
+        target.connection.exchange(command)
+    })
+    .map_err(|error| describe_drive_error(&error))?;
     match &configuration {
         AdminConfiguration::Modern(config) => {
             println!("LED:                  {}", on_off(config.led_on()));
