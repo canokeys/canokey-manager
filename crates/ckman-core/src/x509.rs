@@ -40,6 +40,9 @@ pub enum X509Error {
     /// The Ed25519 message exceeds the firmware's classic scratch buffer.
     #[error("Ed25519 message too large")]
     MessageTooLarge,
+    /// The key algorithm cannot sign (key-agreement/encapsulation only).
+    #[error("algorithm {0} cannot sign certificates or CSRs")]
+    NotSigning(&'static str),
 }
 
 fn der<E: std::fmt::Display>(error: E) -> X509Error {
@@ -113,6 +116,24 @@ pub fn signature_algorithm(
 ) -> Result<AlgorithmIdentifier, X509Error> {
     let oid = match (key, hash) {
         (Algorithm::Ed25519, None) => "1.3.101.112",
+        // SM2 signs SM3(ZA || M); no hash parameter.
+        (Algorithm::Sm2, None) => "1.2.156.10197.1.501",
+        // ML-DSA-65, empty context; parameters are absent by definition.
+        (Algorithm::MlDsa65, None) => "2.16.840.1.101.3.4.18",
+        (Algorithm::X25519 | Algorithm::MlKem768, _) => {
+            return Err(X509Error::NotSigning(if key == Algorithm::X25519 {
+                "X25519"
+            } else {
+                "ML-KEM-768"
+            }))
+        }
+        (Algorithm::EccP521 | Algorithm::Secp256k1, h) => {
+            match h.ok_or(X509Error::UnsupportedHash)? {
+                HashAlgorithm::Sha256 => "1.2.840.10045.4.3.2",
+                HashAlgorithm::Sha384 => "1.2.840.10045.4.3.3",
+                HashAlgorithm::Sha512 => "1.2.840.10045.4.3.4",
+            }
+        }
         (Algorithm::Rsa1024 | Algorithm::Rsa2048 | Algorithm::Rsa3072 | Algorithm::Rsa4096, h) => {
             match h.ok_or(X509Error::UnsupportedHash)? {
                 HashAlgorithm::Sha256 => "1.2.840.113549.1.1.11",

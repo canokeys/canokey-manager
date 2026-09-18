@@ -89,9 +89,11 @@ attached keys; `-l/--log-level` enables tracing on stderr.
 - Trace logging (`-l trace`) never logs APDU payloads (VERIFY carries a
   plaintext PIN, OATH PUT the credential secret); full traffic hex requires
   the explicit `CKMAN_LOG_TRAFFIC=1` environment variable.
-- `--device` names the 4-byte admin serial, which only the PC/SC probe reads;
-  for FIDO it therefore forces the PC/SC transport (the USB HID serial string
-  has no documented relation to the admin serial).
+- `--device` names the 4-byte admin serial. On the FIDO HID path it matches
+  the interface whose USB serial string is the uppercase hex of that serial
+  (current firmware behavior); otherwise the PC/SC probe resolves it. A
+  device that matches neither is an error — another key is never picked
+  silently.
 
 ## Development
 

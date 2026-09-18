@@ -19,6 +19,7 @@ use canokey::{DeviceProfile, Error, ErrorKind, OperationOptions, Phase, SecretBy
 use zeroize::Zeroizing;
 
 pub use crate::x509::HashAlgorithm;
+pub use canokey::piv::{sign_streaming, StreamingSignInput};
 pub use canokey::piv::{
     Access, Algorithm, Certificate, KeyOrigin, KeyParameters, KnownOrUnknown,
     ManagementAuthentication, ManagementKey, ManagementKeyAlgorithm, ManagementTouchPolicy,
@@ -429,7 +430,7 @@ pub fn sign_message<E>(
                 exchange,
             )?
         }
-        Algorithm::EccP256 | Algorithm::EccP384 => {
+        Algorithm::EccP256 | Algorithm::EccP384 | Algorithm::EccP521 | Algorithm::Secp256k1 => {
             let digest = hash
                 .ok_or(crate::x509::X509Error::UnsupportedHash)?
                 .hash(message);
@@ -450,7 +451,39 @@ pub fn sign_message<E>(
             access,
             exchange,
         )?,
-        _ => return Err(PivError::X509(crate::x509::X509Error::UnsupportedAlgorithm)),
+        // Firmware computes SM3(ZA || M) itself; the default user ID applies.
+        Algorithm::Sm2 => run(
+            sign_streaming(
+                profile,
+                slot,
+                StreamingSignInput::Sm2 {
+                    message: SecretBytes::new(message.to_vec()),
+                    user_id: None,
+                },
+                access,
+                options(),
+            ),
+            exchange,
+        )?,
+        // Pure ML-DSA-65 with the firmware's hardcoded empty context.
+        Algorithm::MlDsa65 => run(
+            sign_streaming(
+                profile,
+                slot,
+                StreamingSignInput::MlDsa65(SecretBytes::new(message.to_vec())),
+                access,
+                options(),
+            ),
+            exchange,
+        )?,
+        Algorithm::X25519 => {
+            return Err(PivError::X509(crate::x509::X509Error::NotSigning("X25519")))
+        }
+        Algorithm::MlKem768 => {
+            return Err(PivError::X509(crate::x509::X509Error::NotSigning(
+                "ML-KEM-768",
+            )))
+        }
     };
     // EC signatures arrive as DER already; RSA/Ed25519 are raw.
     Ok(signature.as_bytes().to_vec())
@@ -1427,5 +1460,204 @@ mod tests {
         )
         .unwrap();
         assert!(script.transcript.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod extended_algorithm_tests {
+    use super::*;
+    use canokey::compatibility::{AlgorithmConfig, DeviceObservations, PivApplicationVersion};
+    use std::collections::VecDeque;
+    use std::io;
+
+    struct Script {
+        transcript: VecDeque<(Vec<u8>, Vec<u8>)>,
+    }
+    impl Script {
+        fn new(transcript: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
+            Script {
+                transcript: transcript.into(),
+            }
+        }
+        fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
+            let (expected, response) = self
+                .transcript
+                .pop_front()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "unexpected exchange"))?;
+            assert_eq!(command, &expected[..], "command differs from transcript");
+            Ok(response)
+        }
+    }
+
+    /// 3.1.0 profile with the ML-DSA/ML-KEM extension IDs observed enabled.
+    fn profile() -> DeviceProfile {
+        let mut o = DeviceObservations::new(b"3.1.0".to_vec());
+        o.piv_version = Some(PivApplicationVersion([5, 7, 0]));
+        o.algorithm_config = Some(
+            AlgorithmConfig::parse(&[1, 0xe0, 5, 0x16, 0xe1, 0x53, 0x54, 0x55, 0x56, 0x57])
+                .unwrap(),
+        );
+        DeviceProfile::from_observations(o).unwrap()
+    }
+
+    /// 3.1.0 profile without the ML extension IDs (disabled mapping).
+    fn profile_without_ml() -> DeviceProfile {
+        let mut o = DeviceObservations::new(b"3.1.0".to_vec());
+        o.piv_version = Some(PivApplicationVersion([5, 7, 0]));
+        o.algorithm_config =
+            Some(AlgorithmConfig::parse(&[1, 0xe0, 5, 0x16, 0xe1, 0x53, 0x54, 0x55]).unwrap());
+        DeviceProfile::from_observations(o).unwrap()
+    }
+
+    const SELECT: &[u8] = &[0, 0xa4, 4, 0, 5, 0xa0, 0, 0, 3, 8];
+    const OK: &[u8] = &[0x90, 0];
+    const AES_AUTH: &[(&[u8], &[u8])] = &[
+        (SELECT, OK),
+        (
+            &[0, 0x87, 0x0a, 0x9b, 4, 0x7c, 2, 0x81, 0],
+            &[
+                0x7c, 0x12, 0x81, 0x10, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+                0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x90, 0,
+            ],
+        ),
+        (
+            &[
+                0, 0x87, 0x0a, 0x9b, 0x14, 0x7c, 0x12, 0x82, 0x10, 0xdd, 0xa9, 0x7c, 0xa4, 0x86,
+                0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d, 0x71, 0x91,
+            ],
+            OK,
+        ),
+    ];
+
+    fn aes_access() -> Access {
+        Access::Management(ManagementAuthentication::external(
+            ManagementKey::from_bytes(
+                ManagementKeyAlgorithm::Aes192,
+                &(0u8..24).collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        ))
+    }
+
+    #[test]
+    fn mldsa65_seed_import_fixture() {
+        // Mirrors canokey-piv's mldsa65_seed_import_writes_seed_and_policy_tlvs.
+        let seed: Vec<u8> = (0..32).collect();
+        let material = PrivateKeyMaterial::mldsa65_seed(&seed).unwrap();
+        let mut expected = vec![0, 0xfe, 0x56, 0x9c, 34, 9, 0x20];
+        expected.extend(0..32);
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = AES_AUTH
+            .iter()
+            .map(|(c, r)| (c.to_vec(), r.to_vec()))
+            .collect();
+        transcript.push((expected, OK.to_vec()));
+        let mut script = Script::new(transcript);
+        import_key(
+            &profile(),
+            KeyParameters::new(Slot::Signature, Algorithm::MlDsa65),
+            material,
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn mlkem768_seed_import_fixture() {
+        // Mirrors canokey-piv's mlkem768_seed_import_writes_seed_tlv.
+        let seed: Vec<u8> = (0..64).collect();
+        let material = PrivateKeyMaterial::mlkem768_seed(&seed).unwrap();
+        let mut expected = vec![0, 0xfe, 0x57, 0x9d, 0x42, 0x0a, 0x40];
+        expected.extend(0..64);
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = AES_AUTH
+            .iter()
+            .map(|(c, r)| (c.to_vec(), r.to_vec()))
+            .collect();
+        transcript.push((expected, OK.to_vec()));
+        let mut script = Script::new(transcript);
+        import_key(
+            &profile(),
+            KeyParameters::new(Slot::KeyManagement, Algorithm::MlKem768),
+            material,
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn sm2_generate_fixture() {
+        // SM2 key generation in slot 9A; the public point comes back in 7F49.
+        let mut point = vec![4];
+        point.extend([7; 64]);
+        let mut public = vec![0x7f, 0x49, 0x43, 0x86, 0x41];
+        public.extend(&point);
+        public.extend(OK);
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = AES_AUTH
+            .iter()
+            .map(|(c, r)| (c.to_vec(), r.to_vec()))
+            .collect();
+        transcript.push((vec![0, 0x47, 0, 0x9a, 5, 0xac, 3, 0x80, 1, 0x55], public));
+        let mut script = Script::new(transcript);
+        let key = generate_key(
+            &profile(),
+            KeyParameters::new(Slot::Authentication, Algorithm::Sm2),
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(key.algorithm(), Algorithm::Sm2);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn ml_import_gate_fails_before_any_io_without_observed_ids() {
+        // Mirrors canokey-piv's ml_seed_import_requires_observed_wire_ids.
+        let mut calls = 0;
+        let error = import_key(
+            &profile_without_ml(),
+            KeyParameters::new(Slot::Signature, Algorithm::MlDsa65),
+            PrivateKeyMaterial::mldsa65_seed(&[0; 32]).unwrap(),
+            aes_access(),
+            &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!("the wire-id gate must reject before any exchange")
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            PivError::Drive(DriveError::Protocol(error))
+                if error.kind == ErrorKind::CapabilityUnknown
+        ));
+        assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn kem_and_key_agreement_cannot_sign_certificates() {
+        assert!(matches!(
+            crate::x509::signature_algorithm(Algorithm::MlKem768, None),
+            Err(crate::x509::X509Error::NotSigning("ML-KEM-768"))
+        ));
+        assert!(matches!(
+            crate::x509::signature_algorithm(Algorithm::X25519, None),
+            Err(crate::x509::X509Error::NotSigning("X25519"))
+        ));
+        assert_eq!(
+            crate::x509::signature_algorithm(Algorithm::Sm2, None)
+                .unwrap()
+                .oid
+                .to_string(),
+            "1.2.156.10197.1.501"
+        );
+        assert_eq!(
+            crate::x509::signature_algorithm(Algorithm::MlDsa65, None)
+                .unwrap()
+                .oid
+                .to_string(),
+            "2.16.840.1.101.3.4.18"
+        );
     }
 }

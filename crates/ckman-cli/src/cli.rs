@@ -27,8 +27,14 @@ pub struct Cli {
     /// Enable logging at the given verbosity level.
     #[arg(short = 'l', long, value_name = "LEVEL")]
     pub log_level: Option<tracing::Level>,
+    /// Write log output to FILE instead of stderr (requires --log-level).
+    #[arg(long, value_name = "FILE", requires = "log_level")]
+    pub log_file: Option<String>,
+    /// Print a diagnostic report for bug reports and exit.
+    #[arg(long)]
+    pub diagnose: bool,
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -84,5 +90,31 @@ mod tests {
         assert_eq!(cli.device, Some(7));
         // --device and --reader still conflict.
         assert!(Cli::try_parse_from(["ckman", "info", "--device", "1", "--reader", "x"]).is_err());
+    }
+
+    #[test]
+    fn piv_extended_algorithms_parse() {
+        for arg in [
+            "rsa1024",
+            "rsa2048",
+            "rsa3072",
+            "rsa4096",
+            "ecc-p256",
+            "ecc-p384",
+            "ecc-p521",
+            "secp256k1",
+            "sm2",
+            "ed25519",
+            "x25519",
+            "ml-dsa65",
+            "ml-kem768",
+        ] {
+            Cli::try_parse_from(["ckman", "piv", "keys", "generate", "9a", "-", "-a", arg])
+                .unwrap_or_else(|e| panic!("{arg}: {e}"));
+        }
+        assert!(Cli::try_parse_from([
+            "ckman", "piv", "keys", "generate", "9a", "-", "-a", "ecc25519"
+        ])
+        .is_err());
     }
 }

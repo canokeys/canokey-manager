@@ -174,16 +174,43 @@ impl FidoLink {
     /// clear message.
     fn connect(device: Option<u32>, reader: Option<&str>) -> CliResult<Self> {
         if let Some(serial) = device {
-            // The USB HID serial string has no documented relation to the
-            // 4-byte admin serial that --device names (the old Python CLI
-            // resolved serials over CCID/NFC only). Never silently pick
-            // another device: resolve via the PC/SC probe, and fail clearly
-            // when the key is not reachable there.
+            // Current CanoKey firmware sets the USB HID serial string to the
+            // uppercase hex of the 4-byte admin serial (verified on a DevKit:
+            // HID "FFFFFFFF" == admin serial 4294967295). Match on that when
+            // it is unambiguous; older firmware may not, so fall back to the
+            // PC/SC probe (the only path the old Python CLI ever used) and
+            // never silently pick another device.
+            if let Ok(api) = hidapi::HidApi::new() {
+                let matches: Vec<_> = hid::list_fido_interfaces(&api)
+                    .into_iter()
+                    .filter(|interface| {
+                        interface
+                            .serial
+                            .as_deref()
+                            .and_then(|s| u32::from_str_radix(s, 16).ok())
+                            == Some(serial)
+                    })
+                    .collect();
+                if matches.len() == 1 {
+                    let mut nonce = [0; 8];
+                    getrandom::fill(&mut nonce)?;
+                    let (channel, capabilities) =
+                        hid::connect(&api, &matches[0], nonce, Duration::from_secs(5))?;
+                    if !capabilities.cbor {
+                        return Err("the HID interface does not speak CTAP2 (CBOR)".into());
+                    }
+                    return Ok(FidoLink::Hid(fido::CtapHidAdapter::new(
+                        channel,
+                        Duration::from_secs(60),
+                        |_| {},
+                    )));
+                }
+            }
             let pcsc = Pcsc::establish()?;
             let target = single_target(&pcsc, Some(serial), reader).map_err(|_| {
                 format!(
-                    "cannot resolve --device {serial} on the FIDO HID interface; \
-                     attach the CCID interface or select with --reader"
+                    "cannot resolve --device {serial}: no CanoKey with that serial over PC/SC, \
+                     and no HID interface carries the matching serial"
                 )
             })?;
             return Self::pcsc(target);

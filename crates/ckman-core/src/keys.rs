@@ -81,6 +81,8 @@ impl ImportedKey {
             Material::Ec(bytes) => match self.algorithm {
                 Algorithm::Ed25519 => PrivateKeyMaterial::ed25519_seed(bytes),
                 Algorithm::X25519 => PrivateKeyMaterial::x25519_key(bytes),
+                Algorithm::MlDsa65 => PrivateKeyMaterial::mldsa65_seed(bytes),
+                Algorithm::MlKem768 => PrivateKeyMaterial::mlkem768_seed(bytes),
                 _ => PrivateKeyMaterial::ec_scalar(self.algorithm, bytes),
             }
             .map_err(|_| KeyError::Encoding),
@@ -219,24 +221,32 @@ fn from_sec1(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
     let algorithm = match curve.to_string().as_str() {
         "1.2.840.10045.3.1.7" => Algorithm::EccP256,
         "1.3.132.0.34" => Algorithm::EccP384,
+        "1.3.132.0.35" => Algorithm::EccP521,
+        "1.3.132.0.10" => Algorithm::Secp256k1,
+        "1.2.156.10197.1.301" => Algorithm::Sm2,
         _ => return Err(KeyError::Unsupported),
     };
     ec_imported(algorithm, bytes)
 }
 
-/// Curve 25519 PKCS#8: privateKey OCTET STRING wraps a one-field OCTET STRING.
-fn from_curve25519(oid: &str, private_key: &[u8]) -> Result<ImportedKey, KeyError> {
-    let seed = OctetStringRef::from_der(private_key)
-        .map_err(|_| KeyError::Encoding)?
-        .as_bytes();
-    if seed.len() != 32 {
-        return Err(KeyError::Encoding);
-    }
-    let algorithm = match oid {
-        "1.3.101.112" => Algorithm::Ed25519,
-        "1.3.101.110" => Algorithm::X25519,
+/// Seed-based PKCS#8 (Curve 25519, ML-DSA-65, ML-KEM-768): the privateKey
+/// OCTET STRING wraps the seed as an inner OCTET STRING; accept the raw
+/// fixed-width seed too, as some encoders skip the inner wrapper.
+fn from_seed_oid(oid: &str, private_key: &[u8]) -> Result<ImportedKey, KeyError> {
+    let (algorithm, width) = match oid {
+        "1.3.101.112" => (Algorithm::Ed25519, 32),
+        "1.3.101.110" => (Algorithm::X25519, 32),
+        "2.16.840.1.101.3.4.17" => (Algorithm::MlDsa65, 32),
+        "2.16.840.1.101.3.4.21" => (Algorithm::MlKem768, 64),
         _ => return Err(KeyError::Unsupported),
     };
+    let seed = match OctetStringRef::from_der(private_key) {
+        Ok(inner) => inner.as_bytes(),
+        Err(_) => private_key,
+    };
+    if seed.len() != width {
+        return Err(KeyError::Encoding);
+    }
     Ok(ImportedKey {
         algorithm,
         material: Material::Ec(Zeroizing::new(seed.to_vec())),
@@ -261,13 +271,16 @@ fn from_pkcs8(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
             let algorithm = match curve.to_string().as_str() {
                 "1.2.840.10045.3.1.7" => Algorithm::EccP256,
                 "1.3.132.0.34" => Algorithm::EccP384,
+                "1.3.132.0.35" => Algorithm::EccP521,
+                "1.3.132.0.10" => Algorithm::Secp256k1,
+                "1.2.156.10197.1.301" => Algorithm::Sm2,
                 _ => return Err(KeyError::Unsupported),
             };
             // ECPrivateKey SEC1 structure inside privateKey.
             let scalar = from_sec1_inner(info.private_key)?;
             ec_imported(algorithm, &scalar)
         }
-        _ => from_curve25519(&oid, info.private_key),
+        _ => from_seed_oid(&oid, info.private_key),
     }
 }
 
@@ -437,11 +450,16 @@ pub fn parse_public_key(input: &[u8]) -> Result<ImportedPublicKey, KeyError> {
             match curve.to_string().as_str() {
                 "1.2.840.10045.3.1.7" => Algorithm::EccP256,
                 "1.3.132.0.34" => Algorithm::EccP384,
+                "1.3.132.0.35" => Algorithm::EccP521,
+                "1.3.132.0.10" => Algorithm::Secp256k1,
+                "1.2.156.10197.1.301" => Algorithm::Sm2,
                 _ => return Err(KeyError::Unsupported),
             }
         }
         "1.3.101.112" => Algorithm::Ed25519,
         "1.3.101.110" => Algorithm::X25519,
+        "2.16.840.1.101.3.4.17" => Algorithm::MlDsa65,
+        "2.16.840.1.101.3.4.21" => Algorithm::MlKem768,
         _ => return Err(KeyError::Unsupported),
     };
     Ok(ImportedPublicKey {
@@ -542,5 +560,125 @@ mod tests {
             parse_public_key(spki.as_bytes()).unwrap().algorithm,
             Algorithm::Rsa1024
         );
+    }
+}
+
+#[cfg(test)]
+mod extended_tests {
+    use super::*;
+
+    /// Hand-built PKCS#8: version 0, algorithm OID (+ optional curve OID
+    /// parameter), privateKey = OCTET STRING (inner OCTET STRING seed).
+    fn pkcs8_with_params(oid_bytes: &[u8], params: Option<&[u8]>, seed: &[u8]) -> Vec<u8> {
+        let mut alg = vec![0x06, oid_bytes.len() as u8];
+        alg.extend(oid_bytes);
+        if let Some(params) = params {
+            alg.extend([0x06, params.len() as u8]);
+            alg.extend(params);
+        }
+        let mut wrapped = vec![0x30, alg.len() as u8];
+        wrapped.extend(alg);
+        let alg = wrapped;
+        let mut inner = vec![4, seed.len() as u8];
+        inner.extend(seed);
+        let mut key = vec![4, inner.len() as u8];
+        key.extend(inner);
+        let mut body = vec![2, 1, 0];
+        body.extend(alg);
+        body.extend(key);
+        let mut der = vec![0x30, body.len() as u8];
+        der.extend(body);
+        der
+    }
+
+    fn pkcs8(oid_bytes: &[u8], seed: &[u8]) -> Vec<u8> {
+        pkcs8_with_params(oid_bytes, None, seed)
+    }
+
+    #[test]
+    fn parses_sm2_p521_k256_scalars_and_ml_seeds() {
+        // SM2 uses id-ecPublicKey with the SM2 curve OID as parameter and a
+        // SEC1 ECPrivateKey inside privateKey (same shape as ECDSA).
+        let ec_oid = ObjectIdentifier::new("1.2.840.10045.2.1").unwrap();
+        let sm2_curve = ObjectIdentifier::new("1.2.156.10197.1.301").unwrap();
+        let mut sec1 = vec![0x30, 37, 2, 1, 1, 4, 32];
+        sec1.extend([7; 32]);
+        // pkcs8_with_params puts the seed in an inner OCTET STRING; for the
+        // EC shape the privateKey wraps the SEC1 structure directly.
+        let mut alg = vec![0x06, ec_oid.as_bytes().len() as u8];
+        alg.extend(ec_oid.as_bytes());
+        alg.extend([0x06, sm2_curve.as_bytes().len() as u8]);
+        alg.extend(sm2_curve.as_bytes());
+        let mut alg_wrapped = vec![0x30, alg.len() as u8];
+        alg_wrapped.extend(alg);
+        let mut key_field = vec![4, sec1.len() as u8];
+        key_field.extend(&sec1);
+        let mut body = vec![2, 1, 0];
+        body.extend(alg_wrapped);
+        body.extend(key_field);
+        let mut sm2 = vec![0x30, body.len() as u8];
+        sm2.extend(body);
+        let key = parse_private_key(&sm2, None).unwrap();
+        assert_eq!(key.algorithm, Algorithm::Sm2);
+        let mldsa_oid = ObjectIdentifier::new("2.16.840.1.101.3.4.17").unwrap();
+        let mldsa = pkcs8(mldsa_oid.as_bytes(), &[9; 32]);
+        let key = parse_private_key(&mldsa, None).unwrap();
+        assert_eq!(key.algorithm, Algorithm::MlDsa65);
+        // Raw 64-byte seed without the inner OCTET STRING wrapper (ML-KEM).
+        let mlkem_body = {
+            let oid = ObjectIdentifier::new("2.16.840.1.101.3.4.21").unwrap();
+            let oid = oid.as_bytes();
+            let mut alg = vec![0x30, (oid.len() + 2) as u8, 0x06, oid.len() as u8];
+            alg.extend(oid);
+            let mut key = vec![4, 64];
+            key.extend([3u8; 64]);
+            let mut body = vec![2, 1, 0];
+            body.extend(alg);
+            body.extend(key);
+            let mut der = vec![0x30, body.len() as u8];
+            der.extend(body);
+            der
+        };
+        let key = parse_private_key(&mlkem_body, None).unwrap();
+        assert_eq!(key.algorithm, Algorithm::MlKem768);
+    }
+
+    #[test]
+    fn public_key_oids_for_new_algorithms() {
+        use der::Encode;
+        let spki_for = |oid_bytes: &[u8], key: &[u8]| {
+            let spki = spki::SubjectPublicKeyInfo::<der::Any, der::asn1::BitString> {
+                algorithm: spki::AlgorithmIdentifier {
+                    oid: ObjectIdentifier::from_bytes(oid_bytes).unwrap(),
+                    parameters: None,
+                },
+                subject_public_key: der::asn1::BitString::new(0, key).unwrap(),
+            };
+            spki.to_der().unwrap()
+        };
+        // ML-DSA-65 public key (1952 bytes); OID content bytes computed by
+        // the der crate, never hand-encoded.
+        let der = spki_for(
+            ObjectIdentifier::new("2.16.840.1.101.3.4.17")
+                .unwrap()
+                .as_bytes(),
+            &[7; 1952],
+        );
+        assert_eq!(
+            parse_public_key(&der).unwrap().algorithm,
+            Algorithm::MlDsa65
+        );
+        // SM2 (id-ecPublicKey with the SM2 curve OID).
+        let params =
+            der::Any::encode_from(&ObjectIdentifier::new("1.2.156.10197.1.301").unwrap()).unwrap();
+        let spki = spki::SubjectPublicKeyInfo::<der::Any, der::asn1::BitString> {
+            algorithm: spki::AlgorithmIdentifier {
+                oid: ObjectIdentifier::from_bytes(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 2, 1]).unwrap(),
+                parameters: Some(params),
+            },
+            subject_public_key: der::asn1::BitString::new(0, [4; 65]).unwrap(),
+        };
+        let der = spki.to_der().unwrap();
+        assert_eq!(parse_public_key(&der).unwrap().algorithm, Algorithm::Sm2);
     }
 }

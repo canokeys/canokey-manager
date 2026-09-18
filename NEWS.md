@@ -47,9 +47,7 @@ Dropped commands and options (mostly YubiKey-only):
   (`piv certificates import` takes PEM/DER).
 - `openpgp keys attest` / attestation-key import (libcanokey has no
   OpenPGP attestation request).
-- The raw `apdu` command, the `script` command, `list --readers`, and the
-  global `--diagnose`/`--log-file` options (`-l/--log-level` covers
-  logging).
+- The raw `apdu` command, the `script` command, and `list --readers`.
 - The Python library and its scripting API. A future PyO3 binding may
   restore scripting on top of the Rust core.
 
@@ -71,9 +69,11 @@ Dropped commands and options (mostly YubiKey-only):
   (`--remember`, `--reset-code`) shorts are long-only now.
 - `--reader` matches reader names by case-insensitive substring, as the
   Python CLI did.
-- For FIDO, `--device` forces the PC/SC transport: USB HID serial strings
-  have no documented relation to the 4-byte admin serial, so HID cannot
-  resolve a serial and refuses to guess.
+- For FIDO, `--device` matches the HID interface whose USB serial string is
+  the uppercase hex of the admin serial (current firmware), and otherwise
+  falls back to the PC/SC probe; it never silently picks another device.
+- The global `--diagnose` report and `--log-file` are ported
+  (`--log-file` requires `--log-level`).
 - `openpgp keys import` covers the sig/dec/aut slots (not only the
   attestation slot).
 - PIV `--protect` management-key storage works (the old fork rejected it on

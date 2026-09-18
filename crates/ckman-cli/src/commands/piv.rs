@@ -324,10 +324,17 @@ pub enum MgmtAlgorithmArg {
 pub enum KeyAlgorithmArg {
     Rsa1024,
     Rsa2048,
+    Rsa3072,
+    Rsa4096,
     EccP256,
     EccP384,
+    EccP521,
+    Secp256k1,
+    Sm2,
     Ed25519,
     X25519,
+    MlDsa65,
+    MlKem768,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -730,10 +737,17 @@ fn key_algorithm(arg: KeyAlgorithmArg) -> Algorithm {
     match arg {
         KeyAlgorithmArg::Rsa1024 => Algorithm::Rsa1024,
         KeyAlgorithmArg::Rsa2048 => Algorithm::Rsa2048,
+        KeyAlgorithmArg::Rsa3072 => Algorithm::Rsa3072,
+        KeyAlgorithmArg::Rsa4096 => Algorithm::Rsa4096,
         KeyAlgorithmArg::EccP256 => Algorithm::EccP256,
         KeyAlgorithmArg::EccP384 => Algorithm::EccP384,
+        KeyAlgorithmArg::EccP521 => Algorithm::EccP521,
+        KeyAlgorithmArg::Secp256k1 => Algorithm::Secp256k1,
+        KeyAlgorithmArg::Sm2 => Algorithm::Sm2,
         KeyAlgorithmArg::Ed25519 => Algorithm::Ed25519,
         KeyAlgorithmArg::X25519 => Algorithm::X25519,
+        KeyAlgorithmArg::MlDsa65 => Algorithm::MlDsa65,
+        KeyAlgorithmArg::MlKem768 => Algorithm::MlKem768,
     }
 }
 
@@ -949,7 +963,8 @@ fn session_algorithm_name(profile: &DeviceProfile, id: u8) -> Option<&'static st
         Algorithm::Sm2 => "SM2",
         Algorithm::Ed25519 => "ED25519",
         Algorithm::X25519 => "X25519",
-        _ => "unknown",
+        Algorithm::MlDsa65 => "ML-DSA-65",
+        Algorithm::MlKem768 => "ML-KEM-768",
     })
 }
 

@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod commands;
+mod diagnose;
 
 use clap::Parser;
 
@@ -14,12 +15,35 @@ use cli::{Cli, Commands};
 pub fn run() -> std::process::ExitCode {
     let cli = Cli::parse();
     if let Some(level) = cli.log_level {
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
+        let subscriber = tracing_subscriber::fmt()
             .with_max_level(level)
-            .init();
+            .with_writer(std::io::stderr);
+        match &cli.log_file {
+            Some(path) => match std::fs::File::create(path) {
+                Ok(file) => subscriber.with_writer(std::sync::Mutex::new(file)).init(),
+                Err(error) => {
+                    eprintln!("ERROR: cannot open log file {path}: {error}");
+                    return std::process::ExitCode::FAILURE;
+                }
+            },
+            None => subscriber.init(),
+        }
     }
-    let result = match &cli.command {
+    if cli.diagnose {
+        return match diagnose::run() {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("ERROR: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    let Some(command) = &cli.command else {
+        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        eprintln!();
+        return std::process::ExitCode::FAILURE;
+    };
+    let result = match command {
         Commands::Info => commands::info::run(cli.device, cli.reader.as_deref()),
         Commands::List { serials } => commands::list::run(*serials, cli.reader.as_deref()),
         Commands::Config { command } => {
