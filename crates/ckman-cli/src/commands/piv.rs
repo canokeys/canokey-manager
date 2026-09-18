@@ -24,8 +24,8 @@ pub enum PivCommand {
         #[arg(long)]
         force: bool,
         /// CanoKey Admin PIN (prompted when omitted).
-        #[arg(long, value_name = "PIN")]
-        admin_pin: Option<String>,
+        #[arg(long, value_name = "PIN", value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Manage PIV PIN, PUK and management key.
     Access {
@@ -70,20 +70,20 @@ pub enum AccessCommand {
     /// Change the PIV PIN.
     ChangePin {
         /// Current PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
         /// New PIN (prompted when omitted).
-        #[arg(short, long)]
-        new_pin: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
     /// Change the PUK.
     ChangePuk {
         /// Current PUK (prompted when omitted).
-        #[arg(short, long)]
-        puk: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        puk: Option<crate::commands::SecretString>,
         /// New PUK (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_puk: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_puk: Option<crate::commands::SecretString>,
     },
     /// Change the management key.
     ChangeManagementKey {
@@ -91,8 +91,8 @@ pub enum AccessCommand {
         #[arg(short, long)]
         touch: bool,
         /// New management key as 48 hex characters (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_management_key: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_management_key: Option<crate::commands::SecretString>,
         /// Management key algorithm (default: the card's current algorithm).
         #[arg(short, long, value_enum)]
         algorithm: Option<MgmtAlgorithmArg>,
@@ -113,11 +113,11 @@ pub enum AccessCommand {
     /// Unblock and set a new PIN using the PUK.
     UnblockPin {
         /// Current PUK (prompted when omitted).
-        #[arg(short, long)]
-        puk: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        puk: Option<crate::commands::SecretString>,
         /// New PIN (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_pin: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
 }
 
@@ -153,8 +153,8 @@ pub enum KeysCommand {
         /// File containing the private key ('-' for stdin).
         private_key: String,
         /// Password used to decrypt the private key.
-        #[arg(short, long)]
-        password: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        password: Option<crate::commands::SecretString>,
         /// PIN policy for the key.
         #[arg(long, value_enum)]
         pin_policy: Option<PinPolicyArg>,
@@ -361,23 +361,23 @@ pub enum HashArg {
 #[derive(Args)]
 pub struct MgmtArgs {
     /// Current management key as 48 hex characters (prompted when needed).
-    #[arg(short, long)]
-    management_key: Option<String>,
+    #[arg(short, long, value_parser = crate::commands::secret_arg)]
+    management_key: Option<crate::commands::SecretString>,
 }
 
 /// PIN argument for commands that verify the PIN.
 #[derive(Args)]
 pub struct PinArgs {
     /// PIN code (prompted when needed).
-    #[arg(short = 'P', long)]
-    pin: Option<String>,
+    #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+    pin: Option<crate::commands::SecretString>,
 }
 
 pub fn run(device: Option<u32>, reader: Option<&str>, command: &PivCommand) -> CliResult<()> {
     match command {
         PivCommand::Info => info(device, reader),
         PivCommand::Reset { force, admin_pin } => {
-            reset(device, reader, *force, admin_pin.as_deref())
+            reset(device, reader, *force, super::secret_str(admin_pin))
         }
         PivCommand::Access { command } => access(device, reader, command),
         PivCommand::Keys { command } => keys(device, reader, command),
@@ -497,6 +497,43 @@ fn describe_piv(error: &PivError<io::Error>) -> String {
     }
 }
 
+/// The resolved management key (and the PIN when it unlocked the key).
+/// Every operation builds a fresh mutual authentication from the key:
+/// libcanokey forbids reusing a cloned mutual request across executions,
+/// because it would replay the same challenge.
+struct ResolvedManagement {
+    key: ManagementKey,
+    pin: Option<Pin>,
+}
+
+impl ResolvedManagement {
+    /// A fresh mutual authentication; the getrandom failure converts into
+    /// the caller's `PivError::Random` inside operation closures.
+    fn access(&self) -> Result<piv::Access, getrandom::Error> {
+        Ok(piv::Access::Management(piv::mutual_auth(self.key.clone())?))
+    }
+
+    fn pin_and_management(&self, pin: Pin) -> Result<piv::Access, getrandom::Error> {
+        Ok(piv::Access::PinAndManagement {
+            pin,
+            management: piv::mutual_auth(self.key.clone())?,
+        })
+    }
+}
+
+/// True for the typed "this firmware cannot answer" errors that license a
+/// legacy fallback; transport and protocol failures are not gates.
+fn is_capability_gate(error: &PivError<io::Error>) -> bool {
+    matches!(
+        error,
+        PivError::Drive(DriveError::Protocol(error))
+            if matches!(
+                error.kind,
+                ErrorKind::UnsupportedFeature | ErrorKind::CapabilityUnknown
+            )
+    )
+}
+
 /// A connected PIV target with credential resolution helpers.
 struct PivSession {
     target: Target,
@@ -520,28 +557,41 @@ impl PivSession {
             &mut Exchange<'_, io::Error>,
         ) -> Result<T, PivError<io::Error>>,
     ) -> CliResult<T> {
+        self.run_typed(operation)
+            .map_err(|error| describe_piv(&error).into())
+    }
+
+    /// Run an operation, keeping the typed error for capability inspection.
+    fn run_typed<T>(
+        &mut self,
+        operation: impl FnOnce(
+            &DeviceProfile,
+            &mut Exchange<'_, io::Error>,
+        ) -> Result<T, PivError<io::Error>>,
+    ) -> Result<T, PivError<io::Error>> {
         operation(&self.target.profile, &mut |command| {
             self.target.connection.exchange(command)
         })
-        .map_err(|error| describe_piv(&error).into())
     }
 
     /// Resolve the management-key authentication like the Python CLI's
     /// `_authenticate`: an explicit `-m` hex key wins; then a PIN-protected
     /// stored key; then a PIN-derived key; otherwise prompt, with a blank
     /// answer meaning the factory default. Warns when the default key is in
-    /// use. Returns the management access and the PIN when it was needed.
+    /// use. Yields the key (and the PIN when it was needed); each operation
+    /// builds a fresh mutual authentication from it — libcanokey forbids
+    /// reusing a cloned mutual request, since it would replay the challenge.
     fn resolve_management(
         &mut self,
         management_key: Option<&str>,
         pin: Option<&str>,
-    ) -> CliResult<(piv::Access, Option<Pin>)> {
+    ) -> CliResult<ResolvedManagement> {
         if let Some(hex) = management_key {
             let bytes = hex_decode(hex).ok_or("management key must be hex-encoded")?;
             let algorithm = self.management_algorithm()?;
             let key = ManagementKey::from_bytes(algorithm, &bytes)
                 .map_err(|_| "management key must be 24 bytes (48 hex characters)")?;
-            return Ok((piv::Access::Management(piv::mutual_auth(key)?), None));
+            return Ok(ResolvedManagement { key, pin: None });
         }
         let pivman = self.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
         if pivman.has_stored_key() {
@@ -551,7 +601,10 @@ impl PivSession {
             let algorithm = self.management_algorithm()?;
             let key = ManagementKey::from_bytes(algorithm, key_bytes.as_bytes())
                 .map_err(|_| "stored management key has an unexpected length")?;
-            return Ok((piv::Access::Management(piv::mutual_auth(key)?), Some(pin)));
+            return Ok(ResolvedManagement {
+                key,
+                pin: Some(pin),
+            });
         }
         if pivman.has_derived_key() {
             let pin =
@@ -563,7 +616,10 @@ impl PivSession {
             )
             .map_err(|_| "derived management key is invalid")?;
             let pin = Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 characters")?;
-            return Ok((piv::Access::Management(piv::mutual_auth(key)?), Some(pin)));
+            return Ok(ResolvedManagement {
+                key,
+                pin: Some(pin),
+            });
         }
         let entered =
             super::prompt_password("Enter the management key [blank to use default key]: ")?;
@@ -578,15 +634,17 @@ impl PivSession {
                 false,
             )
         };
-        if default || self.management_is_default().unwrap_or(false) {
+        if default || self.management_is_default()?.unwrap_or(false) {
             eprintln!("WARNING: Using default Management key!");
         }
-        Ok((piv::Access::Management(piv::mutual_auth(key)?), None))
+        Ok(ResolvedManagement { key, pin: None })
     }
 
-    /// The card's management-key algorithm from metadata, defaulting to TDES.
+    /// The card's management-key algorithm from metadata, defaulting to TDES
+    /// only when the metadata command is missing (legacy firmware); transport
+    /// and protocol failures propagate.
     fn management_algorithm(&mut self) -> CliResult<ManagementKeyAlgorithm> {
-        match self.run(|profile, exchange| {
+        match self.run_typed(|profile, exchange| {
             piv::metadata(
                 profile,
                 MetadataReference::Management,
@@ -599,29 +657,39 @@ impl PivSession {
                 Some(10) => Ok(ManagementKeyAlgorithm::Aes192),
                 _ => Err("unknown management key algorithm on the card".into()),
             },
-            Err(_) => Ok(ManagementKeyAlgorithm::Tdes),
+            Err(error) if is_capability_gate(&error) => Ok(ManagementKeyAlgorithm::Tdes),
+            Err(error) => Err(describe_piv(&error).into()),
         }
     }
 
-    fn management_is_default(&mut self) -> Option<bool> {
-        self.run(|profile, exchange| {
+    /// Ok(None) when the metadata command is unavailable (legacy firmware);
+    /// transport and protocol failures propagate so the default-key warning
+    /// is never suppressed by a flaky read.
+    fn management_is_default(&mut self) -> CliResult<Option<bool>> {
+        match self.run_typed(|profile, exchange| {
             piv::metadata(
                 profile,
                 MetadataReference::Management,
                 canokey::piv::Access::None,
                 exchange,
             )
-        })
-        .ok()
-        .and_then(|metadata| match metadata.fields().is_default {
-            Some(piv::KnownOrUnknown::Known(value)) => Some(value),
-            _ => None,
-        })
+        }) {
+            Ok(metadata) => Ok(match metadata.fields().is_default {
+                Some(piv::KnownOrUnknown::Known(value)) => Some(value),
+                _ => None,
+            }),
+            Err(error) if is_capability_gate(&error) => Ok(None),
+            Err(error) => Err(describe_piv(&error).into()),
+        }
     }
 
-    fn resolve_pin_string(&mut self, pin: Option<&str>, prompt: &str) -> CliResult<String> {
+    fn resolve_pin_string(
+        &mut self,
+        pin: Option<&str>,
+        prompt: &str,
+    ) -> CliResult<super::SecretString> {
         match pin {
-            Some(pin) => Ok(pin.to_string()),
+            Some(pin) => Ok(zeroize::Zeroizing::new(pin.to_string())),
             None => Ok(super::prompt_password(&format!("{prompt}: "))?),
         }
     }
@@ -633,7 +701,7 @@ impl PivSession {
 
     fn resolve_puk(&mut self, puk: Option<&str>) -> CliResult<Puk> {
         let puk = match puk {
-            Some(puk) => puk.to_string(),
+            Some(puk) => zeroize::Zeroizing::new(puk.to_string()),
             None => super::prompt_password("Enter PUK: ")?,
         };
         Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters".into())
@@ -934,24 +1002,22 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             {
                 return Err("aborted".into());
             }
-            let (management, resolved_pin) =
-                session.resolve_management(mgmt.management_key.as_deref(), pin.pin.as_deref())?;
-            let pin = match resolved_pin {
-                Some(pin) => pin,
-                None => session.resolve_pin(pin.pin.as_deref(), "Enter the current PIN")?,
+            let management = session.resolve_management(
+                super::secret_str(&mgmt.management_key),
+                super::secret_str(&pin.pin),
+            )?;
+            let pin = match &management.pin {
+                Some(pin) => pin.clone(),
+                None => {
+                    session.resolve_pin(super::secret_str(&pin.pin), "Enter the current PIN")?
+                }
             };
             session.run(|profile, exchange| {
                 piv::set_retries(
                     profile,
                     *pin_retries,
                     *puk_retries,
-                    canokey::piv::Access::PinAndManagement {
-                        pin,
-                        management: match management {
-                            canokey::piv::Access::Management(auth) => auth,
-                            _ => unreachable!("resolve_management returns management access"),
-                        },
-                    },
+                    management.pin_and_management(pin)?,
                     exchange,
                 )
             })?;
@@ -960,14 +1026,14 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
             if pivman.puk_blocked() {
                 pivman.set_puk_blocked(false);
-                let (management, _) =
-                    session.resolve_management(mgmt.management_key.as_deref(), None)?;
+                let management =
+                    session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
                 session.run(|profile, exchange| {
                     piv::write_object(
                         profile,
                         piv::pivman_object_id(),
                         SecretBytes::new(pivman.to_value()),
-                        management,
+                        management.access()?,
                         exchange,
                     )
                 })?;
@@ -1000,7 +1066,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
         }
         AccessCommand::ChangePuk { puk, new_puk } => {
             let mut session = PivSession::connect(device, reader)?;
-            let old = session.resolve_puk(puk.as_deref())?;
+            let old = session.resolve_puk(super::secret_str(puk))?;
             let new = match new_puk {
                 Some(puk) => {
                     Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters")?
@@ -1038,15 +1104,17 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 None => session.management_algorithm()?,
             };
             // The current key is needed first; --protect also needs the PIN.
-            let (access, resolved_pin) =
-                session.resolve_management(mgmt.management_key.as_deref(), pin.pin.as_deref())?;
+            let management = session.resolve_management(
+                super::secret_str(&mgmt.management_key),
+                super::secret_str(&pin.pin),
+            )?;
             let pin = if *protect {
-                Some(match resolved_pin {
+                Some(match management.pin.clone() {
                     Some(pin) => pin,
-                    None => session.resolve_pin(pin.pin.as_deref(), "Enter PIN")?,
+                    None => session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?,
                 })
             } else {
-                resolved_pin
+                management.pin.clone()
             };
             let new_bytes: [u8; 24] = if let Some(hex) = new_management_key {
                 hex_decode(hex)
@@ -1088,7 +1156,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                         touch,
                         protect: *protect,
                         pin,
-                        access,
+                        access: management.access()?,
                     },
                     exchange,
                 )
@@ -1098,7 +1166,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
         }
         AccessCommand::UnblockPin { puk, new_pin } => {
             let mut session = PivSession::connect(device, reader)?;
-            let puk = session.resolve_puk(puk.as_deref())?;
+            let puk = session.resolve_puk(super::secret_str(puk))?;
             let new = match new_pin {
                 Some(pin) => pin.clone(),
                 None => {
@@ -1130,12 +1198,13 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             mgmt,
         } => {
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let mut parameters = KeyParameters::new(*slot, key_algorithm(*algorithm));
             parameters.pin_policy = pin_policy_of(*pin_policy);
             parameters.touch_policy = touch_policy_of(*touch_policy);
             let public = session.run(|profile, exchange| {
-                piv::generate_key(profile, parameters, access, exchange)
+                piv::generate_key(profile, parameters, management.access()?, exchange)
             })?;
             let der = public
                 .to_spki_der()
@@ -1167,10 +1236,12 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 }
                 None => None,
             };
-            let imported = keys::parse_private_key(&data, password.as_deref().map(str::as_bytes))
-                .map_err(|error| format!("{error}"))?;
+            let imported =
+                keys::parse_private_key(&data, super::secret_str(&password).map(str::as_bytes))
+                    .map_err(|error| format!("{error}"))?;
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let mut parameters = KeyParameters::new(*slot, imported.algorithm);
             parameters.pin_policy = pin_policy_of(*pin_policy);
             parameters.touch_policy = touch_policy_of(*touch_policy);
@@ -1178,7 +1249,13 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 .piv_material()
                 .map_err(|error| format!("{error}"))?;
             session.run(|profile, exchange| {
-                piv::import_key(profile, parameters, material, access, exchange)
+                piv::import_key(
+                    profile,
+                    parameters,
+                    material,
+                    management.access()?,
+                    exchange,
+                )
             })?;
             println!("Private key imported in slot {}.", slot_name(*slot));
             Ok(())
@@ -1261,7 +1338,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             };
             write_output(public_key_output, &data)?;
             if *verify {
-                let pin = session.resolve_pin(pin.pin.as_deref(), "Enter PIN")?;
+                let pin = session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?;
                 let algorithm = public.algorithm();
                 let message = b"test";
                 let signature = session.run(|profile, exchange| {
@@ -1286,9 +1363,10 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         }
         KeysCommand::Move { source, dest, mgmt } => {
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
-                piv::move_key(profile, *source, *dest, access, exchange)
+                piv::move_key(profile, *source, *dest, management.access()?, exchange)
             })?;
             println!(
                 "Key moved from {} to {}.",
@@ -1299,8 +1377,11 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         }
         KeysCommand::Delete { slot, mgmt } => {
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
-            session.run(|profile, exchange| piv::delete_key(profile, *slot, access, exchange))?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
+            session.run(|profile, exchange| {
+                piv::delete_key(profile, *slot, management.access()?, exchange)
+            })?;
             println!("Key deleted from slot {}.", slot_name(*slot));
             Ok(())
         }
@@ -1411,13 +1492,14 @@ fn certificates(
                     }
                 }
             }
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
                 piv::write_certificate(
                     profile,
                     *slot,
                     SecretBytes::new(parsed.der.clone()),
-                    access,
+                    management.access()?,
                     exchange,
                 )
             })?;
@@ -1494,16 +1576,16 @@ fn certificates(
                 .map_err(|_| "system clock is before the Unix epoch")?
                 .as_secs() as i64;
             let not_after = now + i64::from(*valid_days) * 86400;
-            let (management, resolved_pin) =
-                session.resolve_management(mgmt.management_key.as_deref(), pin.pin.as_deref())?;
-            let pin = match resolved_pin {
-                Some(pin) => pin,
-                None => session.resolve_pin(pin.pin.as_deref(), "Enter PIN")?,
+            let management = session.resolve_management(
+                super::secret_str(&mgmt.management_key),
+                super::secret_str(&pin.pin),
+            )?;
+            let pin = match &management.pin {
+                Some(pin) => pin.clone(),
+                None => session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?,
             };
-            let auth = match management {
-                canokey::piv::Access::Management(auth) => auth,
-                _ => unreachable!("resolve_management returns management access"),
-            };
+            // Each operation gets a fresh mutual authentication; a cloned
+            // challenge must never be replayed (libcanokey contract).
             let der = session.run(|profile, exchange| {
                 piv::generate_self_signed_certificate(
                     profile,
@@ -1513,10 +1595,7 @@ fn certificates(
                         spki_der: &spki_der,
                         subject,
                         hash: Some(hash_algorithm(*hash)),
-                        access: canokey::piv::Access::PinAndManagement {
-                            pin,
-                            management: auth.clone(),
-                        },
+                        access: management.pin_and_management(pin)?,
                     },
                     now,
                     not_after,
@@ -1528,7 +1607,7 @@ fn certificates(
                     profile,
                     *slot,
                     SecretBytes::new(der),
-                    canokey::piv::Access::Management(auth),
+                    management.access()?,
                     exchange,
                 )
             })?;
@@ -1566,7 +1645,7 @@ fn certificates(
             if !subject.contains('=') {
                 return Err("subject must be an RFC 4514 string (e.g. \"CN=name\")".into());
             }
-            let pin = session.resolve_pin(pin.pin.as_deref(), "Enter PIN")?;
+            let pin = session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?;
             let der = session.run(|profile, exchange| {
                 piv::generate_csr(
                     profile,
@@ -1587,9 +1666,10 @@ fn certificates(
         }
         CertificatesCommand::Delete { slot, mgmt } => {
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
-                piv::delete_certificate(profile, *slot, access, exchange)
+                piv::delete_certificate(profile, *slot, management.access()?, exchange)
             })?;
             println!("Certificate in slot {} deleted.", slot_name(*slot));
             Ok(())
@@ -1624,13 +1704,14 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
         } => {
             let data = read_input(data)?;
             let mut session = PivSession::connect(device, reader)?;
-            let (access, _) = session.resolve_management(mgmt.management_key.as_deref(), None)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
                 piv::write_object(
                     profile,
                     *object_id,
                     SecretBytes::new(data),
-                    access,
+                    management.access()?,
                     exchange,
                 )
             })?;

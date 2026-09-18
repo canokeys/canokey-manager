@@ -107,15 +107,52 @@ impl PcscConnection {
 
     /// One raw exchange: complete command APDU in, complete response
     /// (data + SW1/SW2) out. No continuation, no retry.
+    ///
+    /// Trace logging never includes payload bytes: a VERIFY APDU carries a
+    /// plaintext PIN, SET MANAGEMENT KEY the management key, OATH PUT the
+    /// credential secret. Full traffic hex requires the explicit
+    /// `CKMAN_LOG_TRAFFIC=1` opt-in.
     pub fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
-        tracing::trace!(command = %hex(command), ">>");
+        log_command(command);
         let mut buf = vec![0u8; 64 * 1024 + 2];
         let response = self
             .card
             .transmit(command, &mut buf)
             .map_err(io::Error::other)?;
-        tracing::trace!(response = %hex(response), "<<");
+        log_response(response);
         Ok(response.to_vec())
+    }
+}
+
+/// Whether full APDU traffic may be logged (explicit opt-in; leaks secrets).
+fn log_traffic() -> bool {
+    std::env::var_os("CKMAN_LOG_TRAFFIC").is_some_and(|value| value == "1")
+}
+
+/// Trace the APDU header and payload length only; secrets stay out of logs.
+fn log_command(command: &[u8]) {
+    if log_traffic() {
+        tracing::trace!(command = %hex(command), ">>");
+    } else {
+        let field = |index: usize| command.get(index).map(|byte| hex(&[*byte]));
+        tracing::trace!(
+            cla = field(0),
+            ins = field(1),
+            p1 = field(2),
+            p2 = field(3),
+            command_len = command.len(),
+            ">>"
+        );
+    }
+}
+
+/// Trace the status word and data length only; secrets stay out of logs.
+fn log_response(response: &[u8]) {
+    if log_traffic() {
+        tracing::trace!(response = %hex(response), "<<");
+    } else {
+        let status = response.get(response.len().saturating_sub(2)..).map(hex);
+        tracing::trace!(status, response_len = response.len(), "<<");
     }
 }
 
@@ -136,7 +173,74 @@ fn hex(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::contains;
+    use super::{contains, log_command, log_response};
+
+    /// A PIV VERIFY APDU carries the plaintext PIN 123456.
+    const VERIFY_PIN_123456: &[u8] = b"\0\x20\0\x80\x08123456\xff\xff";
+    const PIN_HEX: &str = "313233343536";
+
+    fn capture_traces(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        impl Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl tracing_subscriber::fmt::MakeWriter<'_> for Buffer {
+            type Writer = Buffer;
+            fn make_writer(&self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let buffer = Buffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .without_time()
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn trace_logging_redacts_secret_payloads() {
+        std::env::remove_var("CKMAN_LOG_TRAFFIC");
+        let log = capture_traces(|| {
+            log_command(VERIFY_PIN_123456);
+            log_response(b"\x90\x00");
+        });
+        assert!(log.contains(">>"), "{log}");
+        assert!(log.contains("ins=\"20\""), "{log}");
+        assert!(
+            !log.contains(PIN_HEX),
+            "the PIN must never appear in trace output: {log}"
+        );
+        assert!(!log.contains(&hex_encode(VERIFY_PIN_123456)), "{log}");
+        // The explicit opt-in still exposes the full traffic.
+        std::env::set_var("CKMAN_LOG_TRAFFIC", "1");
+        let log = capture_traces(|| {
+            log_command(VERIFY_PIN_123456);
+            log_response(b"\x90\x00");
+        });
+        std::env::remove_var("CKMAN_LOG_TRAFFIC");
+        assert!(log.contains(&hex_encode(VERIFY_PIN_123456)), "{log}");
+    }
+
+    fn hex_encode(data: &[u8]) -> String {
+        use std::fmt::Write as _;
+        data.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    }
 
     #[test]
     fn atr_substring_detection() {

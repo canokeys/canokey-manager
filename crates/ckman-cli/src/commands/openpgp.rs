@@ -18,8 +18,8 @@ pub enum OpenPgpCommand {
         #[arg(long)]
         force: bool,
         /// CanoKey Admin PIN (prompted when omitted).
-        #[arg(long, value_name = "PIN")]
-        admin_pin: Option<String>,
+        #[arg(long, value_name = "PIN", value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Manage PIN, Reset Code and Admin PIN.
     Access {
@@ -54,8 +54,8 @@ pub enum AccessCommand {
         #[arg(value_parser = clap::value_parser!(u8).range(1..=15))]
         admin_pin_retries: u8,
         /// Admin PIN (prompted when omitted).
-        #[arg(short, long)]
-        admin_pin: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
         /// Do not ask for confirmation.
         #[arg(long)]
         force: bool,
@@ -63,29 +63,30 @@ pub enum AccessCommand {
     /// Change the User PIN.
     ChangePin {
         /// Current PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
         /// New PIN (prompted when omitted).
-        #[arg(short, long)]
-        new_pin: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
     /// Change the Admin PIN.
     ChangeAdminPin {
         /// Current Admin PIN (prompted when omitted).
-        #[arg(short, long)]
-        admin_pin: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
         /// New Admin PIN (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_admin_pin: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_admin_pin: Option<crate::commands::SecretString>,
     },
     /// Set (or, with --clear, remove) the Reset Code.
     ChangeResetCode {
         /// Admin PIN (prompted when omitted).
-        #[arg(short, long)]
-        admin_pin: Option<String>,
-        /// New Reset Code (prompted when omitted).
-        #[arg(short, long)]
-        reset_code: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+        /// New Reset Code (prompted when omitted; long-only: the global
+        /// -r/--reader owns the short flag).
+        #[arg(long, value_parser = crate::commands::secret_arg)]
+        reset_code: Option<crate::commands::SecretString>,
         /// Remove the Reset Code instead of setting one.
         #[arg(short, long)]
         clear: bool,
@@ -93,14 +94,14 @@ pub enum AccessCommand {
     /// Unblock and set a new PIN using the Reset Code or the Admin PIN.
     UnblockPin {
         /// Admin PIN (use "-" to prompt).
-        #[arg(short, long)]
-        admin_pin: Option<String>,
-        /// Reset Code.
-        #[arg(short, long)]
-        reset_code: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+        /// Reset Code (long-only: the global -r/--reader owns the short flag).
+        #[arg(long, value_parser = crate::commands::secret_arg)]
+        reset_code: Option<crate::commands::SecretString>,
         /// New PIN (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_pin: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
     /// Set the signature PIN policy.
     SetSignaturePolicy {
@@ -108,8 +109,8 @@ pub enum AccessCommand {
         #[arg(value_enum)]
         policy: SignaturePolicyArg,
         /// Admin PIN (prompted when omitted).
-        #[arg(short, long)]
-        admin_pin: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
 }
 
@@ -130,8 +131,8 @@ pub enum KeysCommand {
         #[arg(long, value_enum)]
         algorithm: Option<KeyAlgorithmArg>,
         /// Admin PIN (prompted when omitted).
-        #[arg(short = 'a', long)]
-        admin_pin: Option<String>,
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Import a private key (PEM/DER: PKCS#8, PKCS#1, SEC1).
     Import {
@@ -144,11 +145,11 @@ pub enum KeysCommand {
         #[arg(long, value_enum)]
         algorithm: Option<KeyAlgorithmArg>,
         /// Password used to decrypt the private key.
-        #[arg(short, long)]
-        password: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        password: Option<crate::commands::SecretString>,
         /// Admin PIN (prompted when omitted).
-        #[arg(short = 'a', long)]
-        admin_pin: Option<String>,
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Set the touch policy for a key slot.
     SetTouch {
@@ -159,8 +160,8 @@ pub enum KeysCommand {
         #[arg(value_enum)]
         policy: TouchPolicyArg,
         /// Admin PIN (prompted when omitted).
-        #[arg(short = 'a', long)]
-        admin_pin: Option<String>,
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
         /// Do not ask for confirmation.
         #[arg(long)]
         force: bool,
@@ -177,8 +178,8 @@ pub enum CertificatesCommand {
         /// File containing the certificate ('-' for stdin).
         certificate: String,
         /// Admin PIN (prompted when omitted).
-        #[arg(short = 'a', long)]
-        admin_pin: Option<String>,
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Export the certificate of a key slot.
     Export {
@@ -197,8 +198,8 @@ pub enum CertificatesCommand {
         #[arg(value_enum)]
         key: KeySlotArg,
         /// Admin PIN (prompted when omitted).
-        #[arg(short = 'a', long)]
-        admin_pin: Option<String>,
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
 }
 
@@ -247,7 +248,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &OpenPgpCommand) 
     match command {
         OpenPgpCommand::Info => info(device, reader),
         OpenPgpCommand::Reset { force, admin_pin } => {
-            reset(device, reader, *force, admin_pin.as_deref())
+            reset(device, reader, *force, super::secret_str(admin_pin))
         }
         OpenPgpCommand::Access { command } => access(device, reader, command),
         OpenPgpCommand::Keys { command } => keys(device, reader, command),
@@ -359,9 +360,9 @@ impl OpenPgpSession {
         prompt: &str,
         minimum: usize,
         name: &str,
-    ) -> CliResult<String> {
+    ) -> CliResult<super::SecretString> {
         let value = match value {
-            Some(value) => value.to_string(),
+            Some(value) => zeroize::Zeroizing::new(value.to_string()),
             None => super::prompt_password(&format!("{prompt}: "))?,
         };
         if value.len() < minimum || value.len() > 64 {
@@ -375,7 +376,7 @@ impl OpenPgpSession {
         Ok(Password::from_bytes(pin.as_bytes()).expect("length checked"))
     }
 
-    fn admin_string(value: Option<&str>, prompt: &str) -> CliResult<String> {
+    fn admin_string(value: Option<&str>, prompt: &str) -> CliResult<super::SecretString> {
         Self::password(value, prompt, 8, "Admin PIN")
     }
 
@@ -387,7 +388,7 @@ impl OpenPgpSession {
     fn new_password(prompt: &str, minimum: usize, name: &str) -> CliResult<Password> {
         let entered = Self::password(None, prompt, minimum, name)?;
         let repeated = super::prompt_password(&format!("Repeat the {name}: "))?;
-        if entered != repeated {
+        if entered.as_str() != repeated.as_str() {
             return Err(format!("the {name}s do not match").into());
         }
         Ok(Password::from_bytes(entered.as_bytes()).expect("length checked"))
@@ -419,15 +420,17 @@ fn touch_policy_name(uif: Option<[u8; 2]>) -> &'static str {
 }
 
 /// Algorithm attributes rendered like the Python CLI (`RSA2048`, curve names).
+/// Device-controlled bytes are never trusted: empty and short inputs render
+/// as an `unknown (hex)` fallback.
 fn attributes_name(attributes: Option<&[u8]>) -> String {
     let Some(attributes) = attributes else {
         return "unknown".to_string();
     };
-    match attributes[0] {
-        1 if attributes.len() >= 2 => {
+    match attributes.first() {
+        Some(1) if attributes.len() >= 3 => {
             format!("RSA{}", u16::from_be_bytes([attributes[1], attributes[2]]))
         }
-        0x12 | 0x13 | 0x16 => {
+        Some(0x12 | 0x13 | 0x16) => {
             // Match the known curve OID bytes.
             match &attributes[1..] {
                 [0x2a, 0x86, 0x48, 0xce, 0x3d, 3, 1, 7] => "ECCP256".to_string(),
@@ -439,7 +442,7 @@ fn attributes_name(attributes: Option<&[u8]>) -> String {
                 other => format!("unknown ({})", super_hex(other)),
             }
         }
-        other => format!("unknown (0x{other:02x})"),
+        _ => format!("unknown ({})", super_hex(attributes)),
     }
 }
 
@@ -541,7 +544,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             force,
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             println!("WARNING: Setting PIN retries will reset the values for all 3 PINs!");
             if !force
                 && !confirm(&format!(
@@ -566,7 +569,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
         }
         AccessCommand::ChangePin { pin, new_pin } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let old = OpenPgpSession::pin(pin.as_deref(), "Enter PIN")?;
+            let old = OpenPgpSession::pin(super::secret_str(pin), "Enter PIN")?;
             let new = match new_pin {
                 Some(pin) => OpenPgpSession::pin(Some(pin.as_str()), "Enter PIN")?,
                 None => OpenPgpSession::new_password("New PIN", 6, "PIN")?,
@@ -582,7 +585,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             new_admin_pin,
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let old = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let old = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             let new = match new_admin_pin {
                 Some(pin) => OpenPgpSession::admin(Some(pin.as_str()), "Enter Admin PIN")?,
                 None => OpenPgpSession::new_password("New Admin PIN", 8, "Admin PIN")?,
@@ -602,7 +605,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 return Err("--clear cannot be combined with --reset-code".into());
             }
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             let code = if *clear {
                 None
             } else {
@@ -635,7 +638,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             };
             match (admin_pin, reset_code) {
                 (Some(admin), None) => {
-                    let admin = if admin == "-" {
+                    let admin = if admin.as_str() == "-" {
                         OpenPgpSession::admin(None, "Enter Admin PIN")?
                     } else {
                         OpenPgpSession::admin(Some(admin.as_str()), "Enter Admin PIN")?
@@ -662,7 +665,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
         }
         AccessCommand::SetSignaturePolicy { policy, admin_pin } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             let reuse = *policy == SignaturePolicyArg::Once;
             session.run(|profile, exchange| {
                 openpgp::set_signature_policy(profile, reuse, admin, exchange)
@@ -718,7 +721,8 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
-            let admin = OpenPgpSession::admin_string(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin =
+                OpenPgpSession::admin_string(super::secret_str(admin_pin), "Enter Admin PIN")?;
             if let Some(algorithm) = algorithm {
                 println!(
                     "Setting the slot algorithm discards any existing key in the slot; generating a new key."
@@ -750,12 +754,15 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 }
                 None => None,
             };
-            let imported =
-                ckman_core::keys::parse_private_key(&data, password.as_deref().map(str::as_bytes))
-                    .map_err(|error| format!("{error}"))?;
+            let imported = ckman_core::keys::parse_private_key(
+                &data,
+                super::secret_str(&password).map(str::as_bytes),
+            )
+            .map_err(|error| format!("{error}"))?;
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
-            let admin = OpenPgpSession::admin_string(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin =
+                OpenPgpSession::admin_string(super::secret_str(admin_pin), "Enter Admin PIN")?;
             if let Some(algorithm) = algorithm {
                 println!(
                     "Setting the slot algorithm discards any existing key in the slot; importing over it."
@@ -781,7 +788,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             let policy_name = format!("{policy:?}").to_lowercase();
             let prompt = format!(
                 "Set touch policy of {:?} key to {policy_name}?",
@@ -844,7 +851,7 @@ fn certificates(
                     .der
             };
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             session.run(|profile, exchange| {
                 openpgp::write_certificate(profile, slot_of(*key), der, admin, exchange)
             })?;
@@ -877,7 +884,7 @@ fn certificates(
         }
         CertificatesCommand::Delete { key, admin_pin } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
-            let admin = OpenPgpSession::admin(admin_pin.as_deref(), "Enter Admin PIN")?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             // CanoKey has no certificate-deletion command; an empty PUT clears it.
             session.run(|profile, exchange| {
                 openpgp::write_certificate(profile, slot_of(*key), Vec::new(), admin, exchange)
@@ -885,5 +892,37 @@ fn certificates(
             println!("Certificate deleted for slot {}.", slot_name(slot_of(*key)));
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attributes_name_never_panics_on_device_bytes() {
+        assert_eq!(attributes_name(None), "unknown");
+        assert_eq!(attributes_name(Some(&[])), "unknown ()");
+        assert_eq!(attributes_name(Some(&[1])), "unknown (01)");
+        assert_eq!(attributes_name(Some(&[1, 8])), "unknown (0108)");
+        assert_eq!(attributes_name(Some(&[1, 8, 0])), "RSA2048");
+        assert_eq!(attributes_name(Some(&[1, 0x10, 0, 0, 32, 2])), "RSA4096");
+        assert_eq!(attributes_name(Some(&[0x16])), "unknown ()");
+        let ed = [0x16, 0x2b, 6, 1, 4, 1, 0xda, 0x47, 15, 1];
+        assert_eq!(attributes_name(Some(&ed)), "ED25519");
+        let p256 = [0x13, 0x2a, 0x86, 0x48, 0xce, 0x3d, 3, 1, 7];
+        assert_eq!(attributes_name(Some(&p256)), "ECCP256");
+        assert_eq!(attributes_name(Some(&[0xff, 1, 2])), "unknown (ff0102)");
+    }
+
+    #[test]
+    fn touch_policy_name_mapping() {
+        assert_eq!(touch_policy_name(None), "unknown");
+        assert_eq!(touch_policy_name(Some([0, 0x20])), "off");
+        assert_eq!(touch_policy_name(Some([1, 0])), "on");
+        assert_eq!(touch_policy_name(Some([1, 0x20])), "cached");
+        assert_eq!(touch_policy_name(Some([2, 0])), "fixed");
+        assert_eq!(touch_policy_name(Some([2, 0x20])), "cached-fixed");
+        assert_eq!(touch_policy_name(Some([3, 0])), "unknown");
     }
 }

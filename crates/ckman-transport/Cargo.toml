@@ -10,3 +10,6 @@ hidapi.workspace = true
 pcsc.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
