@@ -376,9 +376,9 @@ impl<T: ReportIo> CtapHidChannel<T> {
     }
 }
 
-/// In-memory loopback authenticator for tests. Implements the device side of
+/// In-memory loopback authenticator. Implements the device side of
 /// CTAPHID: INIT channel allocation, PING echo, and scripted CBOR behavior.
-#[cfg(test)]
+/// Intended for tests; public so downstream crates can script exchanges.
 pub mod loopback {
     use super::*;
     use std::collections::VecDeque;
@@ -388,6 +388,9 @@ pub mod loopback {
         Respond(Vec<u8>),
         /// Emit these keepalive statuses, then respond with the payload.
         KeepaliveThen(Vec<Keepalive>, Vec<u8>),
+        /// Respond to successive CBOR requests with successive payloads.
+        /// Requests beyond the script fail with INVALID_CMD.
+        Scripted(Vec<Vec<u8>>),
         /// Emit a HID-level error instead of a response.
         Fail(DeviceError),
     }
@@ -400,6 +403,8 @@ pub mod loopback {
         decoder: MessageDecoder,
         next_cid: u32,
         pub cbor: CborBehavior,
+        /// Complete CBOR request payloads received, in order.
+        cbor_log: Vec<Vec<u8>>,
     }
 
     impl Loopback {
@@ -410,7 +415,13 @@ pub mod loopback {
                 decoder: MessageDecoder::new(),
                 next_cid: 1,
                 cbor,
+                cbor_log: Vec::new(),
             }
+        }
+
+        /// Complete CBOR request payloads the host sent, in order.
+        pub fn cbor_payloads(&self) -> &[Vec<u8>] {
+            &self.cbor_log
         }
 
         fn respond(&mut self, cid: u32, cmd: Command, payload: &[u8]) {
@@ -436,13 +447,21 @@ pub mod loopback {
                 Command::Cbor => {
                     // Snapshot the scripted behavior first so `respond` can
                     // take &mut self.
+                    self.cbor_log.push(payload.to_vec());
                     enum Act {
                         Respond(Vec<u8>),
                         KeepaliveThen(Vec<u8>, Vec<u8>),
                         Fail(u8),
                     }
-                    let act = match &self.cbor {
+                    let act = match &mut self.cbor {
                         CborBehavior::Respond(payload) => Act::Respond(payload.clone()),
+                        CborBehavior::Scripted(payloads) => {
+                            if payloads.is_empty() {
+                                Act::Fail(0x01)
+                            } else {
+                                Act::Respond(payloads.remove(0))
+                            }
+                        }
                         CborBehavior::KeepaliveThen(statuses, payload) => {
                             let statuses = statuses
                                 .iter()
@@ -456,7 +475,7 @@ pub mod loopback {
                         }
                         CborBehavior::Fail(error) => Act::Fail(match error {
                             DeviceError::InvalidCmd => 0x01,
-                            DeviceError::InvalidParam => 0x02,
+                            DeviceError::InvalidParam => 0x2,
                             DeviceError::InvalidLen => 0x03,
                             DeviceError::InvalidSeq => 0x04,
                             DeviceError::MsgTimeout => 0x05,
