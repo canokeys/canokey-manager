@@ -39,9 +39,11 @@ impl Reader {
     }
 
     /// USB CCID readers of a CanoKey carry the product string in the reader
-    /// name; contactless readers are identified by ATR after connect.
+    /// name; contactless readers are identified by ATR after connect. The
+    /// CCID driver renders the name as "Canokeys Canokey ...", so the match
+    /// is case-insensitive.
     pub fn looks_like_canokey(&self) -> bool {
-        self.name().contains("CanoKey")
+        self.name().to_ascii_lowercase().contains("canokey")
     }
 }
 
@@ -95,9 +97,12 @@ impl PcscConnection {
     }
 
     /// Contactless readers have no USB PID; CanoKey puts its name in the ATR
-    /// historical bytes (matching the Python fork's `is_canokey` check).
+    /// historical bytes (matching the Python fork's `is_canokey` check). The
+    /// CCID driver renders the reader name as "Canokeys Canokey ...", so both
+    /// matches are case-insensitive.
     pub fn is_canokey(&self) -> bool {
-        self.reader.contains("CanoKey") || contains(&self.atr, b"CanoKey")
+        self.reader.to_ascii_lowercase().contains("canokey")
+            || contains(&self.atr.to_ascii_lowercase(), b"canokey")
     }
 
     /// One raw exchange: complete command APDU in, complete response
@@ -138,5 +143,14 @@ mod tests {
         assert!(contains(b"\x00\x14CanoKey\x90", b"CanoKey"));
         assert!(!contains(b"\x00\x14YubiKey\x90", b"CanoKey"));
         assert!(!contains(b"Can", b"CanoKey"));
+    }
+
+    #[test]
+    fn detection_is_case_insensitive() {
+        // libccid renders the reader name "Canokeys Canokey [OpenPGP PIV
+        // OATH] ..." — a case-sensitive "CanoKey" match misses it, which
+        // failed the usbip CI smoke on every firmware.
+        let atr = b"\x00\x14Canokey\x90".to_ascii_lowercase();
+        assert!(contains(&atr, b"canokey"));
     }
 }
