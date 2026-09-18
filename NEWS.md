@@ -21,9 +21,10 @@ CanoKey-relevant surface of the Python CLI, including:
   model (PIN-derived and PIN-protected stored keys), retry management.
 - OpenPGP: PIN/reset-code/admin-PIN management, touch policies, key
   generate/import (RSA CRT, EC, Ed/X25519), certificates.
-- FIDO2: info, reset with the power-up window, ClientPIN set/change,
+- FIDO2: info, reset with the power-up window, ClientPIN set/change/verify,
   resident-credential management, authenticator config (min PIN length,
-  force-change). Native USB HID transport with CTAPHID, plus FIDO over CCID.
+  force-change, toggle-always-uv). Native USB HID transport with CTAPHID,
+  plus FIDO over CCID.
 
 ### Differences from the Python version
 
@@ -31,34 +32,60 @@ Dropped commands and options (mostly YubiKey-only):
 
 - `otp`, `hsmauth`, `securitydomain` and the `--scp*` options (YubiKey
   applets / SCP transport).
-- `config mode`, `config set-lock-code`, `config set-flags` and other
-  YubiKey interface-configuration commands (CanoKey has no equivalent).
-- `fido fingerprints` (CanoKey has no fingerprint sensor).
+- `config mode`, `config usb`/`config nfc` application toggles,
+  `config set-lock-code` and other YubiKey interface-configuration commands
+  (CanoKey has no equivalent).
+- `fido fingerprints` (CanoKey has no fingerprint sensor), `fido config
+  enable-ep-attestation` and `fido access change-pin --u2f` (YubiKey FIPS
+  only).
+- `oath access forget --all` (the OS keyring cannot enumerate entries;
+  forget each device individually with `oath access forget`).
 - OATH PSKC import/export (`--output`, `--pskc-key/--pskc-passphrase`,
   `accounts import`) — no RFC 6030 implementation is bundled; otpauth://
   URIs cover the common import path.
 - `piv objects generate` (CHUID/CCC templates) and PKCS#12 import
   (`piv certificates import` takes PEM/DER).
 - `openpgp keys attest` / attestation-key import (libcanokey has no
-  OpenPGP attestation request) and `openpgp keys delete` (the wire protocol
-  cannot delete an OpenPGP key without changing its algorithm attributes).
-- The raw `apdu` command and `list --readers`.
+  OpenPGP attestation request).
+- The raw `apdu` command, the `script` command, `list --readers`, and the
+  global `--diagnose`/`--log-file` options (`-l/--log-level` covers
+  logging).
 - The Python library and its scripting API. A future PyO3 binding may
   restore scripting on top of the Rust core.
 
-Behavior differences worth knowing:
+### Behavior changes
 
+- OATH remembered passwords moved from the Fernet-encrypted ykman appdata
+  store to plain OS-keyring entries keyed by device serial. Remembered
+  passwords do **not** migrate; run `oath access remember` again once per
+  device.
+- `info` output is thinner than the Python version's (no FIPS status, no
+  form-factor/USB table).
+- `piv access set-retries` accepts 1–15 (the firmware bound); the Python
+  CLI allowed up to 255 and let the card clamp.
+- FIDO splits the Python `fido access change-pin` into `set-pin` (no PIN
+  set) and `change-pin`.
 - `--device`/`--reader` are global options (usable after subcommands, which
   the Python CLI achieved by rewriting argv). Their short flags therefore own
   `-d`/`-r` everywhere; the local `-d` (OATH `--digits`) and `-r`
   (`--remember`, `--reset-code`) shorts are long-only now.
 - `--reader` matches reader names by case-insensitive substring, as the
   Python CLI did.
-- New: `fido config toggle-always-uv` and `fido access verify-pin`.
-
+- For FIDO, `--device` forces the PC/SC transport: USB HID serial strings
+  have no documented relation to the 4-byte admin serial, so HID cannot
+  resolve a serial and refuses to guess.
 - `openpgp keys import` covers the sig/dec/aut slots (not only the
   attestation slot).
 - PIV `--protect` management-key storage works (the old fork rejected it on
   CanoKey); libcanokey implements the PIN-protected PRINTED object.
 - Credential/PIN prompts never read defaults: no default PINs or management
   keys are ever tried silently.
+
+### Validation
+
+OATH/OpenPGP/FIDO2 are validated by scripted-transcript unit tests (APDU
+fixtures mirrored from libcanokey) plus read-only smoke runs on the usbip
+firmware matrix (1.3–3.1.0); destructive lifecycle device tests currently
+exist for PIV only (firmware 2.0+). The FIDO HID path (the default
+transport) is loopback-tested and manually verified on real hardware, while
+CI exercises FIDO over PC/SC.
