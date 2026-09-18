@@ -1,4 +1,5 @@
 pub mod config;
+pub mod fido;
 pub mod info;
 pub mod list;
 pub mod oath;

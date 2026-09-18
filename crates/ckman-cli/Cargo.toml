@@ -15,6 +15,7 @@ ckman-core = { path = "../ckman-core" }
 ckman-transport = { path = "../ckman-transport" }
 clap.workspace = true
 getrandom.workspace = true
+hidapi.workspace = true
 p256.workspace = true
 p384.workspace = true
 rsa.workspace = true

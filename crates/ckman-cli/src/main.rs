@@ -59,6 +59,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::openpgp::OpenPgpCommand,
     },
+    /// Manage FIDO2/U2F.
+    Fido {
+        #[command(subcommand)]
+        command: commands::fido::FidoCommand,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -81,6 +86,9 @@ fn main() -> std::process::ExitCode {
         Commands::Piv { command } => commands::piv::run(cli.device, cli.reader.as_deref(), command),
         Commands::Openpgp { command } => {
             commands::openpgp::run(cli.device, cli.reader.as_deref(), command)
+        }
+        Commands::Fido { command } => {
+            commands::fido::run(cli.device, cli.reader.as_deref(), command)
         }
     };
     match result {
