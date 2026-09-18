@@ -10,8 +10,10 @@ name = "ckman"
 path = "src/main.rs"
 
 [dependencies]
+canokey.workspace = true
 ckman-core = { path = "../ckman-core" }
 ckman-transport = { path = "../ckman-transport" }
 clap.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true

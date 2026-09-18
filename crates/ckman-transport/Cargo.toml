@@ -6,5 +6,6 @@ license.workspace = true
 description = "PC/SC and CTAPHID transports with connection-lease semantics for libcanokey"
 
 [dependencies]
+pcsc.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

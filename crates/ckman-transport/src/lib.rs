@@ -4,3 +4,4 @@
 //! retries, continues, or reorders on its own.
 
 pub mod ctaphid;
+pub mod pcsc;
