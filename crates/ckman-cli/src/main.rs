@@ -1,8 +1,9 @@
 //! CanoKey management CLI.
 //!
-//! Phase 1 scope: `list` and `info` over PC/SC. Later phases add
-//! config/oath/piv/openpgp/fido subcommands on top of the same device
-//! selection and probing pipeline.
+//! Scope so far: `list` and `info` over PC/SC, plus the `config` group
+//! (NFC toggle, factory reset, configuration readout). Later phases add
+//! oath/piv/openpgp/fido subcommands on top of the same device selection and
+//! probing pipeline.
 
 mod commands;
 
@@ -38,6 +39,11 @@ enum Commands {
         #[arg(long)]
         serials: bool,
     },
+    /// Read or change device configuration.
+    Config {
+        #[command(subcommand)]
+        command: commands::config::ConfigCommand,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -51,6 +57,9 @@ fn main() -> std::process::ExitCode {
     let result = match &cli.command {
         Commands::Info => commands::info::run(cli.device, cli.reader.as_deref()),
         Commands::List { serials } => commands::list::run(*serials, cli.reader.as_deref()),
+        Commands::Config { command } => {
+            commands::config::run(cli.device, cli.reader.as_deref(), command)
+        }
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
