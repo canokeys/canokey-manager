@@ -1,9 +1,7 @@
-use super::{single_target, CliResult};
-use ckman_core::admin::{self, AdminConfiguration, Pin};
-use ckman_core::DriveError;
+use super::{describe_drive_error, single_target, with_admin_pin_retry, CliResult};
+use ckman_core::admin::{self, AdminConfiguration};
 use ckman_transport::pcsc::Pcsc;
 
-use canokey::{ErrorKind, SecretReference};
 use clap::{Subcommand, ValueEnum};
 use std::io;
 use std::io::Write as _;
@@ -39,68 +37,10 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &ConfigCommand) -
     }
 }
 
-fn prompt_admin_pin() -> CliResult<Pin> {
-    let entered = rpassword::prompt_password("Admin PIN: ")?;
-    Pin::from_bytes(entered.as_bytes()).map_err(|error| format!("{error}").into())
-}
-
-/// True when libcanokey reports that the request needs Admin PIN verification
-/// (a protected request built without a PIN, or a card-side 6982), so the CLI
-/// should prompt and retry once. libcanokey never tries default credentials.
-fn needs_pin<E>(error: &DriveError<E>) -> bool {
-    matches!(
-        error,
-        DriveError::Protocol(error)
-            if error.kind == ErrorKind::SecurityStatusNotSatisfied
-                || (error.kind == ErrorKind::AuthenticationFailed
-                    && error.reference == Some(SecretReference::AdminPin))
-    )
-}
-
-/// Human-facing message for a protocol failure, decoding the firmware
-/// capability gates that libcanokey surfaces as typed errors.
-fn describe(error: &DriveError<io::Error>) -> String {
-    match error {
-        DriveError::Transport(error) => format!("transport exchange failed: {error}"),
-        DriveError::Protocol(error) => match error.kind {
-            ErrorKind::CapabilityUnknown => {
-                "unrecognized firmware; refusing to attempt the operation".to_string()
-            }
-            ErrorKind::UnsupportedFeature => {
-                "this firmware does not support the operation".to_string()
-            }
-            ErrorKind::AuthenticationFailed => match error.retries_remaining {
-                Some(retries) => {
-                    format!("incorrect Admin PIN ({retries} attempts remaining)")
-                }
-                None => "incorrect Admin PIN".to_string(),
-            },
-            ErrorKind::PinBlocked => "the Admin PIN is blocked".to_string(),
-            _ => format!("protocol error: {error}"),
-        },
-    }
-}
-
-/// Run an Admin operation that may be PIN-protected: try without a PIN first,
-/// and when the card or the library demands verification, prompt once and
-/// retry with the entered PIN.
-fn with_pin_retry<T>(
-    mut operation: impl FnMut(Option<Pin>) -> Result<T, DriveError<io::Error>>,
-) -> CliResult<T> {
-    match operation(None) {
-        Ok(result) => Ok(result),
-        Err(error) if needs_pin(&error) => {
-            let pin = prompt_admin_pin()?;
-            operation(Some(pin)).map_err(|error| describe(&error).into())
-        }
-        Err(error) => Err(describe(&error).into()),
-    }
-}
-
 fn nfc(device: Option<u32>, reader: Option<&str>, on: bool) -> CliResult<()> {
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
-    let new_state = with_pin_retry(|pin| {
+    let new_state = with_admin_pin_retry(None, |pin| {
         admin::set_nfc(&target.profile, on, pin, &mut |command| {
             target.connection.exchange(command)
         })
@@ -126,7 +66,7 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
     admin::factory_reset(&target.profile, &mut |command| {
         target.connection.exchange(command)
     })
-    .map_err(|error| describe(&error))?;
+    .map_err(|error| describe_drive_error(&error))?;
     println!("Factory reset complete.");
     Ok(())
 }
@@ -134,7 +74,7 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
 fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
-    let configuration = with_pin_retry(|pin| {
+    let configuration = with_admin_pin_retry(None, |pin| {
         admin::read_configuration(&target.profile, pin, &mut |command| {
             target.connection.exchange(command)
         })

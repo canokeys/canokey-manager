@@ -1,11 +1,14 @@
 pub mod config;
 pub mod info;
 pub mod list;
+pub mod oath;
 
-use ckman_core::probe;
+use ckman_core::admin::Pin;
+use ckman_core::{probe, DriveError};
 use ckman_transport::pcsc::{Pcsc, PcscConnection, Reader};
 
-use canokey::DeviceProfile;
+use canokey::{DeviceProfile, ErrorKind, SecretReference};
+use std::io;
 
 pub type CliResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -75,4 +78,79 @@ pub fn single_target(
         1 => Ok(targets.into_iter().next().unwrap()),
         _ => Err("multiple CanoKeys found; use --device or --reader to select one".into()),
     }
+}
+
+/// Prompt for the Admin PIN without echoing.
+pub fn prompt_admin_pin() -> CliResult<Pin> {
+    let entered = rpassword::prompt_password("Admin PIN: ")?;
+    Pin::from_bytes(entered.as_bytes()).map_err(|error| format!("{error}").into())
+}
+
+/// True when libcanokey reports that the request needs Admin PIN verification
+/// (a protected request built without a PIN, or a card-side 6982), so the CLI
+/// should prompt and retry once. libcanokey never tries default credentials.
+pub fn needs_admin_pin<E>(error: &DriveError<E>) -> bool {
+    matches!(
+        error,
+        DriveError::Protocol(error)
+            if error.kind == ErrorKind::SecurityStatusNotSatisfied
+                || (error.kind == ErrorKind::AuthenticationFailed
+                    && error.reference == Some(SecretReference::AdminPin))
+    )
+}
+
+/// Human-facing message for a transport/protocol failure, decoding the
+/// firmware capability gates that libcanokey surfaces as typed errors.
+pub fn describe_drive_error(error: &DriveError<io::Error>) -> String {
+    match error {
+        DriveError::Transport(error) => format!("transport exchange failed: {error}"),
+        DriveError::Protocol(error) => match error.kind {
+            ErrorKind::CapabilityUnknown => {
+                "unrecognized firmware; refusing to attempt the operation".to_string()
+            }
+            ErrorKind::UnsupportedFeature => {
+                "this firmware does not support the operation".to_string()
+            }
+            ErrorKind::AuthenticationFailed => match error.retries_remaining {
+                Some(retries) => format!("incorrect PIN ({retries} attempts remaining)"),
+                None => "incorrect PIN".to_string(),
+            },
+            ErrorKind::PinBlocked => "the PIN is blocked".to_string(),
+            _ => format!("protocol error: {error}"),
+        },
+    }
+}
+
+/// Run an Admin operation that may be PIN-protected. An explicit `pin` is used
+/// directly; otherwise the operation is tried without a PIN first, and when
+/// the library or the card demands verification the user is prompted once and
+/// the operation retried with the entered PIN.
+pub fn with_admin_pin_retry<T>(
+    pin: Option<Pin>,
+    mut operation: impl FnMut(Option<Pin>) -> Result<T, DriveError<io::Error>>,
+) -> CliResult<T> {
+    match pin {
+        Some(pin) => operation(Some(pin)).map_err(|error| describe_drive_error(&error).into()),
+        None => match operation(None) {
+            Ok(result) => Ok(result),
+            Err(error) if needs_admin_pin(&error) => {
+                let pin = prompt_admin_pin()?;
+                operation(Some(pin)).map_err(|error| describe_drive_error(&error).into())
+            }
+            Err(error) => Err(describe_drive_error(&error).into()),
+        },
+    }
+}
+
+/// Ask a y/N question on the terminal; defaults to "no".
+pub fn confirm(prompt: &str) -> CliResult<bool> {
+    use std::io::Write as _;
+    eprint!("{prompt} [y/N]: ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }

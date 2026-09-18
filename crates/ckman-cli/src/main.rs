@@ -44,6 +44,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::config::ConfigCommand,
     },
+    /// Manage the OATH application.
+    Oath {
+        #[command(subcommand)]
+        command: commands::oath::OathCommand,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -59,6 +64,9 @@ fn main() -> std::process::ExitCode {
         Commands::List { serials } => commands::list::run(*serials, cli.reader.as_deref()),
         Commands::Config { command } => {
             commands::config::run(cli.device, cli.reader.as_deref(), command)
+        }
+        Commands::Oath { command } => {
+            commands::oath::run(cli.device, cli.reader.as_deref(), command)
         }
     };
     match result {

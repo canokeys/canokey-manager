@@ -14,7 +14,10 @@ canokey.workspace = true
 ckman-core = { path = "../ckman-core" }
 ckman-transport = { path = "../ckman-transport" }
 clap.workspace = true
+getrandom.workspace = true
+keyring.workspace = true
 rpassword.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true
