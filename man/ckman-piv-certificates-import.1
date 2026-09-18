@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates-import 1  ckman 
+.SH NAME
+ckman\-piv\-certificates\-import \- Import a certificate (PEM/DER) into a slot
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\-import\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fICERTIFICATE\fR> 
+.SH DESCRIPTION
+Import a certificate (PEM/DER) into a slot
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fICERTIFICATE\fR>
+File containing the certificate (\*(Aq\-\*(Aq for stdin)

@@ -1,0 +1,38 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-keys 1  ckman 
+.SH NAME
+ckman\-piv\-keys \- Manage PIV keys
+.SH SYNOPSIS
+\fBckman\-piv\-keys\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage PIV keys
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-piv\-keys\-generate(1)
+Generate an asymmetric key pair on the device
+.TP
+ckman\-piv\-keys\-import(1)
+Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1)
+.TP
+ckman\-piv\-keys\-attest(1)
+Write a device\-generated attestation certificate for a slot
+.TP
+ckman\-piv\-keys\-info(1)
+Show metadata about the key in a slot
+.TP
+ckman\-piv\-keys\-export(1)
+Export the public key of a slot
+.TP
+ckman\-piv\-keys\-move(1)
+Move a key from one slot to another (certificate stays in place)
+.TP
+ckman\-piv\-keys\-delete(1)
+Delete the key in a slot (the certificate is retained)
+.TP
+ckman\-piv\-keys\-help(1)
+Print this message or the help of the given subcommand(s)

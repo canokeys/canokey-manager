@@ -1,0 +1,52 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman 1  ckman 
+.SH NAME
+ckman \- Configure your CanoKey via the command line
+.SH SYNOPSIS
+\fBckman\fR [\fB\-d\fR|\fB\-\-device\fR] [\fB\-r\fR|\fB\-\-reader\fR] [\fB\-l\fR|\fB\-\-log\-level\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Configure your CanoKey via the command line
+.SH OPTIONS
+.TP
+\fB\-d\fR, \fB\-\-device\fR \fI<SERIAL>\fR
+Specify which CanoKey to interact with by serial number
+.TP
+\fB\-r\fR, \fB\-\-reader\fR \fI<NAME>\fR
+Specify a CanoKey by smart card reader name
+.TP
+\fB\-l\fR, \fB\-\-log\-level\fR \fI<LEVEL>\fR
+Enable logging at the given verbosity level
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ckman\-info(1)
+Show general information about the device
+.TP
+ckman\-list(1)
+List connected CanoKeys
+.TP
+ckman\-config(1)
+Read or change device configuration
+.TP
+ckman\-oath(1)
+Manage the OATH application
+.TP
+ckman\-piv(1)
+Manage the PIV application
+.TP
+ckman\-openpgp(1)
+Manage the OpenPGP application
+.TP
+ckman\-fido(1)
+Manage FIDO2/U2F
+.TP
+ckman\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.1.0

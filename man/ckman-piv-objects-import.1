@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-objects-import 1  ckman 
+.SH NAME
+ckman\-piv\-objects\-import \- Write an arbitrary PIV object value (without the outer 53 container)
+.SH SYNOPSIS
+\fBckman\-piv\-objects\-import\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIOBJECT_ID\fR> <\fIDATA\fR> 
+.SH DESCRIPTION
+Write an arbitrary PIV object value (without the outer 53 container)
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIOBJECT_ID\fR>
+Object ID as hex (e.g. 5f0000 or 5fc105)
+.TP
+<\fIDATA\fR>
+File containing the object value (\*(Aq\-\*(Aq for stdin)

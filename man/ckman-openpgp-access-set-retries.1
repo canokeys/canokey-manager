@@ -1,0 +1,30 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-access-set-retries 1  ckman 
+.SH NAME
+ckman\-openpgp\-access\-set\-retries \- Set retry counters for PIN, Reset Code and Admin PIN
+.SH SYNOPSIS
+\fBckman\-openpgp\-access\-set\-retries\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPIN_RETRIES\fR> <\fIRESET_CODE_RETRIES\fR> <\fIADMIN_PIN_RETRIES\fR> 
+.SH DESCRIPTION
+Set retry counters for PIN, Reset Code and Admin PIN.
+.PP
+Note: this resets the PIN and Admin PIN to their factory defaults.
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIPIN_RETRIES\fR>
+PIN retry count (1\-15)
+.TP
+<\fIRESET_CODE_RETRIES\fR>
+Reset Code retry count (1\-15)
+.TP
+<\fIADMIN_PIN_RETRIES\fR>
+Admin PIN retry count (1\-15)

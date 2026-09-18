@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-access-unblock-pin 1  ckman 
+.SH NAME
+ckman\-openpgp\-access\-unblock\-pin \- Unblock and set a new PIN using the Reset Code or the Admin PIN
+.SH SYNOPSIS
+\fBckman\-openpgp\-access\-unblock\-pin\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-r\fR|\fB\-\-reset\-code\fR] [\fB\-n\fR|\fB\-\-new\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Unblock and set a new PIN using the Reset Code or the Admin PIN
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (use "\-" to prompt)
+.TP
+\fB\-r\fR, \fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
+Reset Code
+.TP
+\fB\-n\fR, \fB\-\-new\-pin\fR \fI<NEW_PIN>\fR
+New PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

@@ -1,0 +1,86 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-keys-generate 1  ckman 
+.SH NAME
+ckman\-piv\-keys\-generate \- Generate an asymmetric key pair on the device
+.SH SYNOPSIS
+\fBckman\-piv\-keys\-generate\fR [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-\-pin\-policy\fR] [\fB\-\-touch\-policy\fR] [\fB\-\-format\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPUBLIC_KEY_OUTPUT\fR> 
+.SH DESCRIPTION
+Generate an asymmetric key pair on the device
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: rsa2048]
+Algorithm to use in key generation
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+rsa1024
+.IP \(bu 2
+rsa2048
+.IP \(bu 2
+ecc\-p256
+.IP \(bu 2
+ecc\-p384
+.IP \(bu 2
+ed25519
+.IP \(bu 2
+x25519
+.RE
+.TP
+\fB\-\-pin\-policy\fR \fI<PIN_POLICY>\fR
+PIN policy for the key
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+never
+.IP \(bu 2
+once
+.IP \(bu 2
+always
+.RE
+.TP
+\fB\-\-touch\-policy\fR \fI<TOUCH_POLICY>\fR
+Touch policy for the key
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+never
+.IP \(bu 2
+always
+.IP \(bu 2
+cached
+.RE
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: pem]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+pem
+.IP \(bu 2
+der
+.RE
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot (9a, 9c, 9d, 9e, or retired 82\-95)
+.TP
+<\fIPUBLIC_KEY_OUTPUT\fR>
+File to write the public key to (\*(Aq\-\*(Aq for stdout)

@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-keys-info 1  ckman 
+.SH NAME
+ckman\-openpgp\-keys\-info \- Show metadata about a private key
+.SH SYNOPSIS
+\fBckman\-openpgp\-keys\-info\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> 
+.SH DESCRIPTION
+Show metadata about a private key
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+Key slot
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sig
+.IP \(bu 2
+dec
+.IP \(bu 2
+aut
+.RE

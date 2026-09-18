@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-fido 1  ckman 
+.SH NAME
+ckman\-fido \- Manage FIDO2/U2F
+.SH SYNOPSIS
+\fBckman\-fido\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage FIDO2/U2F
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-fido\-info(1)
+Display general status of the FIDO application
+.TP
+ckman\-fido\-reset(1)
+Reset the FIDO application, deleting all credentials and the PIN
+.TP
+ckman\-fido\-access(1)
+Manage the FIDO2 PIN
+.TP
+ckman\-fido\-credentials(1)
+Manage discoverable (resident) credentials
+.TP
+ckman\-fido\-help(1)
+Print this message or the help of the given subcommand(s)

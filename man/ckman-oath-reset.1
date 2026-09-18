@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-reset 1  ckman 
+.SH NAME
+ckman\-oath\-reset \- Delete all OATH accounts and the OATH password
+.SH SYNOPSIS
+\fBckman\-oath\-reset\fR [\fB\-\-force\fR] [\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Delete all OATH accounts and the OATH password
+.SH OPTIONS
+.TP
+\fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-\-admin\-pin\fR \fI<PIN>\fR
+CanoKey Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

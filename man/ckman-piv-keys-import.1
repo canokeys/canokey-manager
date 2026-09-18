@@ -1,0 +1,55 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-keys-import 1  ckman 
+.SH NAME
+ckman\-piv\-keys\-import \- Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1)
+.SH SYNOPSIS
+\fBckman\-piv\-keys\-import\fR [\fB\-p\fR|\fB\-\-password\fR] [\fB\-\-pin\-policy\fR] [\fB\-\-touch\-policy\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPRIVATE_KEY\fR> 
+.SH DESCRIPTION
+Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1)
+.SH OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+Password used to decrypt the private key
+.TP
+\fB\-\-pin\-policy\fR \fI<PIN_POLICY>\fR
+PIN policy for the key
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+never
+.IP \(bu 2
+once
+.IP \(bu 2
+always
+.RE
+.TP
+\fB\-\-touch\-policy\fR \fI<TOUCH_POLICY>\fR
+Touch policy for the key
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+never
+.IP \(bu 2
+always
+.IP \(bu 2
+cached
+.RE
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fIPRIVATE_KEY\fR>
+File containing the private key (\*(Aq\-\*(Aq for stdin)

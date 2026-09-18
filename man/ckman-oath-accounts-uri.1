@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-accounts-uri 1  ckman 
+.SH NAME
+ckman\-oath\-accounts\-uri \- Add a new account from an otpauth:// URI (prompted when omitted)
+.SH SYNOPSIS
+\fBckman\-oath\-accounts\-uri\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURI\fR] 
+.SH DESCRIPTION
+Add a new account from an otpauth:// URI (prompted when omitted)
+.SH OPTIONS
+.TP
+\fB\-t\fR, \fB\-\-touch\fR
+Require touch on the CanoKey to generate a code
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Skip the existing\-account check
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+The password to unlock the OATH application
+.TP
+\fB\-r\fR, \fB\-\-remember\fR
+Remember the password on this machine
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIURI\fR]
+The otpauth:// URI

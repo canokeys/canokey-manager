@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-access-unblock-pin 1  ckman 
+.SH NAME
+ckman\-piv\-access\-unblock\-pin \- Unblock and set a new PIN using the PUK
+.SH SYNOPSIS
+\fBckman\-piv\-access\-unblock\-pin\fR [\fB\-p\fR|\fB\-\-puk\fR] [\fB\-n\fR|\fB\-\-new\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Unblock and set a new PIN using the PUK
+.SH OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-puk\fR \fI<PUK>\fR
+Current PUK (prompted when omitted)
+.TP
+\fB\-n\fR, \fB\-\-new\-pin\fR \fI<NEW_PIN>\fR
+New PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

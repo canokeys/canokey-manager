@@ -1,0 +1,74 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-accounts-add 1  ckman 
+.SH NAME
+ckman\-oath\-accounts\-add \- Add a new account
+.SH SYNOPSIS
+\fBckman\-oath\-accounts\-add\fR [\fB\-o\fR|\fB\-\-oath\-type\fR] [\fB\-d\fR|\fB\-\-digits\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-c\fR|\fB\-\-counter\fR] [\fB\-i\fR|\fB\-\-issuer\fR] [\fB\-P\fR|\fB\-\-period\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fISECRET\fR] 
+.SH DESCRIPTION
+Add a new account
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-oath\-type\fR \fI<OATH_TYPE>\fR [default: totp]
+Time\-based (TOTP) or counter\-based (HOTP) account
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+totp
+.IP \(bu 2
+hotp
+.RE
+.TP
+\fB\-d\fR, \fB\-\-digits\fR \fI<DIGITS>\fR [default: 6]
+Number of digits in generated codes
+.TP
+\fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: sha1]
+Algorithm used for code generation
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sha1
+.IP \(bu 2
+sha256
+.IP \(bu 2
+sha512
+.RE
+.TP
+\fB\-c\fR, \fB\-\-counter\fR \fI<COUNTER>\fR [default: 0]
+Initial counter value for HOTP accounts
+.TP
+\fB\-i\fR, \fB\-\-issuer\fR \fI<ISSUER>\fR
+Issuer of the account (optional)
+.TP
+\fB\-P\fR, \fB\-\-period\fR \fI<PERIOD>\fR [default: 30]
+Number of seconds a TOTP code is valid
+.TP
+\fB\-g\fR, \fB\-\-generate\fR
+Generate a random credential key (cannot be used with SECRET)
+.TP
+\fB\-t\fR, \fB\-\-touch\fR
+Require touch on the CanoKey to generate a code
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Skip the existing\-account check
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+The password to unlock the OATH application
+.TP
+\fB\-r\fR, \fB\-\-remember\fR
+Remember the password on this machine
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Human\-readable name of the account, such as a username or e\-mail address
+.TP
+[\fISECRET\fR]
+Base32\-encoded secret key provided by the server (prompted when omitted)

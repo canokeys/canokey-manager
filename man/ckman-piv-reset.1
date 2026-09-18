@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-reset 1  ckman 
+.SH NAME
+ckman\-piv\-reset \- Reset the PIV application, deleting all keys, certificates and PINs
+.SH SYNOPSIS
+\fBckman\-piv\-reset\fR [\fB\-\-force\fR] [\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Reset the PIV application, deleting all keys, certificates and PINs
+.SH OPTIONS
+.TP
+\fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-\-admin\-pin\fR \fI<PIN>\fR
+CanoKey Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

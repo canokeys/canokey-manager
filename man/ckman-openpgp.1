@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp 1  ckman 
+.SH NAME
+ckman\-openpgp \- Manage the OpenPGP application
+.SH SYNOPSIS
+\fBckman\-openpgp\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage the OpenPGP application
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-openpgp\-info(1)
+Display general status of the OpenPGP application
+.TP
+ckman\-openpgp\-reset(1)
+Reset the OpenPGP application, deleting all keys and data
+.TP
+ckman\-openpgp\-access(1)
+Manage PIN, Reset Code and Admin PIN
+.TP
+ckman\-openpgp\-keys(1)
+Manage private keys
+.TP
+ckman\-openpgp\-certificates(1)
+Manage certificates
+.TP
+ckman\-openpgp\-help(1)
+Print this message or the help of the given subcommand(s)

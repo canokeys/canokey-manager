@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-access-set-signature-policy 1  ckman 
+.SH NAME
+ckman\-openpgp\-access\-set\-signature\-policy \- Set the signature PIN policy
+.SH SYNOPSIS
+\fBckman\-openpgp\-access\-set\-signature\-policy\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPOLICY\fR> 
+.SH DESCRIPTION
+Set the signature PIN policy
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPOLICY\fR>
+Whether the PIN is required for every signature or once per session
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+always
+.IP \(bu 2
+once
+.RE

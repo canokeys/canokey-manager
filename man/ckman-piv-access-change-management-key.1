@@ -1,0 +1,47 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-access-change-management-key 1  ckman 
+.SH NAME
+ckman\-piv\-access\-change\-management\-key \- Change the management key
+.SH SYNOPSIS
+\fBckman\-piv\-access\-change\-management\-key\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-n\fR|\fB\-\-new\-management\-key\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-p\fR|\fB\-\-protect\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-\-force\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Change the management key
+.SH OPTIONS
+.TP
+\fB\-t\fR, \fB\-\-touch\fR
+Require touch when authenticating with the management key (AES\-192 only)
+.TP
+\fB\-n\fR, \fB\-\-new\-management\-key\fR \fI<NEW_MANAGEMENT_KEY>\fR
+New management key as 48 hex characters (prompted when omitted)
+.TP
+\fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR
+Management key algorithm (default: the card\*(Aqs current algorithm)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+tdes
+.IP \(bu 2
+aes192
+.RE
+.TP
+\fB\-p\fR, \fB\-\-protect\fR
+Store the new management key on the CanoKey, protected by PIN
+.TP
+\fB\-g\fR, \fB\-\-generate\fR
+Generate a random management key
+.TP
+\fB\-\-force\fR
+Do not prompt; requires \-\-generate or \-\-new\-management\-key
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

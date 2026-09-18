@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates-export 1  ckman 
+.SH NAME
+ckman\-piv\-certificates\-export \- Export the certificate stored in a slot
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\-export\fR [\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fICERTIFICATE\fR> 
+.SH DESCRIPTION
+Export the certificate stored in a slot
+.SH OPTIONS
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: pem]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+pem
+.IP \(bu 2
+der
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fICERTIFICATE\fR>
+File to write the certificate to (\*(Aq\-\*(Aq for stdout)

@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-access-change 1  ckman 
+.SH NAME
+ckman\-oath\-access\-change \- Set or change the OATH password
+.SH SYNOPSIS
+\fBckman\-oath\-access\-change\fR [\fB\-p\fR|\fB\-\-password\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-n\fR|\fB\-\-new\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Set or change the OATH password
+.SH OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+The current password
+.TP
+\fB\-c\fR, \fB\-\-clear\fR
+Remove the current password instead of setting a new one
+.TP
+\fB\-n\fR, \fB\-\-new\-password\fR \fI<NEW_PASSWORD>\fR
+Provide the new password as an argument
+.TP
+\fB\-r\fR, \fB\-\-remember\fR
+Remember the password on this machine
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

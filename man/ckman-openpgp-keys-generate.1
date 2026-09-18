@@ -1,0 +1,58 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-keys-generate 1  ckman 
+.SH NAME
+ckman\-openpgp\-keys\-generate \- Generate a key pair on the device (replacing any key in the slot)
+.SH SYNOPSIS
+\fBckman\-openpgp\-keys\-generate\fR [\fB\-\-algorithm\fR] [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> 
+.SH DESCRIPTION
+Generate a key pair on the device (replacing any key in the slot)
+.SH OPTIONS
+.TP
+\fB\-\-algorithm\fR \fI<ALGORITHM>\fR
+Set the slot\*(Aqs algorithm attributes first (discards any existing key)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+rsa2048
+.IP \(bu 2
+rsa3072
+.IP \(bu 2
+rsa4096
+.IP \(bu 2
+ecc\-p256
+.IP \(bu 2
+ecc\-p384
+.IP \(bu 2
+ecc\-p521
+.IP \(bu 2
+secp256k1
+.IP \(bu 2
+ed25519
+.IP \(bu 2
+x25519
+.RE
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+Key slot
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sig
+.IP \(bu 2
+dec
+.IP \(bu 2
+aut
+.RE

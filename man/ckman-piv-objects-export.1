@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-objects-export 1  ckman 
+.SH NAME
+ckman\-piv\-objects\-export \- Read an arbitrary PIV object
+.SH SYNOPSIS
+\fBckman\-piv\-objects\-export\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIOBJECT_ID\fR> <\fIOUTPUT\fR> 
+.SH DESCRIPTION
+Read an arbitrary PIV object
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIOBJECT_ID\fR>
+Object ID as hex (e.g. 5f0000 or 5fc105)
+.TP
+<\fIOUTPUT\fR>
+File to write the object value to (\*(Aq\-\*(Aq for stdout)

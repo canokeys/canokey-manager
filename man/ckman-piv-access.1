@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-access 1  ckman 
+.SH NAME
+ckman\-piv\-access \- Manage PIV PIN, PUK and management key
+.SH SYNOPSIS
+\fBckman\-piv\-access\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage PIV PIN, PUK and management key
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-piv\-access\-set\-retries(1)
+Set PIN/PUK retry limits, resetting both to the factory defaults
+.TP
+ckman\-piv\-access\-change\-pin(1)
+Change the PIV PIN
+.TP
+ckman\-piv\-access\-change\-puk(1)
+Change the PUK
+.TP
+ckman\-piv\-access\-change\-management\-key(1)
+Change the management key
+.TP
+ckman\-piv\-access\-unblock\-pin(1)
+Unblock and set a new PIN using the PUK
+.TP
+ckman\-piv\-access\-help(1)
+Print this message or the help of the given subcommand(s)

@@ -1,0 +1,46 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates-generate 1  ckman 
+.SH NAME
+ckman\-piv\-certificates\-generate \- Generate a self\-signed certificate, signed by the key in the slot
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\-generate\fR <\fB\-s\fR|\fB\-\-subject\fR> [\fB\-v\fR|\fB\-\-valid\-days\fR] [\fB\-\-hash\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> [\fIPUBLIC_KEY\fR] 
+.SH DESCRIPTION
+Generate a self\-signed certificate, signed by the key in the slot
+.SH OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-subject\fR \fI<SUBJECT>\fR
+Subject for the certificate, as an RFC 4514 string
+.TP
+\fB\-v\fR, \fB\-\-valid\-days\fR \fI<VALID_DAYS>\fR [default: 365]
+Number of days until the certificate expires
+.TP
+\fB\-\-hash\fR \fI<HASH>\fR [default: sha256]
+Hash algorithm used for the signature
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sha256
+.IP \(bu 2
+sha384
+.IP \(bu 2
+sha512
+.RE
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+[\fIPUBLIC_KEY\fR]
+File containing the public key (PEM/DER); defaults to the slot\*(Aqs own key

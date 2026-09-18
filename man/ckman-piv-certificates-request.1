@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates-request 1  ckman 
+.SH NAME
+ckman\-piv\-certificates\-request \- Generate a Certificate Signing Request (CSR)
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\-request\fR <\fB\-s\fR|\fB\-\-subject\fR> [\fB\-\-hash\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPUBLIC_KEY\fR> <\fICSR_OUTPUT\fR> 
+.SH DESCRIPTION
+Generate a Certificate Signing Request (CSR)
+.SH OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-subject\fR \fI<SUBJECT>\fR
+Subject for the requested certificate, as an RFC 4514 string
+.TP
+\fB\-\-hash\fR \fI<HASH>\fR [default: sha256]
+Hash algorithm used for the signature
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sha256
+.IP \(bu 2
+sha384
+.IP \(bu 2
+sha512
+.RE
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fIPUBLIC_KEY\fR>
+File containing the public key (PEM/DER, \*(Aq\-\*(Aq for stdin)
+.TP
+<\fICSR_OUTPUT\fR>
+File to write the CSR to (\*(Aq\-\*(Aq for stdout)

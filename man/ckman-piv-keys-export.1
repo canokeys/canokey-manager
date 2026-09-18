@@ -1,0 +1,38 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-keys-export 1  ckman 
+.SH NAME
+ckman\-piv\-keys\-export \- Export the public key of a slot
+.SH SYNOPSIS
+\fBckman\-piv\-keys\-export\fR [\fB\-\-format\fR] [\fB\-\-verify\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPUBLIC_KEY_OUTPUT\fR> 
+.SH DESCRIPTION
+Export the public key of a slot
+.SH OPTIONS
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: pem]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+pem
+.IP \(bu 2
+der
+.RE
+.TP
+\fB\-\-verify\fR
+Verify that the private key matches by a test signature (needs PIN)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fIPUBLIC_KEY_OUTPUT\fR>
+File to write the public key to (\*(Aq\-\*(Aq for stdout)

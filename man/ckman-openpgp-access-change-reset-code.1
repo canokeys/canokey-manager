@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-access-change-reset-code 1  ckman 
+.SH NAME
+ckman\-openpgp\-access\-change\-reset\-code \- Set (or, with \-\-clear, remove) the Reset Code
+.SH SYNOPSIS
+\fBckman\-openpgp\-access\-change\-reset\-code\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-r\fR|\fB\-\-reset\-code\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Set (or, with \-\-clear, remove) the Reset Code
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-r\fR, \fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
+New Reset Code (prompted when omitted)
+.TP
+\fB\-c\fR, \fB\-\-clear\fR
+Remove the Reset Code instead of setting one
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-fido-access-set-min-length 1  ckman 
+.SH NAME
+ckman\-fido\-access\-set\-min\-length \- Set the minimum PIN length (persistent authenticator configuration)
+.SH SYNOPSIS
+\fBckman\-fido\-access\-set\-min\-length\fR [\fB\-R\fR|\fB\-\-rp\-id\fR] [\fB\-f\fR|\fB\-\-force\-change\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fILENGTH\fR> 
+.SH DESCRIPTION
+Set the minimum PIN length (persistent authenticator configuration)
+.SH OPTIONS
+.TP
+\fB\-R\fR, \fB\-\-rp\-id\fR \fI<RP_IDS>\fR
+Restrict the policy to these relying parties
+.TP
+\fB\-f\fR, \fB\-\-force\-change\fR
+Force the user to change the PIN on next use
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+Current PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILENGTH\fR>
+Minimum PIN length (4\-63)

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates-delete 1  ckman 
+.SH NAME
+ckman\-piv\-certificates\-delete \- Delete the certificate in a slot (the key is retained)
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\-delete\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> 
+.SH DESCRIPTION
+Delete the certificate in a slot (the key is retained)
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot

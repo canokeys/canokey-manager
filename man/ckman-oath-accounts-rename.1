@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-accounts-rename 1  ckman 
+.SH NAME
+ckman\-oath\-accounts\-rename \- Rename an account
+.SH SYNOPSIS
+\fBckman\-oath\-accounts\-rename\fR [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIQUERY\fR> <\fINAME\fR> 
+.SH DESCRIPTION
+Rename an account
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Confirm the rename without prompting
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+The password to unlock the OATH application
+.TP
+\fB\-r\fR, \fB\-\-remember\fR
+Remember the password on this machine
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIQUERY\fR>
+A query to match a single account (as shown in "list")
+.TP
+<\fINAME\fR>
+The new name of the account (use "issuer:name" to specify an issuer)

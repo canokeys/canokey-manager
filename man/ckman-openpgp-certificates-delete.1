@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-certificates-delete 1  ckman 
+.SH NAME
+ckman\-openpgp\-certificates\-delete \- Delete the certificate of a key slot (the key is retained)
+.SH SYNOPSIS
+\fBckman\-openpgp\-certificates\-delete\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> 
+.SH DESCRIPTION
+Delete the certificate of a key slot (the key is retained)
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+Key slot
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sig
+.IP \(bu 2
+dec
+.IP \(bu 2
+aut
+.RE

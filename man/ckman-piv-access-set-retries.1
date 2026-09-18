@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-access-set-retries 1  ckman 
+.SH NAME
+ckman\-piv\-access\-set\-retries \- Set PIN/PUK retry limits, resetting both to the factory defaults
+.SH SYNOPSIS
+\fBckman\-piv\-access\-set\-retries\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPIN_RETRIES\fR> <\fIPUK_RETRIES\fR> 
+.SH DESCRIPTION
+Set PIN/PUK retry limits, resetting both to the factory defaults
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPIN_RETRIES\fR>
+PIN retry count (1\-15)
+.TP
+<\fIPUK_RETRIES\fR>
+PUK retry count (1\-15)

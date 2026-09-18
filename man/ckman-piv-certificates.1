@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-certificates 1  ckman 
+.SH NAME
+ckman\-piv\-certificates \- Manage PIV certificates
+.SH SYNOPSIS
+\fBckman\-piv\-certificates\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage PIV certificates
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-piv\-certificates\-import(1)
+Import a certificate (PEM/DER) into a slot
+.TP
+ckman\-piv\-certificates\-export(1)
+Export the certificate stored in a slot
+.TP
+ckman\-piv\-certificates\-generate(1)
+Generate a self\-signed certificate, signed by the key in the slot
+.TP
+ckman\-piv\-certificates\-request(1)
+Generate a Certificate Signing Request (CSR)
+.TP
+ckman\-piv\-certificates\-delete(1)
+Delete the certificate in a slot (the key is retained)
+.TP
+ckman\-piv\-certificates\-help(1)
+Print this message or the help of the given subcommand(s)

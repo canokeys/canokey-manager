@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-accounts-delete 1  ckman 
+.SH NAME
+ckman\-oath\-accounts\-delete \- Delete an account
+.SH SYNOPSIS
+\fBckman\-oath\-accounts\-delete\fR [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIQUERY\fR> 
+.SH DESCRIPTION
+Delete an account
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Confirm the deletion without prompting
+.TP
+\fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
+The password to unlock the OATH application
+.TP
+\fB\-r\fR, \fB\-\-remember\fR
+Remember the password on this machine
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIQUERY\fR>
+A query to match a single account (as shown in "list")

@@ -1,0 +1,35 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-accounts 1  ckman 
+.SH NAME
+ckman\-oath\-accounts \- Manage and use OATH accounts
+.SH SYNOPSIS
+\fBckman\-oath\-accounts\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage and use OATH accounts
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-oath\-accounts\-add(1)
+Add a new account
+.TP
+ckman\-oath\-accounts\-uri(1)
+Add a new account from an otpauth:// URI (prompted when omitted)
+.TP
+ckman\-oath\-accounts\-list(1)
+List all accounts
+.TP
+ckman\-oath\-accounts\-code(1)
+Generate codes from accounts, optionally filtered by a query
+.TP
+ckman\-oath\-accounts\-rename(1)
+Rename an account
+.TP
+ckman\-oath\-accounts\-delete(1)
+Delete an account
+.TP
+ckman\-oath\-accounts\-help(1)
+Print this message or the help of the given subcommand(s)
