@@ -46,11 +46,20 @@ Install from a checkout:
 cargo install --path crates/ckman-cli --locked
 ```
 
+crates.io publishing is blocked until libcanokey publishes (the workspace
+depends on it by git revision, which crates.io forbids); 0.1.0 therefore
+ships as GitHub-release binaries built by
+[cargo-dist](https://opensource.axo.dev/cargo-dist/) (see
+`dist-workspace.toml`). cargo-dist is a **release prerequisite**, not
+vendored: install it once with `cargo install cargo-dist --locked`, then
+validate/refresh the release setup with `cargo dist init` (answer the
+prompts to target this workspace; commit the generated workflow).
+
 Man pages are generated with clap and committed under `man/`; regenerate
 after CLI changes with:
 
 ```sh
-cargo run --bin ckman-mangen -- man
+mkdir -p man && cargo run -p ckman-mangen -- man
 # Install with e.g.: install -Dm644 man/*.1 -t "$PREFIX/share/man/man1"
 ```
 

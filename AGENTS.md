@@ -7,12 +7,14 @@
 - `crates/ckman-core` — typed wrappers over libcanokey (admin, OATH, PIV,
   OpenPGP, FIDO2) plus host-side formats (X.509/CSR building, key-file
   parsing, otpauth:// URIs).
-- `crates/ckman-cli` — the `ckman` binary (clap), plus the `ckman-mangen`
-  man-page generator.
+- `crates/ckman-cli` — the `ckman` binary (clap).
+- `crates/ckman-mangen` — the man-page generator, a separate
+  `publish = false` crate so `cargo install` never ships it.
 - `tests/device/` — hardware/usbip black-box harness (see its README).
 - `tests/transcripts/` — scripted-APDU convention (see its README).
 - `man/` — generated man pages, regenerated with
-  `cargo run --bin ckman-mangen -- man` and committed.
+  `mkdir -p man && cargo run -p ckman-mangen -- man` and committed;
+  `ckman-mangen` writes into an existing directory.
 
 ## Gates
 
@@ -46,6 +48,13 @@ Get APDU bytes from libcanokey's own test fixtures whenever possible.
 
 No device operations that write, reset, change PINs/config, or delete may
 run against a real key from tests or CI without explicit operator intent.
+
+## Releases
+
+crates.io is blocked until libcanokey publishes (git dependency). Releases
+ship as GitHub-release binaries via cargo-dist (`dist-workspace.toml`).
+Release prerequisite: `cargo install cargo-dist --locked`, then
+`cargo dist init` and commit the generated workflow.
 
 ## Branch model
 
