@@ -1,6 +1,6 @@
 [package]
 name = "ckman-core"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Session layer over libcanokey: profiles, credentials, crypto formats"

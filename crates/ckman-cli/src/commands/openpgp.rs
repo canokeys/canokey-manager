@@ -127,7 +127,7 @@ pub enum KeysCommand {
         #[arg(value_enum)]
         key: KeySlotArg,
         /// Set the slot's algorithm attributes first (discards any existing key).
-        #[arg(short, long, value_enum)]
+        #[arg(long, value_enum)]
         algorithm: Option<KeyAlgorithmArg>,
         /// Admin PIN (prompted when omitted).
         #[arg(short = 'a', long)]

@@ -1,0 +1,29 @@
+# cargo-dist configuration for GitHub-release builds of the `ckman` binary.
+#
+# This is a scaffold only: no release workflow is wired up and nothing is
+# published. To activate, install cargo-dist and run `cargo dist init` (or
+# `cargo dist plan`) to validate, then commit the generated release workflow.
+#
+# The build matrix covers macOS universal2, Windows x64, and Linux
+# x64/aarch64. PC/SC and hidapi are system dependencies on all targets;
+# release builds need pcsclite headers on Linux.
+
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The installers to generate for each release
+installers = ["shell", "powershell", "pkg"]
+# Target platforms to build apps for (Rust target-triple syntax);
+# universal2-apple-darwin builds both Apple architectures and lipo-merges.
+targets = [
+    "universal2-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+# Only the CLI binary ships.
+binaries = ["ckman"]
+# Publish jobs run from tags named v*.
+tag-namespace = "v"

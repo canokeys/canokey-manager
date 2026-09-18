@@ -3,6 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/canokeys/canokey-manager"
@@ -16,6 +17,7 @@ canokey-ctap = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f
 
 base64ct = "1"
 clap = { version = "4.5", features = ["derive"] }
+clap_mangen = "0.2"
 der = { version = "0.7", features = ["derive", "oid"] }
 getrandom = { version = "0.3", features = ["std"] }
 hidapi = "2.6"
