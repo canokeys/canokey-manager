@@ -7,5 +7,9 @@ description = "Session layer over libcanokey: profiles, credentials, crypto form
 
 [dependencies]
 canokey.workspace = true
+getrandom.workspace = true
+pbkdf2.workspace = true
+sha1.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zeroize.workspace = true

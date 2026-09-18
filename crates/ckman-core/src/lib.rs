@@ -8,6 +8,8 @@
 use canokey::{DeviceProfile, Operation, ProbeOptions, Step};
 
 pub mod admin;
+pub mod oath;
+pub mod uri;
 
 /// The caller's raw transport: one complete command APDU in, one complete
 /// response (data + SW1/SW2) out. Exactly one round trip per call.
