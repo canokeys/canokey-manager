@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/canokeys/canokey-manager"
+
+# libcanokey is pinned to the codex/oath-admin-migration branch, the only
+# branch carrying canokey-ctap and canokey-ndef. Switch to a main tag once
+# the branch merges.
+[workspace.dependencies]
+canokey = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e" }
+canokey-ctap = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e" }
+
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1

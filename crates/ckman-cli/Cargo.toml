@@ -1,0 +1,17 @@
+[package]
+name = "ckman-cli"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+description = "ckman: CanoKey management CLI"
+
+[[bin]]
+name = "ckman"
+path = "src/main.rs"
+
+[dependencies]
+ckman-core = { path = "../ckman-core" }
+ckman-transport = { path = "../ckman-transport" }
+clap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
