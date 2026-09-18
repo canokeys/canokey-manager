@@ -1,11 +1,13 @@
-//! Session layer over libcanokey: operation driving, probing, and (from
-//! Phase 2 on) per-applet sessions.
+//! Session layer over libcanokey: operation driving, probing, and per-applet
+//! sessions.
 //!
 //! The application drives every libcanokey operation itself: it holds the
 //! exclusive connection lease for the whole operation, exchanges each command
 //! exactly once, and feeds back the complete response including SW1/SW2.
 
 use canokey::{DeviceProfile, Operation, ProbeOptions, Step};
+
+pub mod admin;
 
 /// The caller's raw transport: one complete command APDU in, one complete
 /// response (data + SW1/SW2) out. Exactly one round trip per call.
