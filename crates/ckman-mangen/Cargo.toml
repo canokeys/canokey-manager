@@ -1,0 +1,13 @@
+[package]
+name = "ckman-mangen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Man-page generator for ckman (development tool)"
+publish = false
+
+[dependencies]
+ckman-cli = { path = "../ckman-cli" }
+clap.workspace = true
+clap_mangen.workspace = true

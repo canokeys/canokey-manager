@@ -365,6 +365,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ckman-mangen"
+version = "0.1.0"
+dependencies = [
+ "ckman-cli",
+ "clap",
+ "clap_mangen",
+]
+
+[[package]]
 name = "ckman-transport"
 version = "0.1.0"
 dependencies = [
