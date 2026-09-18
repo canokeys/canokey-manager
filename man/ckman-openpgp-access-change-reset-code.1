@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-openpgp\-access\-change\-reset\-code \- Set (or, with \-\-clear, remove) the Reset Code
 .SH SYNOPSIS
-\fBckman\-openpgp\-access\-change\-reset\-code\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-r\fR|\fB\-\-reset\-code\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-openpgp\-access\-change\-reset\-code\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-\-reset\-code\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Set (or, with \-\-clear, remove) the Reset Code
 .SH OPTIONS
@@ -12,8 +12,8 @@ Set (or, with \-\-clear, remove) the Reset Code
 \fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
 Admin PIN (prompted when omitted)
 .TP
-\fB\-r\fR, \fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
-New Reset Code (prompted when omitted)
+\fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
+New Reset Code (prompted when omitted; long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-c\fR, \fB\-\-clear\fR
 Remove the Reset Code instead of setting one

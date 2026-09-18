@@ -30,6 +30,11 @@ pub enum FidoCommand {
         #[command(subcommand)]
         command: AccessCommand,
     },
+    /// Manage persistent FIDO authenticator configuration.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
     /// Manage discoverable (resident) credentials.
     Credentials {
         #[command(subcommand)]
@@ -42,17 +47,17 @@ pub enum AccessCommand {
     /// Set the FIDO2 PIN (when none is set).
     SetPin {
         /// New PIN (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_pin: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
     /// Change the FIDO2 PIN.
     ChangePin {
         /// Current PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
         /// New PIN (prompted when omitted).
-        #[arg(short = 'n', long)]
-        new_pin: Option<String>,
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_pin: Option<crate::commands::SecretString>,
     },
     /// Set the minimum PIN length (persistent authenticator configuration).
     SetMinLength {
@@ -66,14 +71,30 @@ pub enum AccessCommand {
         #[arg(short, long)]
         force_change: bool,
         /// Current PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
     },
     /// Force the user to change the PIN on next use.
     ForceChange {
         /// Current PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
+    },
+    /// Verify the FIDO2 PIN against the CanoKey (resets the retry counter).
+    VerifyPin {
+        /// Current PIN (prompted when omitted).
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommand {
+    /// Toggle the "always require user verification" setting.
+    ToggleAlwaysUv {
+        /// Current PIN (prompted when omitted).
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
     },
 }
 
@@ -82,8 +103,8 @@ pub enum CredentialsCommand {
     /// List resident credentials.
     List {
         /// FIDO2 PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
         /// Output full credential information as CSV.
         #[arg(short, long)]
         csv: bool,
@@ -93,8 +114,8 @@ pub enum CredentialsCommand {
         /// A unique substring of the credential ID (as shown by "list").
         credential_id: String,
         /// FIDO2 PIN (prompted when omitted).
-        #[arg(short = 'P', long)]
-        pin: Option<String>,
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
         /// Confirm deletion without prompting.
         #[arg(short, long)]
         force: bool,
@@ -106,6 +127,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &FidoCommand) -> 
         FidoCommand::Info => info(device, reader),
         FidoCommand::Reset { force } => reset(device, reader, *force),
         FidoCommand::Access { command } => access(device, reader, command),
+        FidoCommand::Config { command } => config(device, reader, command),
         FidoCommand::Credentials { command } => credentials(device, reader, command),
     }
 }
@@ -147,36 +169,79 @@ enum FidoLink {
 
 impl FidoLink {
     /// HID is preferred (native FIDO transport); PC/SC is used when --reader
-    /// is given or no HID interface exists. FIDO over CCID requires firmware
-    /// 1.5.2+; older known firmware is rejected with a clear message.
+    /// or --device is given or no HID interface exists. FIDO over CCID
+    /// requires firmware 1.5.2+; older known firmware is rejected with a
+    /// clear message.
     fn connect(device: Option<u32>, reader: Option<&str>) -> CliResult<Self> {
+        if let Some(serial) = device {
+            // The USB HID serial string has no documented relation to the
+            // 4-byte admin serial that --device names (the old Python CLI
+            // resolved serials over CCID/NFC only). Never silently pick
+            // another device: resolve via the PC/SC probe, and fail clearly
+            // when the key is not reachable there.
+            let pcsc = Pcsc::establish()?;
+            let target = single_target(&pcsc, Some(serial), reader).map_err(|_| {
+                format!(
+                    "cannot resolve --device {serial} on the FIDO HID interface; \
+                     attach the CCID interface or select with --reader"
+                )
+            })?;
+            return Self::pcsc(target);
+        }
         if reader.is_none() {
-            let api = hidapi::HidApi::new()?;
-            if let Some(interface) = hid::list_fido_interfaces(&api).into_iter().next() {
-                let mut nonce = [0; 8];
-                getrandom::fill(&mut nonce)?;
-                let (channel, capabilities) =
-                    hid::connect(&api, &interface, nonce, Duration::from_secs(5))?;
-                if !capabilities.cbor {
-                    return Err("the HID interface does not speak CTAP2 (CBOR)".into());
+            if let Ok(api) = hidapi::HidApi::new() {
+                let interfaces = hid::list_fido_interfaces(&api);
+                if interfaces.len() > 1 {
+                    let mut message =
+                        "multiple CanoKey FIDO interfaces found; select one with --device or --reader:"
+                        .to_string();
+                    for interface in &interfaces {
+                        message.push_str(&format!(
+                            "
+  {} (serial {}, path {:?})",
+                            interface.product.as_deref().unwrap_or("CanoKey"),
+                            interface.serial.as_deref().unwrap_or("unknown"),
+                            interface.path
+                        ));
+                    }
+                    return Err(message.into());
                 }
-                let mut prompted = false;
-                let adapter =
-                    fido::CtapHidAdapter::new(channel, Duration::from_secs(60), move |keepalive| {
-                        if keepalive == Keepalive::UserPresenceNeeded && !prompted {
-                            eprintln!("Touch your CanoKey...");
-                            prompted = true;
+                if let Some(interface) = interfaces.into_iter().next() {
+                    let mut nonce = [0; 8];
+                    getrandom::fill(&mut nonce)?;
+                    match hid::connect(&api, &interface, nonce, Duration::from_secs(5)) {
+                        Ok((channel, capabilities)) if capabilities.cbor => {
+                            let mut prompted = false;
+                            let adapter = fido::CtapHidAdapter::new(
+                                channel,
+                                Duration::from_secs(60),
+                                move |keepalive| {
+                                    if keepalive == Keepalive::UserPresenceNeeded && !prompted {
+                                        eprintln!("Touch your CanoKey...");
+                                        prompted = true;
+                                    }
+                                    if keepalive == Keepalive::Processing {
+                                        prompted = false;
+                                    }
+                                },
+                            );
+                            return Ok(FidoLink::Hid(adapter));
                         }
-                        if keepalive == Keepalive::Processing {
-                            prompted = false;
+                        Ok(_) => eprintln!("note: the HID interface does not speak CTAP2 (CBOR); falling back to PC/SC"),
+                        Err(error) => {
+                            // e.g. the hidraw device is busy in another process.
+                            eprintln!("note: cannot open the HID interface ({error}); falling back to PC/SC");
                         }
-                    });
-                return Ok(FidoLink::Hid(adapter));
+                    }
+                }
             }
         }
-        // PC/SC fallback (or explicit --reader).
         let pcsc = Pcsc::establish()?;
         let target = single_target(&pcsc, device, reader)?;
+        Self::pcsc(target)
+    }
+
+    fn pcsc(target: super::Target) -> CliResult<Self> {
         if let Some(firmware) = target.profile.info().firmware() {
             if (firmware.major, firmware.minor) < (1, 5) {
                 return Err("FIDO over CCID requires firmware 1.5.2 or newer".into());
@@ -203,13 +268,13 @@ fn read_line() -> CliResult<String> {
     Ok(line.trim().to_string())
 }
 
-fn prompt_new_pin(minimum: u64) -> CliResult<String> {
+fn prompt_new_pin(minimum: u64) -> CliResult<super::SecretString> {
     let pin = super::prompt_password("Enter the new PIN: ")?;
     if (pin.len() as u64) < minimum || pin.len() > 63 {
         return Err(format!("the PIN must be {minimum}-63 characters").into());
     }
     let repeated = super::prompt_password("Repeat the new PIN: ")?;
-    if pin != repeated {
+    if pin.as_str() != repeated.as_str() {
         return Err("the PINs do not match".into());
     }
     Ok(pin)
@@ -328,7 +393,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             if !client_pin_set {
                 return Err("a FIDO2 PIN must be set first".into());
             }
-            let token = config_token(&mut link, protocol, pin.as_deref())?;
+            let token = config_token(&mut link, protocol, super::secret_str(pin))?;
             link.run(|exchange| {
                 fido::set_min_pin_length(
                     &token,
@@ -342,11 +407,34 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             println!("Minimum PIN length set to {length}.");
             Ok(())
         }
+        AccessCommand::VerifyPin { pin } => {
+            if !client_pin_set {
+                return Err("this CanoKey does not have a FIDO2 PIN set".into());
+            }
+            let pin = match pin {
+                Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+                None => super::prompt_password("Enter the FIDO2 PIN: ")?,
+            };
+            // A pinUvAuthToken request with an RP binding verifies the PIN,
+            // like the Python CLI's get_pin_token(GET_ASSERTION) probe.
+            let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
+            link.run(|exchange| {
+                fido::pin_token(
+                    &session,
+                    pin.as_bytes(),
+                    Permissions::GET_ASSERTION,
+                    Some("ckman.example.com"),
+                    exchange,
+                )
+            })?;
+            println!("PIN verified.");
+            Ok(())
+        }
         AccessCommand::ForceChange { pin } => {
             if !client_pin_set {
                 return Err("a FIDO2 PIN must be set first".into());
             }
-            let token = config_token(&mut link, protocol, pin.as_deref())?;
+            let token = config_token(&mut link, protocol, super::secret_str(pin))?;
             link.run(|exchange| {
                 fido::set_min_pin_length(
                     &token,
@@ -363,13 +451,44 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
     }
 }
 
+fn config(device: Option<u32>, reader: Option<&str>, command: &ConfigCommand) -> CliResult<()> {
+    match command {
+        ConfigCommand::ToggleAlwaysUv { pin } => {
+            let mut link = FidoLink::connect(device, reader)?;
+            let info = link.run(|exchange| fido::get_info(exchange))?;
+            let options = info.options();
+            let always_uv = options
+                .and_then(|options| options.iter().find(|(name, _)| name == "alwaysUv"))
+                .map(|(_, value)| *value);
+            let Some(always_uv) = always_uv else {
+                return Err("Always Require UV is not supported on this CanoKey".into());
+            };
+            if options
+                .and_then(|options| options.iter().find(|(name, _)| name == "authnrCfg"))
+                .map(|(_, value)| *value)
+                != Some(true)
+            {
+                return Err("authenticator configuration is not supported on this CanoKey".into());
+            }
+            let protocol = fido::preferred_protocol(&info);
+            let token = config_token(&mut link, protocol, super::secret_str(pin))?;
+            link.run(|exchange| fido::toggle_always_uv(&token, protocol, exchange))?;
+            println!(
+                "Always Require UV is {}.",
+                if always_uv { "off" } else { "on" }
+            );
+            Ok(())
+        }
+    }
+}
+
 fn config_token(
     link: &mut FidoLink,
     protocol: PinUvAuthProtocol,
     pin: Option<&str>,
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
-        Some(pin) => pin.to_string(),
+        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
         None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
@@ -390,7 +509,7 @@ fn credman_token(
     pin: Option<&str>,
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
-        Some(pin) => pin.to_string(),
+        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
         None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
@@ -424,18 +543,17 @@ struct CredRow {
 fn enumerate(
     link: &mut FidoLink,
     protocol: PinUvAuthProtocol,
-    pin: Option<&str>,
+    token: &canokey::ctap::pin::PinToken,
 ) -> CliResult<Vec<CredRow>> {
-    let token = credman_token(link, protocol, pin)?;
-    let metadata = link.run(|exchange| fido::creds_metadata(&token, protocol, exchange))?;
+    let metadata = link.run(|exchange| fido::creds_metadata(token, protocol, exchange))?;
     if metadata.existing_resident_credentials_count == 0 {
         return Ok(Vec::new());
     }
-    let rps = link.run(|exchange| fido::enumerate_rps(&token, protocol, exchange))?;
+    let rps = link.run(|exchange| fido::enumerate_rps(token, protocol, exchange))?;
     let mut rows = Vec::new();
     for rp in rps {
         let credentials = link.run(|exchange| {
-            fido::enumerate_credentials(&token, protocol, rp.rp_id_hash, false, exchange)
+            fido::enumerate_credentials(token, protocol, rp.rp_id_hash, false, exchange)
         })?;
         for credential in credentials {
             let (user_id, user_name, display_name) = match &credential.user {
@@ -470,7 +588,8 @@ fn credentials(
                 let info = link.run(|exchange| fido::get_info(exchange))?;
                 fido::preferred_protocol(&info)
             };
-            let rows = enumerate(&mut link, protocol, pin.as_deref())?;
+            let token = credman_token(&mut link, protocol, super::secret_str(pin))?;
+            let rows = enumerate(&mut link, protocol, &token)?;
             if *csv {
                 println!("credential_id,rp_id,user_name,user_display_name,user_id");
                 for row in &rows {
@@ -523,7 +642,8 @@ fn credentials(
                 let info = link.run(|exchange| fido::get_info(exchange))?;
                 fido::preferred_protocol(&info)
             };
-            let rows = enumerate(&mut link, protocol, pin.as_deref())?;
+            let token = credman_token(&mut link, protocol, super::secret_str(pin))?;
+            let rows = enumerate(&mut link, protocol, &token)?;
             let hits: Vec<&CredRow> = rows
                 .iter()
                 .filter(|row| hex_encode(&row.credential_id).starts_with(&query))
@@ -543,7 +663,7 @@ fn credentials(
             {
                 return Err("deletion aborted".into());
             }
-            let token = credman_token(&mut link, protocol, pin.as_deref())?;
+            // Same token as the enumeration: one PIN prompt covers both.
             let descriptor =
                 PublicKeyCredentialDescriptor::new("public-key", row.credential_id.clone());
             link.run(|exchange| fido::delete_credential(&token, protocol, &descriptor, exchange))?;

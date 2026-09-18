@@ -71,6 +71,19 @@ ckman fido credentials list      # resident credentials
 Global options: `--device SERIAL` and `--reader NAME` select one of several
 attached keys; `-l/--log-level` enables tracing on stderr.
 
+## Security notes
+
+- Secrets entered at prompts are zeroized on drop; secrets supplied as
+  command-line arguments (`--password`, `--admin-pin`, `--management-key`,
+  OATH base32 secrets) are additionally visible in shell history and the
+  process list while the command runs — prefer prompts for those.
+- Trace logging (`-l trace`) never logs APDU payloads (VERIFY carries a
+  plaintext PIN, OATH PUT the credential secret); full traffic hex requires
+  the explicit `CKMAN_LOG_TRAFFIC=1` environment variable.
+- `--device` names the 4-byte admin serial, which only the PC/SC probe reads;
+  for FIDO it therefore forces the PC/SC transport (the USB HID serial string
+  has no documented relation to the admin serial).
+
 ## Development
 
 See `AGENTS.md` for the contributor gates. In short:

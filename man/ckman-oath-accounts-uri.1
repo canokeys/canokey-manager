@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-oath\-accounts\-uri \- Add a new account from an otpauth:// URI (prompted when omitted)
 .SH SYNOPSIS
-\fBckman\-oath\-accounts\-uri\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURI\fR] 
+\fBckman\-oath\-accounts\-uri\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURI\fR] 
 .SH DESCRIPTION
 Add a new account from an otpauth:// URI (prompted when omitted)
 .SH OPTIONS
@@ -18,8 +18,8 @@ Skip the existing\-account check
 \fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
 The password to unlock the OATH application
 .TP
-\fB\-r\fR, \fB\-\-remember\fR
-Remember the password on this machine
+\fB\-\-remember\fR
+Remember the password on this machine (long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

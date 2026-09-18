@@ -13,10 +13,16 @@ use crate::commands;
 )]
 pub struct Cli {
     /// Specify which CanoKey to interact with by serial number.
-    #[arg(short, long, value_name = "SERIAL")]
+    #[arg(short, long, value_name = "SERIAL", global = true)]
     pub device: Option<u32>,
-    /// Specify a CanoKey by smart card reader name.
-    #[arg(short, long, value_name = "NAME", conflicts_with = "device")]
+    /// Specify a CanoKey by smart card reader name (case-insensitive substring).
+    #[arg(
+        short,
+        long,
+        value_name = "NAME",
+        conflicts_with = "device",
+        global = true
+    )]
     pub reader: Option<String>,
     /// Enable logging at the given verbosity level.
     #[arg(short = 'l', long, value_name = "LEVEL")]
@@ -60,4 +66,23 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::fido::FidoCommand,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_and_reader_are_global_options() {
+        // Old CLI rewrote argv for this; global args must parse after the
+        // subcommand path.
+        let cli = Cli::try_parse_from(["ckman", "oath", "info", "--device", "42"]).unwrap();
+        assert_eq!(cli.device, Some(42));
+        let cli = Cli::try_parse_from(["ckman", "piv", "info", "--reader", "CanoKey"]).unwrap();
+        assert_eq!(cli.reader.as_deref(), Some("CanoKey"));
+        let cli = Cli::try_parse_from(["ckman", "--device", "7", "list"]).unwrap();
+        assert_eq!(cli.device, Some(7));
+        // --device and --reader still conflict.
+        assert!(Cli::try_parse_from(["ckman", "info", "--device", "1", "--reader", "x"]).is_err());
+    }
 }

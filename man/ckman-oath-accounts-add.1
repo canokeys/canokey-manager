@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-oath\-accounts\-add \- Add a new account
 .SH SYNOPSIS
-\fBckman\-oath\-accounts\-add\fR [\fB\-o\fR|\fB\-\-oath\-type\fR] [\fB\-d\fR|\fB\-\-digits\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-c\fR|\fB\-\-counter\fR] [\fB\-i\fR|\fB\-\-issuer\fR] [\fB\-P\fR|\fB\-\-period\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fISECRET\fR] 
+\fBckman\-oath\-accounts\-add\fR [\fB\-o\fR|\fB\-\-oath\-type\fR] [\fB\-\-digits\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-c\fR|\fB\-\-counter\fR] [\fB\-i\fR|\fB\-\-issuer\fR] [\fB\-P\fR|\fB\-\-period\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fISECRET\fR] 
 .SH DESCRIPTION
 Add a new account
 .SH OPTIONS
@@ -22,8 +22,8 @@ totp
 hotp
 .RE
 .TP
-\fB\-d\fR, \fB\-\-digits\fR \fI<DIGITS>\fR [default: 6]
-Number of digits in generated codes
+\fB\-\-digits\fR \fI<DIGITS>\fR [default: 6]
+Number of digits in generated codes (long\-only: the global \-d/\-\-device owns the short flag)
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: sha1]
 Algorithm used for code generation
@@ -61,8 +61,8 @@ Skip the existing\-account check
 \fB\-p\fR, \fB\-\-password\fR \fI<PASSWORD>\fR
 The password to unlock the OATH application
 .TP
-\fB\-r\fR, \fB\-\-remember\fR
-Remember the password on this machine
+\fB\-\-remember\fR
+Remember the password on this machine (long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

@@ -48,6 +48,14 @@ Dropped commands and options (mostly YubiKey-only):
 
 Behavior differences worth knowing:
 
+- `--device`/`--reader` are global options (usable after subcommands, which
+  the Python CLI achieved by rewriting argv). Their short flags therefore own
+  `-d`/`-r` everywhere; the local `-d` (OATH `--digits`) and `-r`
+  (`--remember`, `--reset-code`) shorts are long-only now.
+- `--reader` matches reader names by case-insensitive substring, as the
+  Python CLI did.
+- New: `fido config toggle-always-uv` and `fido access verify-pin`.
+
 - `openpgp keys import` covers the sig/dec/aut slots (not only the
   attestation slot).
 - PIV `--protect` management-key storage works (the old fork rejected it on

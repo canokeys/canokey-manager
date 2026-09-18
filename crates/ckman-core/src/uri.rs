@@ -2,6 +2,7 @@
 //! base32 codec that account secrets are conventionally encoded with.
 
 use canokey::oath::{Algorithm, Kind};
+use zeroize::Zeroizing;
 
 /// Credential data parsed from an `otpauth://` URI.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -12,8 +13,8 @@ pub struct OtpAuth {
     pub issuer: Option<String>,
     /// Account name from the label.
     pub account: String,
-    /// Decoded base32 secret.
-    pub secret: Vec<u8>,
+    /// Decoded base32 secret; zeroized on drop.
+    pub secret: Zeroizing<Vec<u8>>,
     /// HMAC algorithm, SHA-1 when unspecified.
     pub algorithm: Algorithm,
     /// Decimal digit count, six when unspecified.
@@ -188,7 +189,7 @@ pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
         kind,
         issuer,
         account,
-        secret: secret.ok_or(UriError::MissingSecret)?,
+        secret: Zeroizing::new(secret.ok_or(UriError::MissingSecret)?),
         algorithm,
         digits,
         period,
@@ -207,7 +208,7 @@ mod tests {
         assert_eq!(parsed.kind, Kind::Totp);
         assert_eq!(parsed.issuer.as_deref(), Some("Example"));
         assert_eq!(parsed.account, "alice@example.com");
-        assert_eq!(parsed.secret, b"Hello!\xde\xad\xbe\xef");
+        assert_eq!(&*parsed.secret, b"Hello!\xde\xad\xbe\xef");
         assert_eq!(parsed.algorithm, Algorithm::Sha1);
         assert_eq!(parsed.digits, 6);
         assert_eq!(parsed.period, 30);

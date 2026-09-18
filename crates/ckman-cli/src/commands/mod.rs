@@ -12,8 +12,15 @@ use ckman_transport::pcsc::{Pcsc, PcscConnection, Reader};
 
 use canokey::{DeviceProfile, ErrorKind, SecretReference};
 use std::io;
+use zeroize::Zeroizing;
 
 pub type CliResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+/// Reader selection matching: case-insensitive substring, like the Python
+/// CLI's ykman/pcsc reader resolution.
+pub fn reader_matches(reader_name: &str, filter: &str) -> bool {
+    reader_name.to_lowercase().contains(&filter.to_lowercase())
+}
 
 /// A probed CanoKey: exclusive connection plus its immutable profile.
 pub struct Target {
@@ -64,7 +71,7 @@ pub fn single_target(
         let reader = pcsc
             .readers()?
             .into_iter()
-            .find(|reader| reader.name() == name)
+            .find(|reader| reader_matches(reader.name(), name))
             .ok_or_else(|| format!("no such reader: {name}"))?;
         return try_probe(pcsc, &reader)
             .ok_or_else(|| format!("no CanoKey found in reader {name}").into());
@@ -83,13 +90,30 @@ pub fn single_target(
     }
 }
 
+/// A secret string (PIN, password, key) that is zeroized on drop. Used for
+/// every prompted secret and for argv-supplied secrets (which additionally
+/// remain visible in shell history and `ps` — see README).
+pub type SecretString = Zeroizing<String>;
+
+/// clap value parser for `Option<SecretString>` arguments.
+pub fn secret_arg(value: &str) -> Result<SecretString, std::convert::Infallible> {
+    Ok(Zeroizing::new(value.to_string()))
+}
+
+/// Borrow an optional secret argument as `&str`.
+pub fn secret_str(value: &Option<SecretString>) -> Option<&str> {
+    value.as_ref().map(|s| s.as_str())
+}
+
 /// Prompt for a secret without echo, with actionable context when no
 /// terminal is attached (rpassword opens /dev/tty, which fails with ENXIO on
-/// non-interactive runners).
-pub fn prompt_password(prompt: &str) -> CliResult<String> {
-    rpassword::prompt_password(prompt).map_err(|error| {
-        format!("cannot prompt for input ({prompt:?}): {error}; is a terminal attached?").into()
-    })
+/// non-interactive runners). The returned secret is zeroized on drop.
+pub fn prompt_password(prompt: &str) -> CliResult<SecretString> {
+    rpassword::prompt_password(prompt)
+        .map(Zeroizing::new)
+        .map_err(|error| {
+            format!("cannot prompt for input ({prompt:?}): {error}; is a terminal attached?").into()
+        })
 }
 
 /// Prompt for the Admin PIN without echoing.
@@ -154,6 +178,28 @@ pub fn with_admin_pin_retry<T>(
     }
 }
 
+/// Read one line after writing `prompt`; `None` at EOF so prompt loops can
+/// never spin on a closed stdin.
+pub fn prompt_line(prompt: &str) -> CliResult<Option<String>> {
+    let mut input = io::stdin().lock();
+    prompt_line_from(&mut input, prompt, &mut io::stdout())
+}
+
+/// [`prompt_line`] over explicit streams (testable).
+pub fn prompt_line_from(
+    reader: &mut impl io::BufRead,
+    prompt: &str,
+    writer: &mut impl io::Write,
+) -> CliResult<Option<String>> {
+    write!(writer, "{prompt}")?;
+    writer.flush()?;
+    let mut line = String::new();
+    if reader.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim().to_string()))
+}
+
 /// Ask a y/N question on the terminal; defaults to "no".
 pub fn confirm(prompt: &str) -> CliResult<bool> {
     use std::io::Write as _;
@@ -165,4 +211,37 @@ pub fn confirm(prompt: &str) -> CliResult<bool> {
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::BufReader;
+
+    #[test]
+    fn reader_matching_is_case_insensitive_substring() {
+        assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "canokey"));
+        assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "CANOKEY"));
+        assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "ccid] 00"));
+        assert!(!reader_matches("Canokeys Canokey [CCID] 00 00", "yubikey"));
+        // An empty filter matches everything (substring semantics, as in the old CLI).
+        assert!(reader_matches("Some Reader", ""));
+    }
+
+    #[test]
+    fn prompt_line_from_handles_eof() {
+        let mut out = Vec::new();
+        let mut input = BufReader::new(&b""[..]);
+        assert_eq!(
+            prompt_line_from(&mut input, "Prompt: ", &mut out).unwrap(),
+            None,
+            "EOF must end the loop, not spin"
+        );
+        assert_eq!(out, b"Prompt: ");
+        let mut input = BufReader::new(&b"  hello world \nrest"[..]);
+        assert_eq!(
+            prompt_line_from(&mut input, "Prompt: ", &mut out).unwrap(),
+            Some("hello world".to_string())
+        );
+    }
 }

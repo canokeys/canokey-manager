@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-oath\-access\-change \- Set or change the OATH password
 .SH SYNOPSIS
-\fBckman\-oath\-access\-change\fR [\fB\-p\fR|\fB\-\-password\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-n\fR|\fB\-\-new\-password\fR] [\fB\-r\fR|\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-oath\-access\-change\fR [\fB\-p\fR|\fB\-\-password\fR] [\fB\-c\fR|\fB\-\-clear\fR] [\fB\-n\fR|\fB\-\-new\-password\fR] [\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Set or change the OATH password
 .SH OPTIONS
@@ -18,8 +18,8 @@ Remove the current password instead of setting a new one
 \fB\-n\fR, \fB\-\-new\-password\fR \fI<NEW_PASSWORD>\fR
 Provide the new password as an argument
 .TP
-\fB\-r\fR, \fB\-\-remember\fR
-Remember the password on this machine
+\fB\-\-remember\fR
+Remember the password on this machine (long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

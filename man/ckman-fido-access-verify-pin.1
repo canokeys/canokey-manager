@@ -1,0 +1,16 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-fido-access-verify-pin 1  ckman 
+.SH NAME
+ckman\-fido\-access\-verify\-pin \- Verify the FIDO2 PIN against the CanoKey (resets the retry counter)
+.SH SYNOPSIS
+\fBckman\-fido\-access\-verify\-pin\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Verify the FIDO2 PIN against the CanoKey (resets the retry counter)
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+Current PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

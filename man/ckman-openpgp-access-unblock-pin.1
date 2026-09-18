@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-openpgp\-access\-unblock\-pin \- Unblock and set a new PIN using the Reset Code or the Admin PIN
 .SH SYNOPSIS
-\fBckman\-openpgp\-access\-unblock\-pin\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-r\fR|\fB\-\-reset\-code\fR] [\fB\-n\fR|\fB\-\-new\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-openpgp\-access\-unblock\-pin\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-\-reset\-code\fR] [\fB\-n\fR|\fB\-\-new\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Unblock and set a new PIN using the Reset Code or the Admin PIN
 .SH OPTIONS
@@ -12,8 +12,8 @@ Unblock and set a new PIN using the Reset Code or the Admin PIN
 \fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
 Admin PIN (use "\-" to prompt)
 .TP
-\fB\-r\fR, \fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
-Reset Code
+\fB\-\-reset\-code\fR \fI<RESET_CODE>\fR
+Reset Code (long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-n\fR, \fB\-\-new\-pin\fR \fI<NEW_PIN>\fR
 New PIN (prompted when omitted)

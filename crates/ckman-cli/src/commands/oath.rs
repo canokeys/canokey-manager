@@ -11,7 +11,6 @@ use ckman_transport::pcsc::Pcsc;
 use canokey::{DeviceProfile, ErrorKind, SecretBytes, SecretReference};
 use clap::{Args, Subcommand, ValueEnum};
 use std::io;
-use std::io::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
@@ -25,8 +24,8 @@ pub enum OathCommand {
         #[arg(long)]
         force: bool,
         /// CanoKey Admin PIN (prompted when omitted).
-        #[arg(long, value_name = "PIN")]
-        admin_pin: Option<String>,
+        #[arg(long, value_name = "PIN", value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
     /// Manage password protection for OATH.
     Access {
@@ -45,23 +44,24 @@ pub enum AccessCommand {
     /// Set or change the OATH password.
     Change {
         /// The current password.
-        #[arg(short, long)]
-        password: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        password: Option<crate::commands::SecretString>,
         /// Remove the current password instead of setting a new one.
         #[arg(short, long)]
         clear: bool,
         /// Provide the new password as an argument.
-        #[arg(short = 'n', long)]
-        new_password: Option<String>,
-        /// Remember the password on this machine.
-        #[arg(short, long)]
+        #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
+        new_password: Option<crate::commands::SecretString>,
+        /// Remember the password on this machine (long-only: the global
+        /// -r/--reader owns the short flag).
+        #[arg(long)]
         remember: bool,
     },
     /// Store the OATH password in the OS keyring to avoid entering it on each use.
     Remember {
         /// The current password.
-        #[arg(short, long)]
-        password: Option<String>,
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        password: Option<crate::commands::SecretString>,
     },
     /// Remove this device's stored password from the OS keyring.
     Forget,
@@ -78,8 +78,9 @@ pub enum AccountsCommand {
         /// Time-based (TOTP) or counter-based (HOTP) account.
         #[arg(short = 'o', long, value_enum, default_value_t = KindArg::Totp)]
         oath_type: KindArg,
-        /// Number of digits in generated codes.
-        #[arg(short, long, default_value_t = 6, value_parser = clap::value_parser!(u8).range(4..=8))]
+        /// Number of digits in generated codes (long-only: the global
+        /// -d/--device owns the short flag).
+        #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u8).range(4..=8))]
         digits: u8,
         /// Algorithm used for code generation.
         #[arg(short, long, value_enum, default_value_t = AlgorithmArg::Sha1)]
@@ -185,10 +186,11 @@ pub enum AlgorithmArg {
 #[derive(Args)]
 pub struct AccessArgs {
     /// The password to unlock the OATH application.
-    #[arg(short, long)]
-    password: Option<String>,
-    /// Remember the password on this machine.
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = crate::commands::secret_arg)]
+    password: Option<crate::commands::SecretString>,
+    /// Remember the password on this machine (long-only: the global
+    /// -r/--reader owns the short flag).
+    #[arg(long)]
     remember: bool,
 }
 
@@ -198,7 +200,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &OathCommand) -> 
     match command {
         OathCommand::Info => info(device, reader),
         OathCommand::Reset { force, admin_pin } => {
-            reset(device, reader, *force, admin_pin.as_deref())
+            reset(device, reader, *force, super::secret_str(admin_pin))
         }
         OathCommand::Access { command } => match command {
             AccessCommand::Change {
@@ -209,13 +211,13 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &OathCommand) -> 
             } => access_change(
                 device,
                 reader,
-                password.as_deref(),
+                super::secret_str(password),
                 *clear,
-                new_password.as_deref(),
+                super::secret_str(new_password),
                 *remember,
             ),
             AccessCommand::Remember { password } => {
-                access_remember(device, reader, password.as_deref())
+                access_remember(device, reader, super::secret_str(password))
             }
             AccessCommand::Forget => access_forget(device, reader),
         },
@@ -585,11 +587,11 @@ fn access_change(
         return Ok(());
     }
     let new_password = match new_password {
-        Some(password) => password.to_string(),
+        Some(password) => zeroize::Zeroizing::new(password.to_string()),
         None => {
             let entered = super::prompt_password("Enter the new OATH password: ")?;
             let repeated = super::prompt_password("Repeat the new OATH password: ")?;
-            if entered != repeated {
+            if entered.as_str() != repeated.as_str() {
                 return Err("the passwords do not match".into());
             }
             entered
@@ -631,7 +633,7 @@ fn access_remember(
         return Ok(());
     }
     let password = match password {
-        Some(password) => password.to_string(),
+        Some(password) => zeroize::Zeroizing::new(password.to_string()),
         None => super::prompt_password("Enter the OATH password: ")?,
     };
     let key = oath::derive_key_bytes(password.as_bytes(), selection.handle);
@@ -693,7 +695,7 @@ fn accounts_add(
         return Err("cannot use --generate together with a provided SECRET".into());
     }
     let mut generated = false;
-    let secret = match (&input.secret, input.generate) {
+    let secret = zeroize::Zeroizing::new(match (&input.secret, input.generate) {
         (Some(secret), false) => {
             uri::base32_decode(secret).map_err(|error| format!("invalid base32 secret: {error}"))?
         }
@@ -704,17 +706,16 @@ fn accounts_add(
             secret
         }
         (None, false) => loop {
-            print!("Enter a secret key (base32): ");
-            io::stdout().flush()?;
-            let mut entered = String::new();
-            io::stdin().read_line(&mut entered)?;
-            match uri::base32_decode(entered.trim()) {
+            let Some(entered) = super::prompt_line("Enter a secret key (base32): ")? else {
+                return Err("no secret key entered (end of input)".into());
+            };
+            match uri::base32_decode(&entered) {
                 Ok(secret) => break secret,
                 Err(error) => println!("invalid base32 secret: {error}"),
             }
         },
         (Some(_), true) => unreachable!("--generate with SECRET rejected above"),
-    };
+    });
     if secret.len() < 2 {
         return Err("secret must be at least 2 bytes".into());
     }
@@ -750,11 +751,10 @@ fn accounts_uri(
     let mut parsed = match uri_arg {
         Some(text) => uri::parse(&text).map_err(|error| format!("{error}"))?,
         None => loop {
-            print!("Enter an OATH URI (otpauth://): ");
-            io::stdout().flush()?;
-            let mut entered = String::new();
-            io::stdin().read_line(&mut entered)?;
-            match uri::parse(entered.trim()) {
+            let Some(entered) = super::prompt_line("Enter an OATH URI (otpauth://): ")? else {
+                return Err("no URI entered (end of input)".into());
+            };
+            match uri::parse(&entered) {
                 Ok(parsed) => break parsed,
                 Err(error) => println!("{error}"),
             }
@@ -794,7 +794,7 @@ fn add_credential(
     digits: u8,
     period: u32,
     counter: u32,
-    secret: Vec<u8>,
+    secret: zeroize::Zeroizing<Vec<u8>>,
     generated: bool,
     touch: bool,
     force: bool,
@@ -806,13 +806,17 @@ fn add_credential(
         kind,
         algorithm,
         digits,
-        secret: SecretBytes::new(secret.clone()),
+        secret: SecretBytes::new(secret.to_vec()),
         require_touch: touch,
         increasing: false,
         initial_counter: counter,
     };
-    let mut session =
-        OathSession::connect(device, reader, access.password.as_deref(), access.remember)?;
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
     if !force {
         let entries =
             session.run(|profile, access, exchange| oath::list(profile, access, exchange))?;
@@ -896,8 +900,12 @@ fn accounts_list(
     show_period: bool,
     access: &AccessArgs,
 ) -> CliResult<()> {
-    let mut session =
-        OathSession::connect(device, reader, access.password.as_deref(), access.remember)?;
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
     let entries = session.run(|profile, access, exchange| oath::list(profile, access, exchange))?;
     let mut rows: Vec<String> = entries
         .iter()
@@ -940,8 +948,12 @@ fn accounts_code(
     show_hidden: bool,
     access: &AccessArgs,
 ) -> CliResult<()> {
-    let mut session =
-        OathSession::connect(device, reader, access.password.as_deref(), access.remember)?;
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "system clock is before the Unix epoch")?
@@ -1084,8 +1096,12 @@ fn accounts_rename(
     force: bool,
     access: &AccessArgs,
 ) -> CliResult<()> {
-    let mut session =
-        OathSession::connect(device, reader, access.password.as_deref(), access.remember)?;
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
     let entries = session.run(|profile, access, exchange| oath::list(profile, access, exchange))?;
     let hits = search(&entries, query, true);
     let [entry] = hits.as_slice() else {
@@ -1128,8 +1144,12 @@ fn accounts_delete(
     force: bool,
     access: &AccessArgs,
 ) -> CliResult<()> {
-    let mut session =
-        OathSession::connect(device, reader, access.password.as_deref(), access.remember)?;
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
     let entries = session.run(|profile, access, exchange| oath::list(profile, access, exchange))?;
     let hits = search(&entries, query, true);
     let [entry] = hits.as_slice() else {
