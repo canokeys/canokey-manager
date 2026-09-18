@@ -6,10 +6,23 @@ license.workspace = true
 description = "Session layer over libcanokey: profiles, credentials, crypto formats"
 
 [dependencies]
+base64ct.workspace = true
 canokey.workspace = true
+der.workspace = true
+p256.workspace = true
+p384.workspace = true
+pkcs1.workspace = true
+pkcs8.workspace = true
+rsa.workspace = true
+sha2.workspace = true
+spki.workspace = true
+x509-cert.workspace = true
 getrandom.workspace = true
 pbkdf2.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }

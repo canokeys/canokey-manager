@@ -11,19 +11,29 @@ repository = "https://github.com/canokeys/canokey-manager"
 # branch carrying canokey-ctap and canokey-ndef. Switch to a main tag once
 # the branch merges.
 [workspace.dependencies]
-canokey = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e" }
+canokey = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e", features = ["x509"] }
 canokey-ctap = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e" }
 
+base64ct = "1"
 clap = { version = "4.5", features = ["derive"] }
+der = { version = "0.7", features = ["derive", "oid"] }
 getrandom = { version = "0.3", features = ["std"] }
 keyring = "3"
+p256 = { version = "0.13", features = ["pkcs8"] }
+p384 = { version = "0.13", features = ["pkcs8"] }
 pbkdf2 = "0.12"
+pkcs1 = "0.7"
+pkcs8 = { version = "0.10", features = ["encryption"] }
 pcsc = "2.9"
+rsa = "0.9"
 rpassword = "7"
 sha1 = "0.10"
+sha2 = { version = "0.10", features = ["oid"] }
+spki = "0.7"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+x509-cert = "0.2"
 zeroize = "1"
 
 [profile.release]
