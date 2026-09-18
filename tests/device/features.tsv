@@ -1,22 +1,59 @@
 # Firmware feature matrix for the device-test harness. Columns:
 # firmware-prefix<TAB>feature<TAB>supported|unsupported
-# Longest matching prefix wins; unlisted combinations report "unknown".
+# Longest matching prefix wins (e.g. "1.6" covers 1.6.1 and 1.6.2);
+# unlisted combinations report "unknown" (a harness error inside lifecycle
+# scripts; the CI workflow skips non-"supported" entries), so this file is
+# the auditable record of what has been validated. Prefixes cover the
+# canokey-usbip release catalog: 1.3, 1.5.2, 1.6.1, 1.6.2, 2.0.x, 3.0.x, 3.1.0.
 # Grow this file as lifecycle scripts are ported; see README.md.
+
+# OATH
 1.3	oath-rename	unsupported
 1.3	oath-sha512	unsupported
-1.3	openpgp-touch	unsupported
+1.3	oath-set-default-slots	unsupported
+1.5	oath-rename	unsupported
+1.5	oath-sha512	unsupported
+1.5	oath-set-default-slots	unsupported
+1.6	oath-rename	unsupported
+1.6	oath-sha512	unsupported
+1.6	oath-set-default-slots	unsupported
+2.0	oath-rename	supported
+2.0	oath-sha512	supported
+2.0	oath-set-default-slots	unsupported
+3.0	oath-rename	supported
+3.0	oath-sha512	supported
+3.0	oath-set-default-slots	supported
+3.1	oath-rename	supported
+3.1	oath-sha512	supported
+3.1	oath-set-default-slots	supported
+
+# PIV
 1.3	piv-metadata	unsupported
+1.3	piv-set-retries	unsupported
+1.3	piv-lifecycle	unsupported
+1.5	piv-metadata	unsupported
+1.5	piv-set-retries	unsupported
+1.5	piv-lifecycle	unsupported
+1.6	piv-metadata	unsupported
+1.6	piv-set-retries	unsupported
+1.6	piv-lifecycle	unsupported
+2.0	piv-metadata	supported
+2.0	piv-set-retries	unsupported
+2.0	piv-lifecycle	supported
+3.0	piv-metadata	supported
+3.0	piv-set-retries	unsupported
+3.0	piv-lifecycle	supported
+3.1	piv-metadata	supported
+3.1	piv-set-retries	supported
+3.1	piv-lifecycle	supported
+
+# OpenPGP
+1.3	openpgp-touch	unsupported
+1.5	openpgp-touch	supported
+3.1	openpgp-set-retries	supported
+
+# FIDO
 1.3	fido-pcsc	unsupported
-1.5.2	openpgp-touch	supported
-1.5.2	fido-pcsc	supported
-2.0.0	fido-credential-management	supported
-3.0.0	oath-set-default-slots	supported
-3.1.0	piv-set-retries	supported
-3.1.0	openpgp-set-retries	supported
-3.1.0	fido-authenticator-config	supported
-# Defaults for current firmware: features introduced at or below 3.1.0 are
-# supported on 3.1.0; anything earlier than its introduction is unsupported
-# unless listed above.
-3.1.0	oath-rename	supported
-3.1.0	oath-sha512	supported
-3.1.0	piv-metadata	supported
+1.5	fido-pcsc	supported
+2.0	fido-credential-management	supported
+3.1	fido-authenticator-config	supported

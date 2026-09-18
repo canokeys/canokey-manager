@@ -48,9 +48,9 @@ in this order:
    metadata) and OpenPGP (SIG/DEC/AUT provisioning, sign/decrypt/auth round
    trips, certificate round trip, attestation where supported) lifecycles,
    and the FIDO reset/PIN/credential-management lifecycle.
-2. **firmware feature seeding** — `features.tsv` only carries the entries the
-   ported scripts query; port the full matrix from the Python rig's
-   `firmware.py` as lifecycle scripts land.
+2. **firmware feature seeding** — `features.tsv` covers the features the
+   ported scripts query plus the `piv-lifecycle` CI gate, for every catalog
+   prefix; extend it as more lifecycle scripts land.
 3. **Upstream pytest reuse** (`device-tests.sh`) — the Python rig ran a
    subset of upstream ykman device tests via pytest; no Rust equivalent
    exists. Candidate: port the applicable protocol-level tests as Rust
@@ -62,5 +62,6 @@ in this order:
 5. **Keyring test double** — the Python rig redirected the keyring to a file
    (`keyring_backend.py`); the Rust CLI uses the OS keyring directly, and
    there is no injection point yet.
-6. **Hardware-in-CI** — the usbip matrix runner itself (per-firmware GitHub
-   jobs) is not wired up; scripts assume `canokey-usbip/compat/run`.
+6. **HID coverage in CI** — the usbip matrix runs
+   (`.github/workflows/usbip.yml`) drive FIDO over PC/SC only; the CTAPHID
+   transport is covered by loopback tests, not by the virtual-device rig.

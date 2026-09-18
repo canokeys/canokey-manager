@@ -7,6 +7,17 @@ set -euo pipefail
 : "${CKMAN_DESTRUCTIVE:?PIV lifecycle writes to the device; set CKMAN_DESTRUCTIVE=1}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+# compat/run invokes this script directly (not via smoke.sh), so it provides
+# its own scratch dir and normalized version, like smoke.sh.
+export CANOKEY_USBIP_WORK_DIR="$work_dir"
+export CANOKEY_FIRMWARE_VERSION_NORMALIZED
+CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
+  "$script_dir/firmware.sh" normalize "$CANOKEY_FIRMWARE_VERSION"
+)"
+
 source "$script_dir/lib.sh"
 
 PIV_DEFAULT_PIN="123456"
