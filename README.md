@@ -16,9 +16,9 @@ PyO3 binding may restore scripting on top of the Rust core.
 | Applet | Commands |
 | --- | --- |
 | Device | `ckman list`, `ckman info` |
-| Configuration | `ckman config info`, `ckman config nfc <on\|off>`, `ckman config reset` |
-| OATH | `ckman oath info`, `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete` |
-| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import` |
+| Configuration | `ckman config info` (incl. flash/applet storage and core commit on 3.1), `config nfc`, `config led`, `config ndef-read-only`, `config webusb-landing`, `config pass` (touch-to-type slots), `config ndef read/write`, `config keyboard` (layout/keymap), `config sm2`, `config reset` |
+| OATH | `ckman oath info`, `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete/set-default` |
+| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name` |
 | OpenPGP | `ckman openpgp info`, `openpgp reset`, `openpgp access …` (PIN/admin PIN/reset code, retries, signature policy), `openpgp keys info/generate/import/set-touch`, `openpgp certificates import/export/delete` |
 | FIDO2 | `ckman fido info`, `fido reset`, `fido access set-pin/change-pin/set-min-length/force-change`, `fido credentials list/delete` |
 

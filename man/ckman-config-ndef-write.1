@@ -1,0 +1,18 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-ndef-write 1  ckman 
+.SH NAME
+ckman\-config\-ndef\-write \- Replace the NDEF message with the file contents (\*(Aq\-\*(Aq for stdin)
+.SH SYNOPSIS
+\fBckman\-config\-ndef\-write\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.SH DESCRIPTION
+Replace the NDEF message with the file contents (\*(Aq\-\*(Aq for stdin).
+.PP
+The write is crash\-consistent: a crash or unplug mid\-write leaves an empty message rather than a partially written one.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIFILE\fR>
+File containing the NDEF message (\*(Aq\-\*(Aq for stdin, empty to clear)

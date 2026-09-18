@@ -1,0 +1,47 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-pass-set 1  ckman 
+.SH NAME
+ckman\-config\-pass\-set \- Configure a PASS slot
+.SH SYNOPSIS
+\fBckman\-config\-pass\-set\fR [\fB\-\-key\fR] [\fB\-\-enter\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIKIND\fR> 
+.SH DESCRIPTION
+Configure a PASS slot
+.SH OPTIONS
+.TP
+\fB\-\-key\fR \fI<KEY>\fR
+HMAC\-SHA1 key as 40 hex characters (prompted when omitted)
+.TP
+\fB\-\-enter\fR
+Append Return after typing (static passwords only)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+Slot: short\-touch or long\-touch
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+short
+.IP \(bu 2
+long
+.RE
+.TP
+<\fIKIND\fR>
+Slot type to set
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+off
+.IP \(bu 2
+static
+.IP \(bu 2
+hmac
+.RE

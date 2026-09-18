@@ -51,6 +51,25 @@ Dropped commands and options (mostly YubiKey-only):
 - The Python library and its scripting API. A future PyO3 binding may
   restore scripting on top of the Rust core.
 
+### New CanoKey-specific surface
+
+- PASS touch-to-type slots: `config pass info` / `config pass set
+  <short|long> <off|static|hmac>` (Admin-PIN gated on all firmware; unknown
+  slot types stay observable).
+- NDEF message read/write with crash-consistent writes (`config ndef`).
+- Device configuration patches: `config led`, `config ndef-read-only`,
+  `config webusb-landing` (read-modify-write, libcanokey preserves
+  unspecified fields and blocks unsafe feature-mask overwrites).
+- Keyboard emulation: `config keyboard layout/read-keymap/write-keymap/
+  clear-keymap/return`.
+- `config info` additionally shows flash usage, applet storage and the core
+  commit on 3.1; `config sm2` reads the CTAP SM2 configuration (typed on
+  3.1, legacy layout on 3.0.x; read-only — the legacy byte order is
+  unvalidated, so no write command is exposed).
+- `oath accounts set-default` (keyboard-emulation default for HOTP
+  credentials; 3.0+ two-slot dialect) and `piv objects name` (UTF-16
+  container names, 3.1+).
+
 ### Behavior changes
 
 - OATH remembered passwords moved from the Fernet-encrypted ykman appdata

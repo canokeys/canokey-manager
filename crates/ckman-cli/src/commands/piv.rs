@@ -302,6 +302,16 @@ pub enum ObjectsCommand {
         #[command(flatten)]
         pin: PinArgs,
     },
+    /// Read or set a slot's UTF-16 container name (firmware 3.1+).
+    Name {
+        /// PIV slot (9a, 9c, 9d, 9e, retired 82-95, or f9 for attestation).
+        #[arg(value_parser = parse_name_slot)]
+        slot: piv::ContainerNameReference,
+        /// The name to set; omit to print the current one, empty to clear.
+        name: Option<String>,
+        #[command(flatten)]
+        mgmt: MgmtArgs,
+    },
     /// Write an arbitrary PIV object value (without the outer 53 container).
     Import {
         /// Object ID as hex (e.g. 5f0000 or 5fc105).
@@ -1692,8 +1702,44 @@ fn certificates(
     }
 }
 
+fn parse_name_slot(text: &str) -> Result<piv::ContainerNameReference, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "f9" | "att" | "attestation" => Ok(piv::ContainerNameReference::Attestation),
+        _ => parse_slot(text).map(piv::ContainerNameReference::Key),
+    }
+}
+
 fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) -> CliResult<()> {
     match command {
+        ObjectsCommand::Name { slot, name, mgmt } => {
+            let mut session = PivSession::connect(device, reader)?;
+            match name {
+                None => {
+                    let text = session
+                        .run(|profile, exchange| piv::container_name(profile, *slot, exchange))?;
+                    if text.is_empty() {
+                        println!("(no container name set)");
+                    } else {
+                        println!("{text}");
+                    }
+                }
+                Some(name) => {
+                    let management = session
+                        .resolve_management(super::secret_str(&mgmt.management_key), None)?;
+                    session.run(|profile, exchange| {
+                        piv::set_container_name_op(
+                            profile,
+                            *slot,
+                            name,
+                            management.access()?,
+                            exchange,
+                        )
+                    })?;
+                    println!("Container name set.");
+                }
+            }
+            Ok(())
+        }
         ObjectsCommand::Export {
             object_id,
             output,

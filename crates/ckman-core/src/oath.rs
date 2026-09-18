@@ -30,7 +30,8 @@ use canokey::{DeviceProfile, Error, ErrorKind, OperationOptions, Phase, SecretBy
 use zeroize::Zeroizing;
 
 pub use canokey::oath::{
-    Access, AccessKey, Algorithm, Calculation, Code, Credential, Entry, Format, Kind, Name,
+    Access, AccessKey, Algorithm, Calculation, Code, Credential, DefaultSlot, Entry, Format, Kind,
+    Name,
 };
 
 /// The conventional TOTP time step, seconds.
@@ -248,6 +249,32 @@ pub fn calculate_all<E>(
     }
 }
 
+/// Mark an existing HOTP credential as the default emitted on touch through
+/// keyboard emulation (PASS). Firmware before 3.0.0 accepts only the short
+/// slot without append-enter; libcanokey enforces that dialect.
+pub fn set_default<E>(
+    profile: &DeviceProfile,
+    slot: DefaultSlot,
+    append_enter: bool,
+    name: Name,
+    access: Option<Access>,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), OathError<E>> {
+    match run(
+        profile,
+        Request::SetDefault {
+            slot,
+            append_enter,
+            name,
+        },
+        access,
+        exchange,
+    )? {
+        Outcome::Unit => Ok(()),
+        _ => Err(unexpected()),
+    }
+}
+
 /// Set or replace the OATH access code. When the applet is already protected,
 /// `access` must carry the current key, which is validated first.
 pub fn set_password<E>(
@@ -434,7 +461,7 @@ mod tests {
         }
     }
 
-    fn profile(firmware: &[u8]) -> DeviceProfile {
+    pub(crate) fn profile(firmware: &[u8]) -> DeviceProfile {
         let mut observations = DeviceObservations::new(firmware.to_vec());
         observations.serial = Some(vec![1, 2, 3, 4]);
         DeviceProfile::from_observations(observations).unwrap()
@@ -673,5 +700,103 @@ mod tests {
         assert_eq!(parsed.issuer.as_deref(), Some("issuer"));
         assert_eq!(parsed.account, "counter");
         assert_eq!(parsed.period, 0);
+    }
+}
+
+#[cfg(test)]
+mod set_default_tests {
+    use super::tests::profile;
+    use super::*;
+    use std::collections::VecDeque;
+    use std::io;
+
+    struct Script {
+        transcript: VecDeque<(&'static [u8], &'static [u8])>,
+    }
+    impl Script {
+        fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
+            let (expected, response) = self
+                .transcript
+                .pop_front()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "unexpected exchange"))?;
+            assert_eq!(command, expected, "command differs from transcript");
+            Ok(response.to_vec())
+        }
+    }
+
+    const SELECT: (&[u8], &[u8]) = (
+        &[0, 0xa4, 4, 0, 7, 0xa0, 0, 0, 5, 0x27, 0x21, 1],
+        &[
+            0x79, 3, 6, 0, 0, 0x71, 8, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', 0x90, 0,
+        ],
+    );
+
+    #[test]
+    fn set_default_two_slot_dialect() {
+        // 3.0+ dialect: P1 = slot, P2 = append-enter (fixture from
+        // canokey-oath's set_default_transcripts_and_status_mapping).
+        let mut script = Script {
+            transcript: [SELECT, (b"\0\x55\x01\x01\x06\x71\x04test", &[0x90, 0])]
+                .into_iter()
+                .collect(),
+        };
+        set_default(
+            &profile(b"3.1.0"),
+            DefaultSlot::Short,
+            true,
+            Name::from_bytes(b"test").unwrap(),
+            None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn set_default_single_slot_dialect_and_option_rejection() {
+        // Pre-3.0: single-slot form with zero P1/P2 (2.0.0 fixture); 2.0.0
+        // carries the legacy explicit Le even on SELECT and the target.
+        const SELECT_LE: (&[u8], &[u8]) = (
+            &[0, 0xa4, 4, 0, 7, 0xa0, 0, 0, 5, 0x27, 0x21, 1, 0],
+            &[
+                0x79, 3, 6, 0, 0, 0x71, 8, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', 0x90, 0,
+            ],
+        );
+        let mut script = Script {
+            transcript: [SELECT_LE, (b"\0\x55\0\0\x06\x71\x04test\0", &[0x90, 0])]
+                .into_iter()
+                .collect(),
+        };
+        set_default(
+            &profile(b"2.0.0"),
+            DefaultSlot::Short,
+            false,
+            Name::from_bytes(b"test").unwrap(),
+            None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+        // Long slot or append-enter is rejected at construction on 2.0.0,
+        // before any I/O (fixture from canokey-oath's legacy tests).
+        let mut calls = 0;
+        let error = set_default(
+            &profile(b"2.0.0"),
+            DefaultSlot::Long,
+            false,
+            Name::from_bytes(b"test").unwrap(),
+            None,
+            &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!("the dialect check must reject before any exchange")
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            OathError::Drive(DriveError::Protocol(error))
+                if error.kind == ErrorKind::InvalidArgument
+        ));
+        assert_eq!(calls, 0);
     }
 }

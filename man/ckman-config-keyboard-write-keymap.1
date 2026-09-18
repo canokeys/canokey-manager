@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-keyboard-write-keymap 1  ckman 
+.SH NAME
+ckman\-config\-keyboard\-write\-keymap \- Replace the keyboard HID map from a 256\-byte file (\*(Aq\-\*(Aq for stdin)
+.SH SYNOPSIS
+\fBckman\-config\-keyboard\-write\-keymap\fR <\fB\-\-layout\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.SH DESCRIPTION
+Replace the keyboard HID map from a 256\-byte file (\*(Aq\-\*(Aq for stdin)
+.SH OPTIONS
+.TP
+\fB\-\-layout\fR \fI<LAYOUT>\fR
+Layout identifier this map belongs to
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIFILE\fR>
+File containing exactly 256 keymap bytes (\*(Aq\-\*(Aq for stdin)

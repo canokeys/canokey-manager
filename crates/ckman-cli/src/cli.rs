@@ -25,13 +25,13 @@ pub struct Cli {
     )]
     pub reader: Option<String>,
     /// Enable logging at the given verbosity level.
-    #[arg(short = 'l', long, value_name = "LEVEL")]
+    #[arg(short = 'l', long, value_name = "LEVEL", global = true)]
     pub log_level: Option<tracing::Level>,
     /// Write log output to FILE instead of stderr (requires --log-level).
-    #[arg(long, value_name = "FILE", requires = "log_level")]
+    #[arg(long, value_name = "FILE", requires = "log_level", global = true)]
     pub log_file: Option<String>,
     /// Print a diagnostic report for bug reports and exit.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub diagnose: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -116,5 +116,75 @@ mod tests {
             "ckman", "piv", "keys", "generate", "9a", "-", "-a", "ecc25519"
         ])
         .is_err());
+    }
+
+    #[test]
+    fn diagnose_and_log_file_parse() {
+        let cli = Cli::try_parse_from(["ckman", "--diagnose"]).unwrap();
+        assert!(cli.diagnose);
+        assert!(cli.command.is_none());
+        let cli = Cli::try_parse_from([
+            "ckman",
+            "info",
+            "--log-level",
+            "info",
+            "--log-file",
+            "f.log",
+        ])
+        .unwrap();
+        assert_eq!(cli.log_file.as_deref(), Some("f.log"));
+        // --log-file requires --log-level.
+        assert!(Cli::try_parse_from(["ckman", "info", "--log-file", "f.log"]).is_err());
+        assert!(Cli::try_parse_from(["ckman", "--diagnose", "--device", "1"]).is_ok());
+    }
+
+    #[test]
+    fn feature_subcommands_parse() {
+        for argv in [
+            &["ckman", "config", "led", "on"][..],
+            &["ckman", "config", "ndef-read-only", "off"][..],
+            &["ckman", "config", "webusb-landing", "on"][..],
+            &["ckman", "config", "pass", "info"][..],
+            &[
+                "ckman", "config", "pass", "set", "short", "static", "--enter",
+            ][..],
+            &[
+                "ckman", "config", "pass", "set", "long", "hmac", "--key", "00",
+            ][..],
+            &["ckman", "config", "ndef", "read"][..],
+            &["ckman", "config", "ndef", "write", "-"][..],
+            &["ckman", "config", "keyboard", "layout"][..],
+            &["ckman", "config", "keyboard", "read-keymap", "-"][..],
+            &[
+                "ckman",
+                "config",
+                "keyboard",
+                "write-keymap",
+                "--layout",
+                "1",
+                "f.bin",
+            ][..],
+            &["ckman", "config", "keyboard", "clear-keymap"][..],
+            &["ckman", "config", "keyboard", "return", "on"][..],
+            &["ckman", "config", "sm2"][..],
+            &[
+                "ckman",
+                "oath",
+                "accounts",
+                "set-default",
+                "test",
+                "--slot",
+                "long",
+                "--enter",
+            ][..],
+            &["ckman", "piv", "objects", "name", "9a", "My Key"][..],
+            &["ckman", "piv", "objects", "name", "f9"][..],
+        ] {
+            Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        }
+        // write-keymap requires --layout.
+        assert!(
+            Cli::try_parse_from(["ckman", "config", "keyboard", "write-keymap", "f.bin"]).is_err()
+        );
     }
 }

@@ -19,7 +19,7 @@ use canokey::{DeviceProfile, Error, ErrorKind, OperationOptions, Phase, SecretBy
 use zeroize::Zeroizing;
 
 pub use crate::x509::HashAlgorithm;
-pub use canokey::piv::{sign_streaming, StreamingSignInput};
+pub use canokey::piv::{sign_streaming, ContainerName, ContainerNameReference, StreamingSignInput};
 pub use canokey::piv::{
     Access, Algorithm, Certificate, KeyOrigin, KeyParameters, KnownOrUnknown,
     ManagementAuthentication, ManagementKey, ManagementKeyAlgorithm, ManagementTouchPolicy,
@@ -369,6 +369,36 @@ pub fn attest<E>(
     Ok(run(piv::attest(profile, slot, true, options()), exchange)?
         .as_bytes()
         .to_vec())
+}
+
+/// Read a slot's UTF-16 container name (3.1+; empty when unset).
+pub fn container_name<E>(
+    profile: &DeviceProfile,
+    slot: ContainerNameReference,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<String, PivError<E>> {
+    Ok(run(
+        piv::read_container_name(profile, slot, piv::Access::None, options()),
+        exchange,
+    )?
+    .text())
+}
+
+/// Set (or clear, with an empty name) a slot's container name; requires
+/// management access.
+pub fn set_container_name_op<E>(
+    profile: &DeviceProfile,
+    slot: ContainerNameReference,
+    name: &str,
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    let name = ContainerName::from_text(name).map_err(DriveError::from)?;
+    run(
+        piv::set_container_name(profile, slot, name, access, options()),
+        exchange,
+    )?;
+    Ok(())
 }
 
 /// Select PIV without further commands (raw selection data).

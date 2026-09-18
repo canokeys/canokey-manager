@@ -1,0 +1,26 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-ndef-read-only 1  ckman 
+.SH NAME
+ckman\-config\-ndef\-read\-only \- Allow or forbid NDEF writes (device configuration patch)
+.SH SYNOPSIS
+\fBckman\-config\-ndef\-read\-only\fR [\fB\-h\fR|\fB\-\-help\fR] <\fISTATE\fR> 
+.SH DESCRIPTION
+Allow or forbid NDEF writes (device configuration patch)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISTATE\fR>
+Desired read\-only state
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+on
+.IP \(bu 2
+off
+.RE

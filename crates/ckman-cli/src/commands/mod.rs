@@ -152,6 +152,12 @@ pub fn describe_drive_error(error: &DriveError<io::Error>) -> String {
                 None => "incorrect PIN".to_string(),
             },
             ErrorKind::PinBlocked => "the PIN is blocked".to_string(),
+            ErrorKind::SecurityStatusNotSatisfied => {
+                "the operation requires authentication".to_string()
+            }
+            ErrorKind::UnsupportedDevice => {
+                "the applet is disabled or absent on this device".to_string()
+            }
             _ => format!("protocol error: {error}"),
         },
     }

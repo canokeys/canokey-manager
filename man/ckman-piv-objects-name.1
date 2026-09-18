@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-objects-name 1  ckman 
+.SH NAME
+ckman\-piv\-objects\-name \- Read or set a slot\*(Aqs UTF\-16 container name (firmware 3.1+)
+.SH SYNOPSIS
+\fBckman\-piv\-objects\-name\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> [\fINAME\fR] 
+.SH DESCRIPTION
+Read or set a slot\*(Aqs UTF\-16 container name (firmware 3.1+)
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot (9a, 9c, 9d, 9e, retired 82\-95, or f9 for attestation)
+.TP
+[\fINAME\fR]
+The name to set; omit to print the current one, empty to clear

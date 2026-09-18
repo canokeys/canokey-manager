@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-keyboard 1  ckman 
+.SH NAME
+ckman\-config\-keyboard \- Manage the keyboard (HID) emulation layout
+.SH SYNOPSIS
+\fBckman\-config\-keyboard\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage the keyboard (HID) emulation layout
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-config\-keyboard\-layout(1)
+Show the configured keyboard layout identifier
+.TP
+ckman\-config\-keyboard\-read\-keymap(1)
+Read the 256\-byte keyboard HID map into a file (\*(Aq\-\*(Aq for stdout)
+.TP
+ckman\-config\-keyboard\-write\-keymap(1)
+Replace the keyboard HID map from a 256\-byte file (\*(Aq\-\*(Aq for stdin)
+.TP
+ckman\-config\-keyboard\-clear\-keymap(1)
+Clear the stored keyboard HID map
+.TP
+ckman\-config\-keyboard\-return(1)
+Set the append\-return flag (firmware 1.6.2 through 2.x only)
+.TP
+ckman\-config\-keyboard\-help(1)
+Print this message or the help of the given subcommand(s)

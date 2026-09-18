@@ -158,6 +158,19 @@ pub enum AccountsCommand {
         #[command(flatten)]
         access: AccessArgs,
     },
+    /// Mark an existing HOTP account as the touch keyboard-emulation default.
+    SetDefault {
+        /// A query to match a single account (as shown in "list").
+        query: String,
+        /// Touch slot (firmware 3.0+ for long).
+        #[arg(long, value_enum, default_value_t = DefaultSlotArg::Short)]
+        slot: DefaultSlotArg,
+        /// Append a Return keystroke after the emitted code (firmware 3.0+).
+        #[arg(long)]
+        enter: bool,
+        #[command(flatten)]
+        access: AccessArgs,
+    },
     /// Delete an account.
     Delete {
         /// A query to match a single account (as shown in "list").
@@ -181,6 +194,12 @@ pub enum AlgorithmArg {
     Sha1,
     Sha256,
     Sha512,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum DefaultSlotArg {
+    Short,
+    Long,
 }
 
 #[derive(Args)]
@@ -291,6 +310,12 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &OathCommand) -> 
                 force,
                 access,
             } => accounts_rename(device, reader, query, name, *force, access),
+            AccountsCommand::SetDefault {
+                query,
+                slot,
+                enter,
+                access,
+            } => accounts_set_default(device, reader, query, *slot, *enter, access),
             AccountsCommand::Delete {
                 query,
                 force,
@@ -1134,6 +1159,51 @@ fn accounts_rename(
         Name::from_bytes(new_id.as_bytes()).map_err(|_| "name must be between 1 and 64 bytes")?;
     session.run(|profile, access, exchange| oath::rename(profile, access, old, new, exchange))?;
     println!("Renamed {} to {new_id}.", display_name(entry));
+    Ok(())
+}
+
+/// Mark an HOTP credential as the keyboard-emulation default (PASS slot).
+fn accounts_set_default(
+    device: Option<u32>,
+    reader: Option<&str>,
+    query: &str,
+    slot: DefaultSlotArg,
+    enter: bool,
+    access: &AccessArgs,
+) -> CliResult<()> {
+    let mut session = OathSession::connect(
+        device,
+        reader,
+        super::secret_str(&access.password),
+        access.remember,
+    )?;
+    let entries = session.run(|profile, access, exchange| oath::list(profile, access, exchange))?;
+    let hits = search(&entries, query, true);
+    let [entry] = hits.as_slice() else {
+        return Err(if hits.is_empty() {
+            "no matches, nothing to be done".into()
+        } else {
+            multiple_hits(&hits)
+        });
+    };
+    if kind_of(entry) != Some(Kind::Hotp) {
+        return Err("only HOTP accounts can be the keyboard-emulation default".into());
+    }
+    let name = Name::from_bytes(entry.name.as_bytes())?;
+    let slot = match slot {
+        DefaultSlotArg::Short => oath::DefaultSlot::Short,
+        DefaultSlotArg::Long => oath::DefaultSlot::Long,
+    };
+    session.run(|profile, access, exchange| {
+        oath::set_default(profile, slot, enter, name, access, exchange)
+    })?;
+    println!(
+        "Default credential set ({} touch slot).",
+        match slot {
+            oath::DefaultSlot::Short => "short",
+            oath::DefaultSlot::Long => "long",
+        }
+    );
     Ok(())
 }
 
