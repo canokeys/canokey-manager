@@ -49,6 +49,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::oath::OathCommand,
     },
+    /// Manage the PIV application.
+    Piv {
+        #[command(subcommand)]
+        command: commands::piv::PivCommand,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -68,6 +73,7 @@ fn main() -> std::process::ExitCode {
         Commands::Oath { command } => {
             commands::oath::run(cli.device, cli.reader.as_deref(), command)
         }
+        Commands::Piv { command } => commands::piv::run(cli.device, cli.reader.as_deref(), command),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
