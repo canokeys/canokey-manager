@@ -80,8 +80,7 @@ mod tests {
 
     #[test]
     fn device_and_reader_are_global_options() {
-        // Old CLI rewrote argv for this; global args must parse after the
-        // subcommand path.
+        // Global args must parse after the subcommand path.
         let cli = Cli::try_parse_from(["ckman", "oath", "info", "--device", "42"]).unwrap();
         assert_eq!(cli.device, Some(42));
         let cli = Cli::try_parse_from(["ckman", "piv", "info", "--reader", "CanoKey"]).unwrap();

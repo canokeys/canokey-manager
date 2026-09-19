@@ -370,9 +370,9 @@ pub fn steam_code(calculation: &Calculation) -> Option<String> {
     Some(output)
 }
 
-/// Display form of a credential name following the yubikit convention:
-/// `[period/][issuer:]account`, where the `period/` prefix appears only on
-/// TOTP credentials with a non-default period.
+/// Display form of a credential name following the shared
+/// `[period/][issuer:]account` convention, where the `period/` prefix appears
+/// only on TOTP credentials with a non-default period.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedName {
     /// Issuer prefix, when present.
@@ -415,7 +415,7 @@ pub fn parse_name(raw: &[u8], kind: Kind) -> ParsedName {
     }
 }
 
-/// Format the on-device credential name for the yubikit convention.
+/// Format the on-device credential name for the shared convention.
 pub fn format_id(issuer: Option<&str>, account: &str, kind: Kind, period: u32) -> String {
     let mut id = String::new();
     if kind == Kind::Totp && period != DEFAULT_PERIOD {

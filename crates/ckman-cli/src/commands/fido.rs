@@ -132,7 +132,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &FidoCommand) -> 
     }
 }
 
-/// CTAP status bytes mapped like the Python CLI's `_fail_pin_error`.
+/// CTAP status bytes mapped to user-facing messages.
 fn describe(error: &FidoError<io::Error>) -> String {
     match error {
         FidoError::Random(error) => format!("failed to generate randomness: {error}"),
@@ -178,7 +178,7 @@ impl FidoLink {
             // uppercase hex of the 4-byte admin serial (verified on a DevKit:
             // HID "FFFFFFFF" == admin serial 4294967295). Match on that when
             // it is unambiguous; older firmware may not, so fall back to the
-            // PC/SC probe (the only path the old Python CLI ever used) and
+            // PC/SC probe and
             // never silently pick another device.
             if let Ok(api) = hidapi::HidApi::new() {
                 let matches: Vec<_> = hid::list_fido_interfaces(&api)
@@ -443,7 +443,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 None => super::prompt_password("Enter the FIDO2 PIN: ")?,
             };
             // A pinUvAuthToken request with an RP binding verifies the PIN,
-            // like the Python CLI's get_pin_token(GET_ASSERTION) probe.
+            // A pinUvAuthToken request with an RP binding verifies the PIN.
             let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
             link.run(|exchange| {
                 fido::pin_token(

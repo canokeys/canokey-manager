@@ -591,11 +591,11 @@ impl PivSession {
         })
     }
 
-    /// Resolve the management-key authentication like the Python CLI's
-    /// `_authenticate`: an explicit `-m` hex key wins; then a PIN-protected
-    /// stored key; then a PIN-derived key; otherwise prompt, with a blank
-    /// answer meaning the factory default. Warns when the default key is in
-    /// use. Yields the key (and the PIN when it was needed); each operation
+    /// Resolve the management-key authentication: an explicit `-m` hex key
+    /// wins; then a PIN-protected stored key; then a PIN-derived key;
+    /// otherwise prompt, with a blank answer meaning the factory default.
+    /// Warns when the default key is in use. Yields the key (and the PIN when
+    /// it was needed); each operation
     /// builds a fresh mutual authentication from it — libcanokey forbids
     /// reusing a cloned mutual request, since it would replay the challenge.
     fn resolve_management(
@@ -782,7 +782,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     println!("PIV version:            {version}");
 
     // GET METADATA exists only on 2.0+; on legacy firmware fall back to the
-    // baseline empty-VERIFY for the PIN counter (like the Python CLI) and
+    // baseline empty-VERIFY for the PIN counter and
     // skip the PUK/management records.
     let pin_meta = session.run(|profile, exchange| {
         piv::metadata(

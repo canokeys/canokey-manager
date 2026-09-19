@@ -202,8 +202,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     let mut target = single_target(&pcsc, device, reader)?;
     // READ CONFIG sits behind the firmware's Admin-PIN gate on every layout
     // before 3.1. Do not prompt for the Admin PIN from a read-only status
-    // command: the old CLI refused to configure legacy CanoKey firmware at
-    // all, and prompting from a non-interactive runner fails on /dev/tty
+    // command: prompting from a non-interactive runner fails on /dev/tty
     // (ENXIO), which looks like a dropped card.
     match admin::public_configuration_supported(&target.profile).support {
         Support::Unsupported => {

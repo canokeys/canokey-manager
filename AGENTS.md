@@ -56,8 +56,4 @@ Releases ship as GitHub-release binaries via cargo-dist
 
 ## Branch model
 
-- `rust-rewrite` carries the Rust rewrite and becomes the default branch at
-  parity.
-- `canokey-X.Y.Z` branches keep the Python fork for hotfixes of published
-  releases; they are permanent and never deleted. See
-  `doc/CanoKey-Fork.md` on those branches for the Python maintenance rules.
+The new repository just has `main`.

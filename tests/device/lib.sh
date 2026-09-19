@@ -2,7 +2,7 @@
 # Shared helpers for the CanoKey device-test harness. Language-agnostic: the
 # scripts drive the Rust `ckman` binary as a black box.
 #
-# Environment contract (identical to the Python rig):
+# Environment contract:
 #   CANOKEY_USBIP                 must be set (guards against real hardware)
 #   CANOKEY_PCSC_READER           PC/SC reader name to select
 #   CANOKEY_FIRMWARE_VERSION      firmware under test (as reported by usbip)

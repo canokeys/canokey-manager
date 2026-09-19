@@ -1,4 +1,4 @@
-//! Typed wrappers around `canokey::piv` operations, plus the ykman "pivman"
+//! Typed wrappers around `canokey::piv` operations, plus the pivman
 //! management-key model (PIN-derived keys and PIN-protected on-device key
 //! storage) and host-side certificate/CSR generation whose private-key
 //! signature runs on the device.
@@ -176,8 +176,8 @@ pub fn set_retries<E>(
 
 // --- Management key --------------------------------------------------------
 
-/// Recover the PIN-protected management key stored in PRINTED, mirroring
-/// ykman's protected-key authentication: requires PIN access and ADMIN DATA
+/// Recover the PIN-protected management key stored in PRINTED: requires
+/// PIN access and ADMIN DATA
 /// claiming both PIN protection and a blocked PUK. Returns the verified
 /// 24-byte key.
 pub fn pin_managed_key<E>(
@@ -601,7 +601,7 @@ pub fn generate_csr<E>(
     )?)
 }
 
-// --- pivman: the ykman management-key data model ------------------------------
+// --- pivman: the management-key data model ------------------------------
 
 /// ADMIN DATA object identifier (5FFF00), holding pivman flags and the
 /// PIN-derivation salt.
@@ -615,7 +615,7 @@ pub fn pivman_protected_object_id() -> ObjectId {
 }
 
 /// Derive a 24-byte 3DES management key from the user PIN and a salt:
-/// PBKDF2-HMAC-SHA1, 10000 iterations. Deprecated by ykman in favor of the
+/// PBKDF2-HMAC-SHA1, 10000 iterations. Deprecated in favor of the
 /// PIN-protected stored key; kept for compatibility with existing devices.
 pub fn derive_management_key(pin: &[u8], salt: &[u8]) -> Zeroizing<[u8; 24]> {
     let mut output = Zeroizing::new([0; 24]);
@@ -623,7 +623,7 @@ pub fn derive_management_key(pin: &[u8], salt: &[u8]) -> Zeroizing<[u8; 24]> {
     output
 }
 
-/// The parsed ADMIN DATA (pivman) value, mirroring ykman's `PivmanData`.
+/// The parsed ADMIN DATA (pivman) value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PivmanData {
     /// Flag byte: bit 0 = PUK blocked, bit 1 = management key stored on device.
@@ -729,7 +729,7 @@ impl PivmanData {
     }
 }
 
-/// The parsed PRINTED object value, mirroring ykman's `PivmanProtectedData`.
+/// The parsed PRINTED object value.
 #[derive(Clone, Debug, Default)]
 pub struct PivmanProtectedData {
     /// The stored 24-byte management key, when present.
@@ -828,8 +828,8 @@ pub struct ManagementKeyUpdate {
     pub access: piv::Access,
 }
 
-/// Replace the management key while keeping pivman metadata in sync,
-/// mirroring ykman's `pivman_set_mgm_key`: clears the derivation salt, tracks
+/// Replace the management key while keeping pivman metadata in sync:
+/// clears the derivation salt, tracks
 /// the stored-key flag in ADMIN DATA, and stores/clears the key in PRINTED.
 /// Follow-up writes authenticate externally with the new key within the same
 /// connection. The PIN is verified adjacent to the protected-object writes.
@@ -903,10 +903,9 @@ pub fn set_management_key_synced<E>(
     Ok(())
 }
 
-/// Change the PIN while keeping a PIN-derived management key working,
-/// mirroring ykman's `pivman_change_pin`: after the change, re-derive with a
-/// fresh salt and rotate the management key. Raw PIN bytes are required for
-/// the derivation.
+/// Change the PIN while keeping a PIN-derived management key working:
+/// after the change, re-derive with a fresh salt and rotate the management
+/// key. Raw PIN bytes are required for the derivation.
 pub fn change_pin_synced<E>(
     profile: &DeviceProfile,
     old_pin: &[u8],
@@ -1405,7 +1404,7 @@ mod tests {
         assert!(parsed.puk_blocked());
         assert!(parsed.has_stored_key());
         assert!(parsed.has_derived_key());
-        // ykman fixture shape: 80 { 81 flags }.
+        // Fixture shape: 80 { 81 flags }.
         let parsed = PivmanData::from_value(&[0x80, 3, 0x81, 1, 3]).unwrap();
         assert!(parsed.puk_blocked());
         assert!(parsed.has_stored_key());
@@ -1414,9 +1413,9 @@ mod tests {
     }
 
     #[test]
-    fn derive_management_key_matches_pykman_vector() {
+    fn derive_management_key_known_answer() {
         // PBKDF2-HMAC-SHA1(pin="123456", salt=0^16, 10000 rounds, 24 bytes),
-        // computed with Python's hashlib.pbkdf2_hmac.
+        // a known-answer vector cross-checked against an independent tool.
         let key = derive_management_key(b"123456", &[0; 16]);
         assert_eq!(
             &key[..],

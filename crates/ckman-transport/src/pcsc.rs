@@ -97,9 +97,8 @@ impl PcscConnection {
     }
 
     /// Contactless readers have no USB PID; CanoKey puts its name in the ATR
-    /// historical bytes (matching the Python fork's `is_canokey` check). The
-    /// CCID driver renders the reader name as "Canokeys Canokey ...", so both
-    /// matches are case-insensitive.
+    /// historical bytes. The CCID driver renders the reader name as
+    /// "Canokeys Canokey ...", so both matches are case-insensitive.
     pub fn is_canokey(&self) -> bool {
         self.reader.to_ascii_lowercase().contains("canokey")
             || contains(&self.atr.to_ascii_lowercase(), b"canokey")
@@ -245,7 +244,7 @@ mod tests {
     #[test]
     fn atr_substring_detection() {
         assert!(contains(b"\x00\x14CanoKey\x90", b"CanoKey"));
-        assert!(!contains(b"\x00\x14YubiKey\x90", b"CanoKey"));
+        assert!(!contains(b"\x00\x14OtherKey\x90", b"CanoKey"));
         assert!(!contains(b"Can", b"CanoKey"));
     }
 

@@ -16,8 +16,7 @@ use zeroize::Zeroizing;
 
 pub type CliResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-/// Reader selection matching: case-insensitive substring, like the Python
-/// CLI's ykman/pcsc reader resolution.
+/// Reader selection matching: case-insensitive substring.
 pub fn reader_matches(reader_name: &str, filter: &str) -> bool {
     reader_name.to_lowercase().contains(&filter.to_lowercase())
 }
@@ -229,8 +228,8 @@ mod tests {
         assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "canokey"));
         assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "CANOKEY"));
         assert!(reader_matches("Canokeys Canokey [CCID] 00 00", "ccid] 00"));
-        assert!(!reader_matches("Canokeys Canokey [CCID] 00 00", "yubikey"));
-        // An empty filter matches everything (substring semantics, as in the old CLI).
+        assert!(!reader_matches("Canokeys Canokey [CCID] 00 00", "otherkey"));
+        // An empty filter matches everything (substring semantics).
         assert!(reader_matches("Some Reader", ""));
     }
 

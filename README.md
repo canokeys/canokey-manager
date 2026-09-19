@@ -4,12 +4,9 @@
 security keys: configure the device, and manage the OATH, PIV, OpenPGP and
 FIDO2 applications.
 
-This is a pure-Rust rewrite of the Python
-[yubikey-manager](https://github.com/canokeys/yubikey-manager) fork. The
-protocol core is [libcanokey](https://github.com/canokeys/libcanokey); the
-CLI owns device connection, prompting, and host-side formats (X.509, PKCS#8,
-otpauth://). The Python library and scripting API are **dropped**; a future
-PyO3 binding may restore scripting on top of the Rust core.
+The protocol core is [libcanokey](https://github.com/canokeys/libcanokey)
+(from crates.io); the CLI owns device connection, prompting, and host-side
+formats (X.509, PKCS#8, otpauth://). Everything is pure Rust.
 
 ## Features
 
@@ -20,7 +17,7 @@ PyO3 binding may restore scripting on top of the Rust core.
 | OATH | `ckman oath info`, `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete/set-default` |
 | PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name` |
 | OpenPGP | `ckman openpgp info`, `openpgp reset`, `openpgp access …` (PIN/admin PIN/reset code, retries, signature policy), `openpgp keys info/generate/import/set-touch`, `openpgp certificates import/export/delete` |
-| FIDO2 | `ckman fido info`, `fido reset`, `fido access set-pin/change-pin/set-min-length/force-change`, `fido credentials list/delete` |
+| FIDO2 | `ckman fido info`, `fido reset`, `fido access set-pin/change-pin/set-min-length/force-change/verify-pin`, `fido config toggle-always-uv`, `fido credentials list/delete` |
 
 PINs and passwords are prompted without echo (via `rpassword`); the OATH
 password can be remembered in the OS keyring per device
@@ -46,11 +43,10 @@ Install from a checkout:
 cargo install --path crates/ckman-cli --locked
 ```
 
-The protocol core is [libcanokey](https://crates.io/crates/canokey) from
-crates.io, so `cargo install --path` and a future crates.io release work
-with the normal registry flow. 0.1.0 ships as GitHub-release binaries built
-by [cargo-dist](https://opensource.axo.dev/cargo-dist/) (see
-`dist-workspace.toml`). cargo-dist is a **release prerequisite**, not
+Releases ship as GitHub-release binaries built by
+[cargo-dist](https://opensource.axo.dev/cargo-dist/) (see
+`dist-workspace.toml`); crates.io publishing is also possible now that
+libcanokey is published there. cargo-dist is a **release prerequisite**, not
 vendored: install it once with `cargo install cargo-dist --locked`, then
 validate/refresh the release setup with `cargo dist init` (answer the
 prompts to target this workspace; commit the generated workflow).
@@ -78,7 +74,8 @@ ckman fido credentials list      # resident credentials
 ```
 
 Global options: `--device SERIAL` and `--reader NAME` select one of several
-attached keys; `-l/--log-level` enables tracing on stderr.
+attached keys; `-l/--log-level` enables tracing (stderr or `--log-file`);
+`--diagnose` prints a bug-report environment summary.
 
 ## Security notes
 
@@ -108,5 +105,4 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
 ## License
 
-Apache License 2.0 (`LICENSE`). The same license covers this rewrite; the
-Python original was BSD-2-Clause (Yubico AB) with the CanoKey patch set.
+Apache License 2.0 (`LICENSE`).

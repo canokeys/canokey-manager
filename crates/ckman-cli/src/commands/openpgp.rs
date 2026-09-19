@@ -407,7 +407,7 @@ fn fingerprint_hex(fingerprint: Option<[u8; 20]>) -> Option<String> {
     }))
 }
 
-/// The UIF two-byte value rendered like the Python CLI's policy names.
+/// The UIF two-byte value rendered as policy names.
 fn touch_policy_name(uif: Option<[u8; 2]>) -> &'static str {
     match uif.map(|[policy, flags]| (policy, flags & 0x20 != 0)) {
         Some((0, _)) => "off",
@@ -419,7 +419,7 @@ fn touch_policy_name(uif: Option<[u8; 2]>) -> &'static str {
     }
 }
 
-/// Algorithm attributes rendered like the Python CLI (`RSA2048`, curve names).
+/// Algorithm attributes rendered as names (`RSA2048`, curve names).
 /// Device-controlled bytes are never trusted: empty and short inputs render
 /// as an `unknown (hex)` fallback.
 fn attributes_name(attributes: Option<&[u8]>) -> String {

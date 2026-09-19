@@ -2,9 +2,8 @@
 //! certificate and CSR assembly, hashing and RSA PKCS#1 v1.5 padding.
 //!
 //! The private-key operation itself runs on the CanoKey; this module only
-//! prepares the to-be-signed bytes and assembles the final object, mirroring
-//! ykman's `sign_certificate_builder`/`sign_csr_builder` without the
-//! dummy-key detour (the TBS is built directly and signed once).
+//! prepares the to-be-signed bytes and assembles the final object (the TBS is
+//! built directly and signed exactly once).
 
 use canokey::piv::Algorithm;
 use der::asn1::{Any, BitString, ObjectIdentifier, SetOfVec, UtcTime};
@@ -108,8 +107,8 @@ pub fn rsa_pkcs1v15_encode(
     Ok(encoded)
 }
 
-/// Signature algorithm identifier for a key algorithm and hash, matching the
-/// identifiers ykman writes. Ed25519 takes no hash (PureEdDSA).
+/// Signature algorithm identifier for a key algorithm and hash.
+/// Ed25519 takes no hash (PureEdDSA).
 pub fn signature_algorithm(
     key: Algorithm,
     hash: Option<HashAlgorithm>,
@@ -177,10 +176,10 @@ const NAME_ATTRIBUTES: [(&str, &str); 9] = [
     ("UID", "0.9.2342.19200300.100.1.1"),
 ];
 
-/// Parse an RFC 4514 string into an X.501 Name, ported from ykman's
-/// `_parse_rfc4514_string`: `,` separates RDNs, `+` separates multi-valued
-/// RDN attributes, `\` escapes the special characters `"+"',<> #=` and
-/// introduces `\XX` UTF-8 hex bytes. RDNs are reversed into DER order.
+/// Parse an RFC 4514 string into an X.501 Name: `,` separates RDNs, `+`
+/// separates multi-valued RDN attributes, `\` escapes the special characters
+/// `"+"',<> #=` and introduces `\XX` UTF-8 hex bytes. RDNs are reversed into
+/// DER order.
 pub fn parse_rfc4514(value: &str) -> Result<Name, X509Error> {
     let invalid = |msg: &str| X509Error::Rfc4514(msg.to_string());
     // Split into RDNs of attributes, handling escapes.

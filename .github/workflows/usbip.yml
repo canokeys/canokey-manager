@@ -76,9 +76,9 @@ jobs:
           uname -r
           lsb_release -a || true
 
-      # System python3-jinja2/python3-jsonschema are for canokey-core firmware
-      # code generation; the Rust build itself needs no Python. libudev is for
-      # hidapi (the HID/CTAPHID transport), libpcsclite for pcsc.
+      # System jinja2/jsonschema packages are for canokey-core firmware code
+      # generation; libudev is for hidapi (the HID/CTAPHID transport),
+      # libpcsclite for pcsc.
       - name: Install Ubuntu USB/IP and build dependencies
         shell: bash
         run: |
@@ -315,18 +315,9 @@ jobs:
           if ((run_status != 0)); then
             metadata="$RUNNER_TEMP/canokey-usbip-artifacts/metadata.json"
             if [[ -f "$metadata" ]]; then
-              python3 - "$metadata" <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as metadata_file:
-              metadata = json.load(metadata_file)
-          print(
-              "ERROR: canokey-usbip phase "
-              f"{metadata.get('phase', 'unknown')} failed: "
-              f"{metadata.get('failure', 'no failure detail')}"
-          )
-          PY
+              phase="$(jq -r '.phase // "unknown"' "$metadata")"
+              failure="$(jq -r '.failure // "no failure detail"' "$metadata")"
+              echo "ERROR: canokey-usbip phase ${phase} failed: ${failure}"
             else
               echo "ERROR: canokey-usbip failed before writing metadata (exit ${run_status})"
             fi

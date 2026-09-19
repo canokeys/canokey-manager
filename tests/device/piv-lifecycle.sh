@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PIV lifecycle: reset, credentials, key generation/import, certificates.
 # DESTRUCTIVE: writes and resets the device. Requires CKMAN_DESTRUCTIVE=1 and
-# a usbip test key. Adapted from the Python rig's piv.sh.
+# a usbip test key.
 set -euo pipefail
 
 : "${CKMAN_DESTRUCTIVE:?PIV lifecycle writes to the device; set CKMAN_DESTRUCTIVE=1}"

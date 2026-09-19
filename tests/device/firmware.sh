@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Firmware feature matrix for the device-test harness, replacing the Python
-# firmware.py of the old rig. Reads tests/device/features.tsv:
+# Firmware feature matrix for the device-test harness. Reads
+# tests/device/features.tsv:
 #   <firmware-prefix>\t<feature>\tsupported|unsupported
 # A firmware matches the longest listed prefix of the normalized version.
 # Features absent from the matrix report "unknown" (a harness error), so the

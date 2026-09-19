@@ -118,7 +118,7 @@ mod tests {
         assert!(matches(0x20a0, 0x42d4, 0xf1d0, 1, None));
         assert!(matches(0x1234, 0x5678, 0xf1d0, 1, Some("CanoKey Pigeon")));
         // FIDO usage on an unrelated device is not claimed.
-        assert!(!matches(0x1050, 0x0407, 0xf1d0, 1, Some("YubiKey")));
+        assert!(!matches(0x1050, 0x0407, 0xf1d0, 1, Some("OtherKey")));
         // CanoKey VID/PID without the FIDO usage page is the CCID interface.
         assert!(!matches(0x20a0, 0x42d4, 0x0001, 1, None));
         assert!(!matches(0x20a0, 0x42d4, 0xf1d0, 2, None));

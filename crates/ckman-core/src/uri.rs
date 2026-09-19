@@ -66,7 +66,7 @@ pub enum UriError {
 pub struct Base32Error;
 
 /// Decode RFC 4648 base32, accepting lowercase and ignoring spaces and `=`
-/// padding, matching yubikit's `parse_b32_key` leniency.
+/// padding (the leniency OATH secrets are conventionally shared with).
 pub fn base32_decode(input: &str) -> Result<Vec<u8>, Base32Error> {
     let mut accumulator = 0u32;
     let mut bits = 0u32;
@@ -133,9 +133,9 @@ fn percent_decode(input: &str) -> Result<String, UriError> {
     String::from_utf8(output).map_err(|_| UriError::PercentEncoding)
 }
 
-/// Parse an `otpauth://totp/...` or `otpauth://hotp/...` URI, following the
-/// yubikit convention: the label is `[issuer:]account`, and the `issuer`
-/// query parameter overrides the label prefix.
+/// Parse an `otpauth://totp/...` or `otpauth://hotp/...` URI: the label is
+/// `[issuer:]account`, and the `issuer` query parameter overrides the label
+/// prefix.
 pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
     let rest = uri
         .trim()

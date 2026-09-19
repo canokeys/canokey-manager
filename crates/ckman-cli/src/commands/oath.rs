@@ -334,9 +334,8 @@ struct OathSession {
 
 impl OathSession {
     /// Connect, select the OATH applet, and resolve access: an explicit
-    /// password is used first, then a remembered key, then a prompt. Mirrors
-    /// the Python CLI's `_init_session`: a stale remembered key is forgotten
-    /// and falls through to the prompt.
+    /// password is used first, then a remembered key, then a prompt. A stale
+    /// remembered key is forgotten and falls through to the prompt.
     fn connect(
         device: Option<u32>,
         reader: Option<&str>,
@@ -888,8 +887,8 @@ fn display_name(entry: &Entry) -> String {
     String::from_utf8_lossy(entry.name.as_bytes()).into_owned()
 }
 
-/// Search accounts like the Python CLI: an exact match wins; otherwise a
-/// case-insensitive substring match. Hidden accounts are skipped unless asked.
+/// Search accounts: an exact match wins; otherwise a case-insensitive
+/// substring match. Hidden accounts are skipped unless asked.
 fn search<'e>(entries: &'e [Entry], query: &str, show_hidden: bool) -> Vec<&'e Entry> {
     let mut hits = Vec::new();
     for entry in entries {
