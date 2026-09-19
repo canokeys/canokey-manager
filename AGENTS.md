@@ -31,13 +31,11 @@ MSRV is **1.85.1** (pinned in `rust-toolchain.toml`; CI uses the same). When
 adding dependencies, check their `rust-version` against it — several recent
 crate releases require newer rustc and must be pinned down.
 
-## libcanokey pin policy
+## libcanokey version policy
 
-The workspace pins libcanokey to a git revision of the
-`codex/oath-admin-migration` branch (the only branch carrying canokey-ctap
-and canokey-ndef). Switch the pin to a main-branch tag once that branch
-merges; until then, bump the `rev` deliberately and re-run the transcript
-tests.
+libcanokey is consumed from crates.io (`canokey = "0.1"`, with the `x509`
+and `clientpin` features). Bump the version deliberately and re-run the
+transcript tests when upgrading.
 
 ## Testing conventions
 
@@ -51,10 +49,10 @@ run against a real key from tests or CI without explicit operator intent.
 
 ## Releases
 
-crates.io is blocked until libcanokey publishes (git dependency). Releases
-ship as GitHub-release binaries via cargo-dist (`dist-workspace.toml`).
-Release prerequisite: `cargo install cargo-dist --locked`, then
-`cargo dist init` and commit the generated workflow.
+libcanokey comes from crates.io, so crates.io publishing is unblocked.
+Releases ship as GitHub-release binaries via cargo-dist
+(`dist-workspace.toml`). Release prerequisite: `cargo install cargo-dist
+--locked`, then `cargo dist init` and commit the generated workflow.
 
 ## Branch model
 

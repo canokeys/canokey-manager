@@ -4,8 +4,7 @@
 
 Pure-Rust rewrite of the CanoKey manager, replacing the Python
 yubikey-manager fork. The protocol core is
-[libcanokey](https://github.com/canokeys/libcanokey) (pinned to a git
-revision until the `codex/oath-admin-migration` branch merges upstream);
+[libcanokey](https://crates.io/crates/canokey) 0.1 from crates.io;
 the CLI is new code on top of it.
 
 ### Command coverage

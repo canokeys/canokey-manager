@@ -8,12 +8,9 @@ edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/canokeys/canokey-manager"
 
-# libcanokey is pinned to the codex/oath-admin-migration branch, the only
-# branch carrying canokey-ctap and canokey-ndef. Switch to a main tag once
-# the branch merges.
+# libcanokey from crates.io (canokey 0.1.0 includes canokey-ctap/canokey-ndef).
 [workspace.dependencies]
-canokey = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e", features = ["x509", "clientpin"] }
-canokey-ctap = { git = "https://github.com/canokeys/libcanokey.git", rev = "f94f40acaf5bb57906d2edab1fd1b73d0cfdd97e" }
+canokey = { version = "0.1.0", features = ["x509", "clientpin"] }
 
 base64ct = "1"
 clap = { version = "4.5", features = ["derive"] }
