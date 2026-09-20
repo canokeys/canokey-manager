@@ -1,0 +1,20 @@
+# Publishes each GitHub release to the Windows Package Manager (winget).
+#
+# Requires:
+# - a fork of microsoft/winget-pkgs at canokeys/winget-pkgs
+# - a WINGET_TOKEN secret: a classic PAT with public_repo + workflow scopes
+name: Publish to WinGet
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: Canokeys.Ckman
+          installers-regex: '\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}

@@ -50,9 +50,17 @@ run against a real key from tests or CI without explicit operator intent.
 ## Releases
 
 libcanokey comes from crates.io, so crates.io publishing is unblocked.
-Releases ship as GitHub-release binaries via cargo-dist
-(`dist-workspace.toml`). Release prerequisite: `cargo install cargo-dist
---locked`, then `cargo dist init` and commit the generated workflow.
+Publish crates in dependency order: `ckman-transport` → `ckman-core` →
+`ckman`. Releases ship as GitHub-release binaries via cargo-dist
+(`dist-workspace.toml`); pushing a `v*` tag runs
+`.github/workflows/v-release.yml`, which also publishes the Homebrew
+formula to `canokeys/homebrew-tap` (needs a `HOMEBREW_TAP_TOKEN` secret
+with write access to the tap). `.github/workflows/winget.yml` submits each
+release to winget via winget-releaser (needs the `canokeys/winget-pkgs`
+fork and a `WINGET_TOKEN` secret). The AUR package lives at
+`packaging/aur/ckman-bin/` and is published manually (see the PKGBUILD
+header). Release prerequisite: `cargo install cargo-dist --locked`, then
+`cargo dist init` and commit the generated workflow when upgrading dist.
 
 ## Branch model
 

@@ -26,6 +26,34 @@ password can be remembered in the OS keyring per device
 FIDO commands prefer the native USB HID (CTAPHID) transport and fall back to
 FIDO over CCID when `--reader` is given or no HID interface is present.
 
+## Install
+
+Prebuilt binaries for macOS, Linux and Windows are attached to each
+[GitHub release](https://github.com/canokeys/canokey-manager/releases),
+with shell/PowerShell installers and checksums. Package-manager options:
+
+| Platform | Command |
+| --- | --- |
+| macOS (Homebrew) | `brew install canokeys/tap/ckman` |
+| Windows (winget) | `winget install Canokeys.Ckman` |
+| Arch Linux (AUR) | `yay -S ckman-bin` |
+| Rust (crates.io) | `cargo install ckman --locked` (build from source) or `cargo binstall ckman` (prebuilt) |
+
+The one-line installers from the release page work everywhere:
+
+```sh
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/canokeys/canokey-manager/releases/latest/download/ckman-installer.sh | sh
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/canokeys/canokey-manager/releases/latest/download/ckman-installer.ps1 | iex"
+```
+
+On Linux, `pcscd`/`pcsclite`, `libudev` and a CCID driver package are
+required at runtime.
+
+Migrating from the legacy Python ckman: `pipx uninstall canokey-manager`
+first, so the old `ckman` shim does not shadow the new binary.
+
 ## Build
 
 Requires Rust 1.85.1 (see `rust-toolchain.toml`; rustup installs it
@@ -35,12 +63,6 @@ on macOS/Windows) and libusb/hidapi system libraries where required.
 ```sh
 cargo build --release
 # The binary is target/release/ckman.
-```
-
-Install from crates.io:
-
-```sh
-cargo install ckman --locked
 ```
 
 Install from a checkout:
