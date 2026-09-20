@@ -641,7 +641,8 @@ impl PivSession {
         let entered =
             super::prompt_password("Enter the management key [blank to use default key]: ")?;
         let (key, default) = if entered.is_empty() {
-            (piv::default_management_key(), true)
+            let algorithm = self.management_algorithm()?;
+            (piv::default_management_key(algorithm), true)
         } else {
             let bytes = hex_decode(&entered).ok_or("management key must be hex-encoded")?;
             let algorithm = self.management_algorithm()?;

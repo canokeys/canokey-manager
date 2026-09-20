@@ -61,15 +61,17 @@ fn options() -> OperationOptions {
     OperationOptions::default()
 }
 
-/// The factory-default 3DES management key, documented for the user after a
-/// reset. It is never submitted implicitly.
+/// The factory-default management key bytes, documented for the user after a
+/// reset. The wire algorithm is the card's: 3DES on firmware through 3.0.3,
+/// AES-192 on 3.1.0. It is never submitted implicitly.
 pub const DEFAULT_MANAGEMENT_KEY: [u8; 24] = [
     1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
 ];
 
-/// The default management key as a typed 3DES key.
-pub fn default_management_key() -> ManagementKey {
-    ManagementKey::from_bytes(ManagementKeyAlgorithm::Tdes, &DEFAULT_MANAGEMENT_KEY)
+/// The default management key typed for the card's management algorithm
+/// (3DES on firmware through 3.0.3, AES-192 on 3.1.0).
+pub fn default_management_key(algorithm: ManagementKeyAlgorithm) -> ManagementKey {
+    ManagementKey::from_bytes(algorithm, &DEFAULT_MANAGEMENT_KEY)
         .expect("the default management key is 24 bytes")
 }
 
