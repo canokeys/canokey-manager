@@ -199,7 +199,9 @@ fn rsa_material(key: &rsa::RsaPrivateKey) -> Result<Material, KeyError> {
     })
 }
 
-/// SEC1 ECPrivateKey: SEQUENCE { INTEGER 1, OCTET STRING privateKey, ... }.
+/// SEC1 ECPrivateKey: SEQUENCE { INTEGER 1, OCTET STRING privateKey,
+/// [0] parameters, [1] publicKey }. OpenSSL emits both optional fields;
+/// publicKey is decoded and ignored so it does not fail as trailing data.
 fn from_sec1(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
     use der::Sequence;
     #[derive(Sequence)]
@@ -208,11 +210,14 @@ fn from_sec1(der_bytes: &[u8]) -> Result<ImportedKey, KeyError> {
         private_key: OctetStringRef<'a>,
         #[asn1(context_specific = "0", optional = "true")]
         parameters: Option<der::AnyRef<'a>>,
+        #[asn1(context_specific = "1", optional = "true")]
+        public_key: Option<der::AnyRef<'a>>,
     }
     let key = EcPrivateKey::from_der(der_bytes).map_err(|_| KeyError::Encoding)?;
     if key.version != 1 {
         return Err(KeyError::Encoding);
     }
+    let _ = key.public_key;
     let curve = key
         .parameters
         .and_then(|p| p.decode_as::<ObjectIdentifier>().ok())
@@ -500,6 +505,25 @@ mod tests {
         let pem = crate::x509::pem_encode("RSA PRIVATE KEY", doc.as_bytes());
         let key = parse_private_key(&pem, None).unwrap();
         assert_eq!(key.algorithm, Algorithm::Rsa1024);
+    }
+
+    #[test]
+    fn sec1_openssl_with_public_key() {
+        // SEC1 as emitted by `openssl ec`: version, privateKey,
+        // [0] parameters (P-256), [1] publicKey BIT STRING.
+        let der: &[u8] = &[
+            0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20, 0x48, 0xca, 0x30, 0x1c, 0x5b, 0x0f, 0x0c,
+            0x09, 0xf5, 0x59, 0xb2, 0xc3, 0x44, 0x14, 0xe0, 0xb0, 0xbc, 0x2d, 0x1f, 0x3f, 0xd0,
+            0xde, 0xa2, 0xae, 0x8d, 0x9a, 0x95, 0x8e, 0xfd, 0x22, 0xd6, 0x52, 0xa0, 0x0a, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0xa1, 0x44, 0x03, 0x42, 0x00,
+            0x04, 0x3f, 0x1d, 0x0f, 0x6c, 0xcd, 0x6a, 0x16, 0x1c, 0xd2, 0x36, 0x3f, 0x8a, 0xe0,
+            0x5a, 0x7e, 0xc1, 0x49, 0xc7, 0x00, 0x9c, 0x63, 0x18, 0x98, 0x5d, 0xe1, 0x07, 0x77,
+            0xfa, 0x94, 0x2d, 0x12, 0x85, 0xb1, 0xe1, 0xdc, 0xd1, 0xfd, 0xd7, 0x81, 0x63, 0xed,
+            0x98, 0x0d, 0x04, 0x02, 0x81, 0x44, 0xf8, 0xb8, 0x9a, 0xc5, 0xb8, 0x8d, 0xc3, 0xef,
+            0x59, 0x45, 0x23, 0x6a, 0x20, 0x75, 0xfb, 0x6d, 0x62,
+        ];
+        let key = parse_private_key(der, None).unwrap();
+        assert_eq!(key.algorithm, Algorithm::EccP256);
     }
 
     #[test]
