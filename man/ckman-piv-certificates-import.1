@@ -2,18 +2,20 @@
 .el .ds Aq '
 .TH ckman-piv-certificates-import 1  ckman 
 .SH NAME
-ckman\-piv\-certificates\-import \- Import a certificate (PEM/DER) into a slot
+ckman\-piv\-certificates\-import \- Import a certificate (PEM/DER/PKCS#12) into a slot
 .SH SYNOPSIS
 \fBckman\-piv\-certificates\-import\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fICERTIFICATE\fR> 
 .SH DESCRIPTION
-Import a certificate (PEM/DER) into a slot
+Import a certificate (PEM/DER/PKCS#12) into a slot.
+.PP
+A PEM bundle holding several blocks (key plus certificate, or a certificate chain) contributes its first CERTIFICATE block; a PKCS#12 bundle contributes its leaf certificate.
 .SH OPTIONS
 .TP
 \fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
 Current management key as 48 hex characters (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISLOT\fR>
 PIV slot

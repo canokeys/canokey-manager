@@ -145,7 +145,8 @@ pub enum KeysCommand {
         #[command(flatten)]
         mgmt: MgmtArgs,
     },
-    /// Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1).
+    /// Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1) or a
+    /// PKCS#12 bundle (its first private key).
     Import {
         /// PIV slot.
         #[arg(value_parser = parse_slot)]
@@ -220,7 +221,11 @@ pub enum KeysCommand {
 
 #[derive(Subcommand)]
 pub enum CertificatesCommand {
-    /// Import a certificate (PEM/DER) into a slot.
+    /// Import a certificate (PEM/DER/PKCS#12) into a slot.
+    ///
+    /// A PEM bundle holding several blocks (key plus certificate, or a
+    /// certificate chain) contributes its first CERTIFICATE block; a PKCS#12
+    /// bundle contributes its leaf certificate.
     Import {
         /// PIV slot.
         #[arg(value_parser = parse_slot)]
@@ -1255,16 +1260,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             mgmt,
         } => {
             let data = read_input(private_key)?;
-            let password = match password {
-                Some(password) => Some(password.clone()),
-                None if data.starts_with(b"-----BEGIN ENCRYPTED") => {
-                    Some(super::prompt_password("Enter the private key password: ")?)
-                }
-                None => None,
-            };
-            let imported =
-                keys::parse_private_key(&data, super::secret_str(&password).map(str::as_bytes))
-                    .map_err(|error| format!("{error}"))?;
+            let imported = super::parse_private_key_input(&data, password)?;
             let mut session = PivSession::connect(device, reader)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
@@ -1491,12 +1487,7 @@ fn certificates(
             mgmt,
         } => {
             let data = read_input(certificate)?;
-            let parsed = if data.starts_with(b"-----BEGIN") {
-                canokey::x509::parse_pem(&data, Default::default())
-            } else {
-                canokey::x509::parse_der(&data, Default::default())
-            }
-            .map_err(|error| format!("invalid certificate: {error}"))?;
+            let parsed = super::parse_certificate_input(&data)?;
             let mut session = PivSession::connect(device, reader)?;
             // When a key occupies the slot, the certificate must match it.
             if let Ok(metadata) = session.run(|profile, exchange| {

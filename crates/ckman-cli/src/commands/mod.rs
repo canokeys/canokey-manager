@@ -121,6 +121,50 @@ pub fn prompt_admin_pin() -> CliResult<Pin> {
     Pin::from_bytes(entered.as_bytes()).map_err(|error| format!("{error}").into())
 }
 
+/// Parse a private key file (PEM/DER/PKCS#12), prompting once for a password
+/// when the file needs one and none was supplied on the command line.
+pub fn parse_private_key_input(
+    data: &[u8],
+    password: &Option<SecretString>,
+) -> CliResult<ckman_core::keys::ImportedKey> {
+    let parsed = ckman_core::keys::parse_private_key(data, secret_str(password).map(str::as_bytes));
+    match parsed {
+        Err(ckman_core::keys::KeyError::Password) if password.is_none() => {
+            let entered = prompt_password("Enter the private key password: ")?;
+            ckman_core::keys::parse_private_key(data, Some(entered.as_bytes()))
+                .map_err(|error| format!("{error}").into())
+        }
+        other => other.map_err(|error| format!("{error}").into()),
+    }
+}
+
+/// Parse a certificate file: a PEM bundle contributes its first CERTIFICATE
+/// block; DER is a lone X.509 certificate or a PKCS#12 bundle (importing
+/// its leaf certificate, prompting for the bundle password when needed).
+pub fn parse_certificate_input(data: &[u8]) -> CliResult<canokey::x509::CertificateInfo> {
+    if data.starts_with(b"-----BEGIN") {
+        let (_, der) = ckman_core::keys::pem_decode(data, &["CERTIFICATE"])
+            .map_err(|error| format!("invalid certificate: {error}"))?;
+        return canokey::x509::parse_der(&der, Default::default())
+            .map_err(|error| format!("invalid certificate: {error}").into());
+    }
+    if let Ok(cert) = canokey::x509::parse_der(data, Default::default()) {
+        return Ok(cert);
+    }
+    let certs = match ckman_core::keys::certificates_from_pfx(data, None) {
+        Err(ckman_core::keys::KeyError::Password) => {
+            let entered = prompt_password("Enter the PKCS#12 password: ")?;
+            ckman_core::keys::certificates_from_pfx(data, Some(entered.as_bytes()))
+        }
+        other => other,
+    }
+    .map_err(|error| format!("invalid certificate: {error}"))?;
+    let leaf = ckman_core::keys::leaf_certificate(&certs)
+        .map_err(|error| format!("invalid certificate: {error}"))?;
+    canokey::x509::parse_der(&certs[leaf], Default::default())
+        .map_err(|error| format!("invalid certificate: {error}").into())
+}
+
 /// True when libcanokey reports that the request needs Admin PIN verification
 /// (a protected request built without a PIN, or a card-side 6982), so the CLI
 /// should prompt and retry once. libcanokey never tries default credentials.

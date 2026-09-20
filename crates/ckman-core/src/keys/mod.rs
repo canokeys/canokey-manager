@@ -1,6 +1,6 @@
 //! Host-side key file parsing for PIV import/export: PEM armor, PKCS#8
-//! (plain and encrypted), PKCS#1 RSA and SEC1 EC private keys, and SPKI or
-//! PKCS#1 public keys. Output is libcanokey's typed private-key material;
+//! (plain and encrypted), PKCS#1 RSA, SEC1 EC and PKCS#12 bundles, and SPKI
+//! or PKCS#1 public keys. Output is libcanokey's typed private-key material;
 //! no key bytes are retained beyond it.
 
 use canokey::piv::{Algorithm, PrivateKeyMaterial};
@@ -9,13 +9,18 @@ use der::asn1::{ObjectIdentifier, OctetStringRef};
 use der::{Decode, Encode};
 use zeroize::Zeroizing;
 
+mod pfx;
+
+pub use pfx::{certificates_from_pfx, leaf_certificate, parse_pfx, PfxData};
+
 /// Key-file parsing failure.
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
     /// The PEM armor is malformed or carries an unexpected label.
     #[error("invalid or unsupported PEM block")]
     Pem,
-    /// The key encoding is not recognized (tried PKCS#8, PKCS#1, SEC1).
+    /// The key encoding is not recognized (tried PKCS#8, PKCS#1, SEC1,
+    /// PKCS#12).
     #[error("unrecognized private key encoding")]
     Encoding,
     /// The key type or curve is not usable in a PIV slot.
@@ -27,6 +32,12 @@ pub enum KeyError {
     /// The RSA key does not use the firmware-implied public exponent 65537.
     #[error("only RSA keys with public exponent 65537 are supported")]
     RsaExponent,
+    /// The PKCS#12 password-integrity MAC does not match.
+    #[error("PKCS#12 integrity check failed (wrong password or corrupted file?)")]
+    MacMismatch,
+    /// A PKCS#12 bundle holds several certificates and the leaf is ambiguous.
+    #[error("several certificates in the bundle; extract the one to import")]
+    AmbiguousCertificates,
 }
 
 /// Parsed key material in a neutral form; convert to the applet-specific
@@ -141,31 +152,43 @@ pub struct ImportedPublicKey {
     pub spki_der: Vec<u8>,
 }
 
-/// Extract the single labeled PEM block, or pass DER through unchanged.
+/// Extract the first PEM block whose label is in `labels`, or pass DER
+/// through unchanged. Blocks with other labels (a certificate bundled with
+/// a key, a key bundled with a certificate) are skipped, so block order in
+/// a combined file does not matter.
 pub fn pem_decode(input: &[u8], labels: &[&str]) -> Result<(String, Vec<u8>), KeyError> {
     use base64ct::{Base64, Encoding as _};
     let text = match std::str::from_utf8(input) {
         Ok(text) if text.contains("-----BEGIN") => text,
         _ => return Ok((String::new(), input.to_vec())),
     };
-    let begin = text.find("-----BEGIN ").ok_or(KeyError::Pem)? + "-----BEGIN ".len();
-    let label_end = text[begin..].find("-----").ok_or(KeyError::Pem)?;
-    let label = &text[begin..begin + label_end];
-    if !labels.contains(&label) {
-        return Err(KeyError::Pem);
+    let mut cursor = 0;
+    while let Some(at) = text[cursor..].find("-----BEGIN ") {
+        let begin = cursor + at + "-----BEGIN ".len();
+        let label_end = text[begin..].find("-----").ok_or(KeyError::Pem)?;
+        let label = &text[begin..begin + label_end];
+        let end_marker = format!("-----END {label}-----");
+        let block_end = text[begin + label_end..]
+            .find(&end_marker)
+            .map(|i| begin + label_end + i + end_marker.len())
+            .ok_or(KeyError::Pem)?;
+        if !labels.contains(&label) {
+            cursor = block_end;
+            continue;
+        }
+        let body_start = text[begin + label_end..]
+            .find('\n')
+            .map(|i| begin + label_end + i + 1)
+            .ok_or(KeyError::Pem)?;
+        let end = text[body_start..].find(&end_marker).ok_or(KeyError::Pem)?;
+        let body: String = text[body_start..body_start + end]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let decoded = Base64::decode_vec(&body).map_err(|_| KeyError::Pem)?;
+        return Ok((label.to_string(), decoded));
     }
-    let body_start = text[begin + label_end..]
-        .find('\n')
-        .map(|i| begin + label_end + i + 1)
-        .ok_or(KeyError::Pem)?;
-    let end_marker = format!("-----END {label}-----");
-    let end = text[body_start..].find(&end_marker).ok_or(KeyError::Pem)?;
-    let body: String = text[body_start..body_start + end]
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    let decoded = Base64::decode_vec(&body).map_err(|_| KeyError::Pem)?;
-    Ok((label.to_string(), decoded))
+    Err(KeyError::Pem)
 }
 
 fn rsa_material(key: &rsa::RsaPrivateKey) -> Result<Material, KeyError> {
@@ -310,7 +333,7 @@ fn from_sec1_inner(ec_private_key: &[u8]) -> Result<Zeroizing<Vec<u8>>, KeyError
 }
 
 /// Parse a PEM or DER private key (PKCS#8 plain/encrypted, PKCS#1 RSA, SEC1
-/// EC) into PIV import material.
+/// EC) or a PKCS#12 bundle into PIV import material.
 pub fn parse_private_key(input: &[u8], password: Option<&[u8]>) -> Result<ImportedKey, KeyError> {
     let (label, der_bytes) = pem_decode(
         input,
@@ -332,11 +355,18 @@ pub fn parse_private_key(input: &[u8], password: Option<&[u8]>) -> Result<Import
     }
     // "PRIVATE KEY" or bare DER: try PKCS#8, then encrypted PKCS#8 (a
     // recognized-but-undecryptable blob keeps its Password error), then
-    // PKCS#1 RSA, then SEC1 EC.
+    // PKCS#1 RSA, then SEC1 EC, then PKCS#12. A recognized-but-unsupported
+    // key keeps its Unsupported error; PKCS#12 is tried only when no other
+    // encoding matched at all.
     match from_pkcs8(&der_bytes) {
         Ok(key) => Ok(key),
         Err(_) => match decrypt_pkcs8(&der_bytes, password) {
-            Err(KeyError::Encoding) => from_pkcs1(&der_bytes).or_else(|_| from_sec1(&der_bytes)),
+            Err(KeyError::Encoding) => {
+                match from_pkcs1(&der_bytes).or_else(|_| from_sec1(&der_bytes)) {
+                    Err(KeyError::Encoding) => pfx::key_from_pfx(&der_bytes, password),
+                    other => other,
+                }
+            }
             other => other,
         },
     }
@@ -489,6 +519,22 @@ mod tests {
         // SEC1 too.
         let sec1 = p256::pkcs8::EncodePrivateKey::to_pkcs8_der(&secret).unwrap();
         let _ = sec1;
+    }
+
+    #[test]
+    fn pem_bundle_selects_block_by_label() {
+        // A key+certificate bundle parses regardless of block order: the
+        // CERTIFICATE block (dummy bytes) is skipped for the key, and
+        // selected when a certificate is asked for.
+        let secret = p256::SecretKey::random(&mut rand_core::OsRng);
+        let doc = p256::pkcs8::EncodePrivateKey::to_pkcs8_der(&secret).unwrap();
+        let mut bundle = crate::x509::pem_encode("CERTIFICATE", b"not a real cert");
+        bundle.extend_from_slice(&crate::x509::pem_encode("PRIVATE KEY", doc.as_bytes()));
+        let key = parse_private_key(&bundle, None).unwrap();
+        assert_eq!(key.algorithm, Algorithm::EccP256);
+        let (label, der) = pem_decode(&bundle, &["CERTIFICATE"]).unwrap();
+        assert_eq!(label, "CERTIFICATE");
+        assert_eq!(der, b"not a real cert");
     }
 
     #[test]

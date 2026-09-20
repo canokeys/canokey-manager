@@ -134,7 +134,8 @@ pub enum KeysCommand {
         #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
         admin_pin: Option<crate::commands::SecretString>,
     },
-    /// Import a private key (PEM/DER: PKCS#8, PKCS#1, SEC1).
+    /// Import a private key (PEM/DER/PKCS#12: PKCS#8, PKCS#1, SEC1; a bundle
+    /// contributes its first private key).
     Import {
         /// Key slot.
         #[arg(value_enum)]
@@ -747,18 +748,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             admin_pin,
         } => {
             let data = read_input(private_key)?;
-            let password = match password {
-                Some(password) => Some(password.clone()),
-                None if data.starts_with(b"-----BEGIN ENCRYPTED") => {
-                    Some(super::prompt_password("Enter the private key password: ")?)
-                }
-                None => None,
-            };
-            let imported = ckman_core::keys::parse_private_key(
-                &data,
-                super::secret_str(&password).map(str::as_bytes),
-            )
-            .map_err(|error| format!("{error}"))?;
+            let imported = super::parse_private_key_input(&data, password)?;
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
             let admin =

@@ -11,9 +11,11 @@ base64ct.workspace = true
 canokey.workspace = true
 ckman-transport = { path = "../ckman-transport" }
 der.workspace = true
+hmac.workspace = true
 p256.workspace = true
 p384.workspace = true
 pkcs1.workspace = true
+pkcs5.workspace = true
 pkcs8.workspace = true
 rsa.workspace = true
 sha2.workspace = true
