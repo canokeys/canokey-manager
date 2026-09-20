@@ -37,19 +37,26 @@ cargo build --release
 # The binary is target/release/ckman.
 ```
 
+Install from crates.io:
+
+```sh
+cargo install ckman --locked
+```
+
 Install from a checkout:
 
 ```sh
-cargo install --path crates/ckman-cli --locked
+cargo install --path crates/ckman --locked
 ```
 
 Releases ship as GitHub-release binaries built by
 [cargo-dist](https://opensource.axo.dev/cargo-dist/) (see
-`dist-workspace.toml`); crates.io publishing is also possible now that
-libcanokey is published there. cargo-dist is a **release prerequisite**, not
-vendored: install it once with `cargo install cargo-dist --locked`, then
-validate/refresh the release setup with `cargo dist init` (answer the
-prompts to target this workspace; commit the generated workflow).
+`dist-workspace.toml`), and the CLI is published to crates.io as
+[`ckman`](https://crates.io/crates/ckman). cargo-dist is a **release
+prerequisite**, not vendored: install it once with
+`cargo install cargo-dist --locked`, then validate/refresh the release
+setup with `cargo dist init` (answer the prompts to target this workspace;
+commit the generated workflow).
 
 Man pages are generated with clap and committed under `man/`; regenerate
 after CLI changes with:

@@ -4,7 +4,7 @@
 //! cargo run -p ckman-mangen -- man
 //! ```
 
-use ckman_cli::cli::Cli;
+use ckman::cli::Cli;
 use clap::CommandFactory;
 
 fn main() -> std::process::ExitCode {

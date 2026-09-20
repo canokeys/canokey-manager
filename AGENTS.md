@@ -7,7 +7,7 @@
 - `crates/ckman-core` — typed wrappers over libcanokey (admin, OATH, PIV,
   OpenPGP, FIDO2) plus host-side formats (X.509/CSR building, key-file
   parsing: PKCS#8/PKCS#1/SEC1/PKCS#12, otpauth:// URIs).
-- `crates/ckman-cli` — the `ckman` binary (clap).
+- `crates/ckman` — the `ckman` binary (clap).
 - `crates/ckman-mangen` — the man-page generator, a separate
   `publish = false` crate so `cargo install` never ships it.
 - `tests/device/` — hardware/usbip black-box harness (see its README).

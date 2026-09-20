@@ -328,7 +328,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ckman-cli"
+name = "ckman"
 version = "0.1.0"
 dependencies = [
  "canokey",
@@ -380,7 +380,7 @@ dependencies = [
 name = "ckman-mangen"
 version = "0.1.0"
 dependencies = [
- "ckman-cli",
+ "ckman",
  "clap",
  "clap_mangen",
 ]

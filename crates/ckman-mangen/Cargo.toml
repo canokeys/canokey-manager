@@ -8,6 +8,6 @@ description = "Man-page generator for ckman (development tool)"
 publish = false
 
 [dependencies]
-ckman-cli = { path = "../ckman-cli" }
+ckman = { path = "../ckman" }
 clap.workspace = true
 clap_mangen.workspace = true

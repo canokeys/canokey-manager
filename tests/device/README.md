@@ -49,7 +49,7 @@ Still missing — contributions should add these in this order:
    current scripts query plus the `piv-lifecycle` CI gate, for every catalog
    prefix; extend it as more lifecycle scripts land.
 3. **Deeper protocol coverage** — candidate: integration tests in
-   `crates/ckman-cli/tests/` exercising full command flows over a scripted
+   `crates/ckman/tests/` exercising full command flows over a scripted
    or usbip device.
 4. **Keyring test double** — the CLI uses the OS keyring directly, and there
    is no injection point yet.

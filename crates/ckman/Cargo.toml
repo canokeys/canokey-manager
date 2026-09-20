@@ -1,10 +1,14 @@
 [package]
-name = "ckman-cli"
+name = "ckman"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/canokeys/canokey-manager"
 description = "ckman: CanoKey management CLI"
+readme = "../../README.md"
+keywords = ["canokey", "security-key", "fido2", "openpgp", "piv"]
+categories = ["command-line-utilities", "cryptography"]
 
 [[bin]]
 name = "ckman"
@@ -12,8 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 canokey.workspace = true
-ckman-core = { path = "../ckman-core" }
-ckman-transport = { path = "../ckman-transport" }
+ckman-core = { path = "../ckman-core", version = "0.1.0" }
+ckman-transport = { path = "../ckman-transport", version = "0.1.0" }
 clap.workspace = true
 clap_mangen.workspace = true
 getrandom.workspace = true

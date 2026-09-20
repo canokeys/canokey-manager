@@ -1,6 +1,6 @@
 # NEWS
 
-## ckman 0.1.0 (unreleased)
+## ckman 0.1.0 (2026-09-20)
 
 Initial release: a CanoKey manager CLI, written in Rust on top of
 [libcanokey](https://crates.io/crates/canokey).

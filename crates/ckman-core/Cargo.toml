@@ -9,7 +9,7 @@ description = "Session layer over libcanokey: profiles, credentials, crypto form
 [dependencies]
 base64ct.workspace = true
 canokey.workspace = true
-ckman-transport = { path = "../ckman-transport" }
+ckman-transport = { path = "../ckman-transport", version = "0.1.0" }
 der.workspace = true
 hmac.workspace = true
 p256.workspace = true
