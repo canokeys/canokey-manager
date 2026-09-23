@@ -31,5 +31,26 @@ Manage PIV certificates
 ckman\-piv\-objects(1)
 Read and write arbitrary PIV data objects
 .TP
+ckman\-piv\-sign(1)
+Sign data with a slot\*(Aqs key (hash with \-\-hash, or pass the exact operation input with \-\-raw)
+.TP
+ckman\-piv\-decrypt(1)
+Perform the raw RSA private operation on a ciphertext (the output is still padded; unpadding is the caller\*(Aqs job)
+.TP
+ckman\-piv\-derive(1)
+Derive a raw ECDH/X25519 shared secret with a slot\*(Aqs key (no KDF)
+.TP
+ckman\-piv\-decapsulate(1)
+Decapsulate an ML\-KEM\-768 ciphertext with a slot\*(Aqs key
+.TP
+ckman\-piv\-agree\-sm2(1)
+Run an SM2 key agreement with a slot\*(Aqs key (firmware runs the SM2 KDF)
+.TP
+ckman\-piv\-random(1)
+Read bytes from the device RNG (requires PIV application version 6+)
+.TP
+ckman\-piv\-logout(1)
+Deauthenticate: clear the PIN\-verified state on the card
+.TP
 ckman\-piv\-help(1)
 Print this message or the help of the given subcommand(s)

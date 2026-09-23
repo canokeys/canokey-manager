@@ -1,0 +1,21 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-fido-config-enable-long-touch-for-reset 1  ckman 
+.SH NAME
+ckman\-fido\-config\-enable\-long\-touch\-for\-reset \- Require a long touch (up to 30 seconds) to confirm a FIDO reset
+.SH SYNOPSIS
+\fBckman\-fido\-config\-enable\-long\-touch\-for\-reset\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Require a long touch (up to 30 seconds) to confirm a FIDO reset.
+.PP
+This is persistent and cannot be turned off again; only a full FIDO reset clears it (and over NFC a reset then always times out).
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+Current PIN (prompted when omitted)
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

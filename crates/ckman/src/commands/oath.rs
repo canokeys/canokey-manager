@@ -27,6 +27,21 @@ pub enum OathCommand {
         #[arg(long, value_name = "PIN", value_parser = crate::commands::secret_arg)]
         admin_pin: Option<crate::commands::SecretString>,
     },
+    /// Print the device serial as answered by the OATH applet.
+    Serial,
+    /// Compute an HMAC-SHA1 challenge-response from a PASS slot.
+    ///
+    /// The slot must be configured as HMAC-SHA1 (see `config pass set`).
+    ChallengeResponse {
+        /// PASS HMAC-SHA1 slot to answer from.
+        #[arg(value_enum)]
+        slot: DefaultSlotArg,
+        /// The challenge, hex-encoded (a plain string with --text).
+        challenge: String,
+        /// Treat the challenge as a plain UTF-8 string instead of hex.
+        #[arg(short, long)]
+        text: bool,
+    },
     /// Manage password protection for OATH.
     Access {
         #[command(subcommand)]
@@ -218,6 +233,12 @@ const KEYRING_SERVICE: &str = "ckman";
 pub fn run(device: Option<u32>, reader: Option<&str>, command: &OathCommand) -> CliResult<()> {
     match command {
         OathCommand::Info => info(device, reader),
+        OathCommand::Serial => serial(device, reader),
+        OathCommand::ChallengeResponse {
+            slot,
+            challenge,
+            text,
+        } => challenge_response(device, reader, *slot, challenge, *text),
         OathCommand::Reset { force, admin_pin } => {
             reset(device, reader, *force, super::secret_str(admin_pin))
         }
@@ -521,6 +542,51 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|index| u8::from_str_radix(text.get(index..index + 2)?, 16).ok())
         .collect()
+}
+
+/// Vendor extension commands the OATH applet answers before its
+/// access-validation gate (KeePassXC-style challenge-response); they need no
+/// password even when one is set, and are gated to the pinned 3.1 evidence by
+/// libcanokey.
+fn serial(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
+    let pcsc = Pcsc::establish()?;
+    let mut target = single_target(&pcsc, device, reader)?;
+    let serial = oath::get_serial(&target.profile, &mut |command| {
+        target.connection.exchange(command)
+    })
+    .map_err(|error| describe_oath(&error))?;
+    println!("{}", u32::from_be_bytes(serial));
+    Ok(())
+}
+
+fn challenge_response(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: DefaultSlotArg,
+    challenge: &str,
+    text: bool,
+) -> CliResult<()> {
+    let challenge = if text {
+        challenge.as_bytes().to_vec()
+    } else {
+        hex_decode(challenge).ok_or("the challenge must be hex-encoded (or use --text)")?
+    };
+    if challenge.len() > 64 {
+        return Err("the challenge must be at most 64 bytes".into());
+    }
+    let slot = match slot {
+        DefaultSlotArg::Short => oath::HmacSlot::Short,
+        DefaultSlotArg::Long => oath::HmacSlot::Long,
+    };
+    let pcsc = Pcsc::establish()?;
+    let mut target = single_target(&pcsc, device, reader)?;
+    let response =
+        oath::challenge_response_hmac(&target.profile, slot, challenge, &mut |command| {
+            target.connection.exchange(command)
+        })
+        .map_err(|error| describe_oath(&error))?;
+    println!("{}", hex_encode(response.as_bytes()));
+    Ok(())
 }
 
 fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {

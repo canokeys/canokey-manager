@@ -19,6 +19,7 @@ canokey.workspace = true
 ckman-core = { path = "../ckman-core", version = "0.1.0" }
 ckman-transport = { path = "../ckman-transport", version = "0.1.0" }
 clap.workspace = true
+clap_complete.workspace = true
 clap_mangen.workspace = true
 getrandom.workspace = true
 hidapi.workspace = true

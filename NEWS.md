@@ -1,5 +1,41 @@
 # NEWS
 
+## Unreleased
+
+### Added
+
+- Device: `ckman info` now shows the vendor chip ID when the firmware
+  reports one.
+- Configuration: `config admin-pin change` and `config admin-pin status`
+  manage and inspect the device Admin PIN; `config sm2 set --curve-id
+  <id>/--algorithm-id <id>` patches the CTAP SM2 identifiers (3.1+;
+  `config sm2` readout unchanged).
+- OpenPGP: `openpgp cardholder set-name/set-login/set-language/set-sex/set-url`
+  write the cardholder data objects, and `openpgp info` displays them;
+  `openpgp access set-touch-cache <seconds>` sets the card-wide touch cache
+  duration; `openpgp keys export <slot> <file>` writes a slot's public key
+  as PEM/DER SubjectPublicKeyInfo.
+- Shell: `ckman completions <shell>` prints bash/zsh/fish/powershell
+  completions to stdout.
+- OATH: `oath serial` reads the device serial via the OATH applet's vendor
+  extension, and `oath challenge-response <short|long> <challenge>` computes
+  an HMAC-SHA1 challenge-response from a PASS slot (KeePassXC-style; both
+  bypass the OATH access gate, 3.1 evidence only).
+- FIDO2: `fido credentials update-user` renames a resident credential's
+  user/display name; `fido config enable-long-touch-for-reset` enables the
+  persistent long-touch reset confirmation; `fido touch-test` asks for a
+  touch and reports success/timeout; `fido blobs read/write` transfers the
+  CTAP largeBlobs array to/from a file.
+- PIV: raw private-key operations — `piv sign <slot>` (message hashed with
+  `--hash`, or exact operation input with `--raw`), `piv decrypt <slot>`
+  (raw RSA block), `piv derive <slot>` (ECDH/X25519), `piv decapsulate
+  <slot>` (ML-KEM-768) and `piv agree-sm2 <slot>`; all read the slot's
+  algorithm from on-card metadata and prompt for the PIN only when the card
+  demands it. `piv keys generate-batch --slots 9a,9c,… --algorithm <alg>`
+  generates into several slots under one management authentication with
+  per-slot progress. `piv random <n>` reads the device RNG (PIV 6.0+),
+  `piv logout` clears the PIN-verified state.
+
 ## ckman 0.1.0 (2026-09-20)
 
 Initial release: a CanoKey manager CLI, written in Rust on top of

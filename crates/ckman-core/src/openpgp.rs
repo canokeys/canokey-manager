@@ -251,6 +251,18 @@ pub fn set_touch_policy<E>(
     )
 }
 
+/// Set the card-wide touch cache duration in seconds (requires 1.5.2+
+/// evidence, same capability gate as [`set_touch_policy`]); `0` disables
+/// caching.
+pub fn set_touch_cache_time<E>(
+    profile: &DeviceProfile,
+    seconds: u8,
+    admin: Password,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), DriveError<E>> {
+    write_data(profile, DataWrite::TouchCacheTime(seconds), admin, exchange)
+}
+
 /// Read the public key for a slot's currently configured algorithm.
 pub fn read_public_key<E>(
     profile: &DeviceProfile,
@@ -682,6 +694,128 @@ mod tests {
         })
         .unwrap();
         assert_eq!(read, cert);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn cardholder_and_touch_cache_write_transcripts() {
+        // Name (5B), login (5E), language (5F2D), sex (5F35) and URL (5F50)
+        // writes each VERIFY PW3 then PUT DATA (fixtures from canokey-openpgp).
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (b"\0\xda\0\x5b\x05Alice", OK),
+        ]);
+        write_data(
+            &profile("3.1.0"),
+            DataWrite::Name(b"Alice".to_vec()),
+            pw3(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (b"\0\xda\0\x5e\x05alice", OK),
+        ]);
+        write_data(
+            &profile("3.1.0"),
+            DataWrite::Login(SecretBytes::new(b"alice".to_vec())),
+            pw3(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (b"\0\xda\x5f\x2d\x02en", OK),
+        ]);
+        write_data(
+            &profile("3.1.0"),
+            DataWrite::Language(b"en".to_vec()),
+            pw3(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (&[0, 0xda, 0x5f, 0x35, 1, b'2'], OK),
+        ]);
+        write_data(&profile("3.1.0"), DataWrite::Sex(b'2'), pw3(), &mut |c| {
+            script.exchange(c)
+        })
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (b"\0\xda\x5f\x50\x17https://example.invalid", OK),
+        ]);
+        write_data(
+            &profile("3.1.0"),
+            DataWrite::Url(b"https://example.invalid".to_vec()),
+            pw3(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        // The card-wide touch cache duration lives in DO 0102 (UIF family).
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (VERIFY_PW3, OK),
+            (&[0, 0xda, 0x01, 0x02, 1, 15], OK),
+        ]);
+        set_touch_cache_time(&profile("3.1.0"), 15, pw3(), &mut |c| script.exchange(c)).unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn cardholder_data_read_transcript() {
+        // Modern wrapped 65 fixture: name plus language and sex.
+        let mut inner = wrap(&[0x5b], b"Alice");
+        inner.extend(wrap(&[0x5f, 0x2d], b"en"));
+        inner.extend(wrap(&[0x5f, 0x35], b"1"));
+        let mut response = wrap(&[0x65], &inner);
+        response.extend(OK);
+        let mut script = Script::new(&[(SELECT, OK), (&[0, 0xca, 0, 0x65, 0], &[])]);
+        script.transcript[1].1 = response;
+        let data = read_cardholder_data(&profile("3.1.0"), &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(data.name().unwrap(), Some(&b"Alice"[..]));
+        assert_eq!(data.language().unwrap(), Some(&b"en"[..]));
+        assert_eq!(data.sex().unwrap(), Some(&b"1"[..]));
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn read_public_key_transcript() {
+        // Same fixture family as the generate test, with the 0x81 read P1.
+        let attr = [0x16, 0x2b, 6, 1, 4, 1, 0xda, 0x47, 15, 1];
+        let mut public = wrap(&[0x7f, 0x49], &wrap(&[0x86], &[7; 32]));
+        public.extend(OK);
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (GET_6E, &[]),
+            (&[0, 0x47, 0x81, 0, 2, 0xb6, 0], &[]),
+        ]);
+        let mut attrs = wrap(&[0x6e], &wrap(&[0x73], &wrap(&[0xc1], &attr)));
+        attrs.extend(OK);
+        script.transcript[1].1 = attrs;
+        script.transcript[2].1 = public;
+        let key = read_public_key(&profile("3.1.0"), Slot::Signature, &mut |c| {
+            script.exchange(c)
+        })
+        .unwrap();
+        assert_eq!(key.algorithm(), Algorithm::Ed25519);
+        assert_eq!(key.to_spki_der().unwrap().len(), 44);
         assert!(script.transcript.is_empty());
     }
 

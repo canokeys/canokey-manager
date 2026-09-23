@@ -20,7 +20,7 @@ use canokey::{DeviceProfile, Error, ErrorKind, OperationOptions, Phase};
 pub use canokey::admin::{
     Applet, AppletUsage, Configuration, ConfigurationPatch, FlashUsage, KeyboardKeymap,
     LegacyConfiguration, LegacySm2Configuration, PassSlotConfig, PassSlotId, PassSlotState,
-    PassSlots, Pin, PinStatus, Sm2Configuration,
+    PassSlots, Pin, PinStatus, Sm2Configuration, Sm2Patch,
 };
 
 /// Admin configuration read result, preserving the firmware's own layout.
@@ -276,6 +276,20 @@ pub fn set_keyboard_return<E>(
     Ok(())
 }
 
+/// Read the vendor-specific chip identifier bytes (possibly empty).
+///
+/// The command is not capability-gated: firmware that lacks it answers with a
+/// protocol error, which read-only callers may catch and treat as absent.
+pub fn chip_id<E>(
+    profile: &DeviceProfile,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<Vec<u8>, DriveError<E>> {
+    match run(profile, Request::ChipId, None, exchange)?.value {
+        Value::Bytes(bytes) => Ok(bytes),
+        _ => Err(unexpected_value()),
+    }
+}
+
 /// Read the embedded core commit bytes (3.1 extended configuration).
 pub fn core_commit<E>(
     profile: &DeviceProfile,
@@ -331,6 +345,22 @@ pub fn sm2_configuration<E>(
         Value::LegacySm2Configuration(config) => Ok(Sm2Readout::Legacy(config)),
         _ => Err(unexpected_value()),
     }
+}
+
+/// Read and patch the CTAP SM2 identifiers: libcanokey reads the current
+/// typed configuration, writes only when the patch changes a value, and
+/// preserves the unspecified identifier. Gated by
+/// `Capability::AdminExtendedConfiguration` (3.1); PIN-protected like the
+/// read. The nine-byte native layout of 3.0.x (`Request::WriteLegacySm2`) is
+/// deliberately not exposed here.
+pub fn configure_sm2<E>(
+    profile: &DeviceProfile,
+    patch: Sm2Patch,
+    pin: Option<Pin>,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), DriveError<E>> {
+    run(profile, Request::ConfigureSm2(patch), pin, exchange)?;
+    Ok(())
 }
 
 /// Query Admin verification state and remaining retries without submitting a
@@ -769,7 +799,7 @@ mod feature_tests {
         // and carries the legacy explicit Le even on SELECT/VERIFY.
         let mut script = Script::new(&[
             (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
-            (b"    654321 ", &[0x90, 0]),
+            (b"\x00 \x00\x00654321\x00", &[0x90, 0]),
             (&[0, 0x11, 0, 0, 0], &[1, 0, 0, 0, 9, 0, 0, 0, 0, 0x90, 0]),
         ]);
         let readout =
@@ -779,6 +809,80 @@ mod feature_tests {
             panic!("3.0.x uses the legacy layout")
         };
         assert!(config.enabled());
+    }
+
+    #[test]
+    fn chip_id_returns_vendor_bytes() {
+        let mut script = Script::new(&[
+            SELECT,
+            (&[0, 0x32, 1, 0, 0], &[0xde, 0xad, 0xbe, 0xef, 0x90, 0]),
+        ]);
+        let id = chip_id(&profile(b"3.1.0"), &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(id, [0xde, 0xad, 0xbe, 0xef]);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn change_pin_verifies_old_then_writes_new() {
+        let mut script = Script::new(&[SELECT, VERIFY, (b"\0\x21\0\0\x06123456", &[0x90, 0])]);
+        change_pin(
+            &profile(b"3.1.0"),
+            pin(),
+            Pin::from_bytes(b"123456").unwrap(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn configure_sm2_writes_only_changed_identifiers() {
+        // Current: curve 9, algorithm -54; the patch replaces the curve and
+        // preserves the algorithm (fixture mirrored from canokey-admin).
+        let mut script = Script::new(&[
+            SELECT,
+            VERIFY,
+            (
+                &[0, 0x11, 0, 0, 0],
+                &[0, 0, 0, 9, 0xff, 0xff, 0xff, 0xca, 0x90, 0],
+            ),
+            (
+                &[0, 0x12, 0, 0, 8, 0, 0, 0, 10, 0xff, 0xff, 0xff, 0xca],
+                &[0x90, 0],
+            ),
+        ]);
+        configure_sm2(
+            &profile(b"3.1.0"),
+            Sm2Patch {
+                curve_id: Some(10),
+                algorithm_id: None,
+            },
+            Some(pin()),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        // A no-change patch stops after the read; nothing is written.
+        let mut script = Script::new(&[
+            SELECT,
+            VERIFY,
+            (
+                &[0, 0x11, 0, 0, 0],
+                &[0, 0, 0, 9, 0xff, 0xff, 0xff, 0xca, 0x90, 0],
+            ),
+        ]);
+        configure_sm2(
+            &profile(b"3.1.0"),
+            Sm2Patch {
+                curve_id: Some(9),
+                algorithm_id: Some(-54),
+            },
+            Some(pin()),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
     }
 
     #[test]
@@ -818,6 +922,20 @@ mod feature_tests {
         assert_eq!(kind, ErrorKind::UnsupportedFeature);
         let kind = zero_io(b"3.0.1", |profile| {
             applet_usage(profile, &mut |_| -> io::Result<Vec<u8>> { unreachable!() }).map(|_| ())
+        });
+        assert_eq!(kind, ErrorKind::UnsupportedFeature);
+        // The typed SM2 patch needs the 3.1 extended configuration; 3.0.x only
+        // has the nine-byte native write, which stays unexposed.
+        let kind = zero_io(b"3.0.1", |profile| {
+            configure_sm2(
+                profile,
+                Sm2Patch {
+                    curve_id: Some(10),
+                    ..Default::default()
+                },
+                Some(pin()),
+                &mut |_| -> io::Result<Vec<u8>> { unreachable!() },
+            )
         });
         assert_eq!(kind, ErrorKind::UnsupportedFeature);
     }

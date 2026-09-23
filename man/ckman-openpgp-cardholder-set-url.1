@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-cardholder-set-url 1  ckman 
+.SH NAME
+ckman\-openpgp\-cardholder\-set\-url \- Set the public\-key URL (at most 255 bytes; empty clears it)
+.SH SYNOPSIS
+\fBckman\-openpgp\-cardholder\-set\-url\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.SH DESCRIPTION
+Set the public\-key URL (at most 255 bytes; empty clears it)
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIURL\fR>
+The URL pointing at the public key

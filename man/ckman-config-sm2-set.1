@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-sm2-set 1  ckman 
+.SH NAME
+ckman\-config\-sm2\-set \- Set the SM2 COSE curve/algorithm identifiers (3.1+; unspecified identifiers keep their current values)
+.SH SYNOPSIS
+\fBckman\-config\-sm2\-set\fR [\fB\-\-curve\-id\fR] [\fB\-\-algorithm\-id\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Set the SM2 COSE curve/algorithm identifiers (3.1+; unspecified identifiers keep their current values)
+.SH OPTIONS
+.TP
+\fB\-\-curve\-id\fR \fI<CURVE_ID>\fR
+Replacement COSE curve identifier (e.g. 9 for SM2)
+.TP
+\fB\-\-algorithm\-id\fR \fI<ALGORITHM_ID>\fR
+Replacement COSE algorithm identifier (e.g. \-54 for SM2)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

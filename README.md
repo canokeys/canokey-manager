@@ -12,12 +12,13 @@ formats (X.509, PKCS#8, otpauth://). Everything is pure Rust.
 
 | Applet | Commands |
 | --- | --- |
-| Device | `ckman list`, `ckman info` |
-| Configuration | `ckman config info` (incl. flash/applet storage and core commit on 3.1), `config nfc`, `config led`, `config ndef-read-only`, `config webusb-landing`, `config pass` (touch-to-type slots), `config ndef read/write`, `config keyboard` (layout/keymap), `config sm2`, `config reset` |
-| OATH | `ckman oath info`, `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete/set-default` |
-| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name` |
-| OpenPGP | `ckman openpgp info`, `openpgp reset`, `openpgp access …` (PIN/admin PIN/reset code, retries, signature policy), `openpgp keys info/generate/import/set-touch`, `openpgp certificates import/export/delete` |
-| FIDO2 | `ckman fido info`, `fido reset`, `fido access set-pin/change-pin/set-min-length/force-change/verify-pin`, `fido config toggle-always-uv`, `fido credentials list/delete` |
+| Device | `ckman list`, `ckman info` (incl. vendor chip ID where the firmware reports one) |
+| Configuration | `ckman config info` (incl. flash/applet storage and core commit on 3.1), `config nfc`, `config led`, `config ndef-read-only`, `config webusb-landing`, `config admin-pin change/status` (device Admin PIN), `config pass` (touch-to-type slots), `config ndef read/write`, `config keyboard` (layout/keymap), `config sm2` (read and, on 3.1, `sm2 set`), `config reset` |
+| OATH | `ckman oath info`, `oath serial`, `oath challenge-response` (KeePassXC-style HMAC-SHA1 via a PASS slot), `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete/set-default` |
+| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/generate-batch/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name`, `piv sign/decrypt/derive/decapsulate/agree-sm2` (raw private-key operations), `piv random` (device RNG), `piv logout` |
+| OpenPGP | `ckman openpgp info` (incl. cardholder data), `openpgp reset`, `openpgp access …` (PIN/admin PIN/reset code, retries, signature policy, touch cache time), `openpgp cardholder set-name/set-login/set-language/set-sex/set-url`, `openpgp keys info/generate/import/export/set-touch`, `openpgp certificates import/export/delete` |
+| FIDO2 | `ckman fido info`, `fido reset`, `fido touch-test`, `fido access set-pin/change-pin/set-min-length/force-change/verify-pin`, `fido config toggle-always-uv/enable-long-touch-for-reset`, `fido credentials list/update-user/delete`, `fido blobs read/write` |
+| Shell | `ckman completions <bash\|zsh\|fish\|powershell>` (stdout) |
 
 PINs and passwords are prompted without echo (via `rpassword`); the OATH
 password can be remembered in the OS keyring per device

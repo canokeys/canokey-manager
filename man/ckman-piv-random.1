@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-random 1  ckman 
+.SH NAME
+ckman\-piv\-random \- Read bytes from the device RNG (requires PIV application version 6+)
+.SH SYNOPSIS
+\fBckman\-piv\-random\fR [\fB\-h\fR|\fB\-\-help\fR] <\fILENGTH\fR> [\fIOUTPUT\fR] 
+.SH DESCRIPTION
+Read bytes from the device RNG (requires PIV application version 6+)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILENGTH\fR>
+Number of random bytes
+.TP
+[\fIOUTPUT\fR]
+File to write raw bytes to (\*(Aq\-\*(Aq for stdout); printed as hex when omitted

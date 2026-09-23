@@ -1,0 +1,50 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-agree-sm2 1  ckman 
+.SH NAME
+ckman\-piv\-agree\-sm2 \- Run an SM2 key agreement with a slot\*(Aqs key (firmware runs the SM2 KDF)
+.SH SYNOPSIS
+\fBckman\-piv\-agree\-sm2\fR <\fB\-\-peer\-static\fR> <\fB\-\-peer\-ephemeral\fR> [\fB\-\-role\fR] [\fB\-\-key\-len\fR] [\fB\-\-user\-id\fR] [\fB\-\-peer\-id\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIKEY_OUTPUT\fR> 
+.SH DESCRIPTION
+Run an SM2 key agreement with a slot\*(Aqs key (firmware runs the SM2 KDF)
+.SH OPTIONS
+.TP
+\fB\-\-peer\-static\fR \fI<PEER_STATIC>\fR
+File containing the peer\*(Aqs static public key (65\-byte uncompressed SEC1 point)
+.TP
+\fB\-\-peer\-ephemeral\fR \fI<PEER_EPHEMERAL>\fR
+File containing the peer\*(Aqs ephemeral public key (same format)
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR [default: initiator]
+Protocol role
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+initiator
+.IP \(bu 2
+responder
+.RE
+.TP
+\fB\-\-key\-len\fR \fI<KEY_LEN>\fR [default: 16]
+Requested session\-key length in bytes (1\-128)
+.TP
+\fB\-\-user\-id\fR \fI<USER_ID>\fR
+Own identity as hex (1\-32 bytes; default: the firmware default)
+.TP
+\fB\-\-peer\-id\fR \fI<PEER_ID>\fR
+Peer identity as hex (1\-32 bytes; default: the firmware default)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot holding an SM2 key
+.TP
+<\fIKEY_OUTPUT\fR>
+File to write the session key to (\*(Aq\-\*(Aq for stdout)

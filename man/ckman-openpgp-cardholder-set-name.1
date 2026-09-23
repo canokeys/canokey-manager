@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-cardholder-set-name 1  ckman 
+.SH NAME
+ckman\-openpgp\-cardholder\-set\-name \- Set the cardholder name (at most 39 bytes; empty clears it)
+.SH SYNOPSIS
+\fBckman\-openpgp\-cardholder\-set\-name\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.SH DESCRIPTION
+Set the cardholder name (at most 39 bytes; empty clears it)
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+The cardholder name

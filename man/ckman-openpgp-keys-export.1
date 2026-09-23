@@ -1,0 +1,44 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-keys-export 1  ckman 
+.SH NAME
+ckman\-openpgp\-keys\-export \- Export the public key of a slot
+.SH SYNOPSIS
+\fBckman\-openpgp\-keys\-export\fR [\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> <\fIPUBLIC_KEY_OUTPUT\fR> 
+.SH DESCRIPTION
+Export the public key of a slot
+.SH OPTIONS
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: pem]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+pem
+.IP \(bu 2
+der
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+Key slot
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sig
+.IP \(bu 2
+dec
+.IP \(bu 2
+aut
+.RE
+.TP
+<\fIPUBLIC_KEY_OUTPUT\fR>
+File to write the public key to (\*(Aq\-\*(Aq for stdout)

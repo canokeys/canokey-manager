@@ -47,6 +47,106 @@ pub enum PivCommand {
         #[command(subcommand)]
         command: ObjectsCommand,
     },
+    /// Sign data with a slot's key (hash with --hash, or pass the exact
+    /// operation input with --raw).
+    Sign {
+        /// PIV slot.
+        #[arg(value_parser = parse_slot)]
+        slot: Slot,
+        /// File containing the message (or, with --raw, the exact operation
+        /// input) ('-' for stdin).
+        input: String,
+        /// File to write the signature to ('-' for stdout). ECDSA signatures
+        /// are DER-encoded; RSA/Ed25519 are raw bytes.
+        output: String,
+        /// Hash algorithm for the message (RSA/ECC; default SHA-256). SM2,
+        /// Ed25519 and ML-DSA-65 sign the message directly.
+        #[arg(long, value_enum, conflicts_with = "raw")]
+        hash: Option<HashArg>,
+        /// Input is already the exact operation input: a modulus-sized
+        /// encoded block (RSA), a digest (ECC/SM2), or the message (Ed25519).
+        #[arg(long)]
+        raw: bool,
+        #[command(flatten)]
+        pin: PinArgs,
+    },
+    /// Perform the raw RSA private operation on a ciphertext (the output is
+    /// still padded; unpadding is the caller's job).
+    Decrypt {
+        /// PIV slot holding an RSA key.
+        #[arg(value_parser = parse_slot)]
+        slot: Slot,
+        /// File containing the modulus-sized ciphertext ('-' for stdin).
+        input: String,
+        /// File to write the raw plaintext block to ('-' for stdout).
+        output: String,
+        #[command(flatten)]
+        pin: PinArgs,
+    },
+    /// Derive a raw ECDH/X25519 shared secret with a slot's key (no KDF).
+    Derive {
+        /// PIV slot holding an ECC/X25519 key.
+        #[arg(value_parser = parse_slot)]
+        slot: Slot,
+        /// File containing the peer public key (uncompressed SEC1 point, or
+        /// 32 bytes for X25519) ('-' for stdin).
+        peer_public_key: String,
+        /// File to write the shared secret to ('-' for stdout).
+        output: String,
+        #[command(flatten)]
+        pin: PinArgs,
+    },
+    /// Decapsulate an ML-KEM-768 ciphertext with a slot's key.
+    Decapsulate {
+        /// PIV slot holding an ML-KEM-768 key.
+        #[arg(value_parser = parse_slot)]
+        slot: Slot,
+        /// File containing the 1088-byte ciphertext ('-' for stdin).
+        ciphertext: String,
+        /// File to write the 32-byte shared secret to ('-' for stdout).
+        output: String,
+        #[command(flatten)]
+        pin: PinArgs,
+    },
+    /// Run an SM2 key agreement with a slot's key (firmware runs the SM2 KDF).
+    AgreeSm2 {
+        /// PIV slot holding an SM2 key.
+        #[arg(value_parser = parse_slot)]
+        slot: Slot,
+        /// File containing the peer's static public key (65-byte
+        /// uncompressed SEC1 point).
+        #[arg(long)]
+        peer_static: String,
+        /// File containing the peer's ephemeral public key (same format).
+        #[arg(long)]
+        peer_ephemeral: String,
+        /// File to write the session key to ('-' for stdout).
+        key_output: String,
+        /// Protocol role.
+        #[arg(long, value_enum, default_value_t = Sm2RoleArg::Initiator)]
+        role: Sm2RoleArg,
+        /// Requested session-key length in bytes (1-128).
+        #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u16).range(1..=128))]
+        key_len: u16,
+        /// Own identity as hex (1-32 bytes; default: the firmware default).
+        #[arg(long)]
+        user_id: Option<String>,
+        /// Peer identity as hex (1-32 bytes; default: the firmware default).
+        #[arg(long)]
+        peer_id: Option<String>,
+        #[command(flatten)]
+        pin: PinArgs,
+    },
+    /// Read bytes from the device RNG (requires PIV application version 6+).
+    Random {
+        /// Number of random bytes.
+        length: usize,
+        /// File to write raw bytes to ('-' for stdout); printed as hex when
+        /// omitted.
+        output: Option<String>,
+    },
+    /// Deauthenticate: clear the PIN-verified state on the card.
+    Logout,
 }
 
 #[derive(Subcommand)]
@@ -197,6 +297,30 @@ pub enum KeysCommand {
         verify: bool,
         #[command(flatten)]
         pin: PinArgs,
+    },
+    /// Generate the same algorithm into several slots in one batch (one
+    /// management authentication, progress per slot).
+    GenerateBatch {
+        /// Comma-separated PIV slots (e.g. 9a,9c,9d,9e).
+        #[arg(long, required = true, value_delimiter = ',', value_parser = parse_slot)]
+        slots: Vec<Slot>,
+        /// Algorithm to use in key generation.
+        #[arg(short, long, value_enum, default_value_t = KeyAlgorithmArg::Rsa2048)]
+        algorithm: KeyAlgorithmArg,
+        /// Directory for the public keys (`<slot>.pem` / `<slot>.der`).
+        #[arg(long, default_value = ".")]
+        output_dir: String,
+        /// PIN policy for the keys.
+        #[arg(long, value_enum)]
+        pin_policy: Option<PinPolicyArg>,
+        /// Touch policy for the keys.
+        #[arg(long, value_enum)]
+        touch_policy: Option<TouchPolicyArg>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = EncodingArg::Pem)]
+        format: EncodingArg,
+        #[command(flatten)]
+        mgmt: MgmtArgs,
     },
     /// Move a key from one slot to another (certificate stays in place).
     Move {
@@ -379,6 +503,12 @@ pub enum HashArg {
     Sha512,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+pub enum Sm2RoleArg {
+    Initiator,
+    Responder,
+}
+
 /// Current-management-key argument.
 #[derive(Args)]
 pub struct MgmtArgs {
@@ -405,7 +535,368 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &PivCommand) -> C
         PivCommand::Keys { command } => keys(device, reader, command),
         PivCommand::Certificates { command } => certificates(device, reader, command),
         PivCommand::Objects { command } => objects(device, reader, command),
+        PivCommand::Sign {
+            slot,
+            input,
+            output,
+            hash,
+            raw,
+            pin,
+        } => sign(device, reader, *slot, input, output, *hash, *raw, pin),
+        PivCommand::Decrypt {
+            slot,
+            input,
+            output,
+            pin,
+        } => decrypt(device, reader, *slot, input, output, pin),
+        PivCommand::Derive {
+            slot,
+            peer_public_key,
+            output,
+            pin,
+        } => derive(device, reader, *slot, peer_public_key, output, pin),
+        PivCommand::Decapsulate {
+            slot,
+            ciphertext,
+            output,
+            pin,
+        } => decapsulate(device, reader, *slot, ciphertext, output, pin),
+        PivCommand::AgreeSm2 {
+            slot,
+            peer_static,
+            peer_ephemeral,
+            key_output,
+            role,
+            key_len,
+            user_id,
+            peer_id,
+            pin,
+        } => agree_sm2(
+            device,
+            reader,
+            *slot,
+            peer_static,
+            peer_ephemeral,
+            key_output,
+            *role,
+            *key_len,
+            user_id.as_deref(),
+            peer_id.as_deref(),
+            pin,
+        ),
+        PivCommand::Random { length, output } => random(device, reader, *length, output.as_deref()),
+        PivCommand::Logout => logout(device, reader),
     }
+}
+
+// --- private-key operations ----------------------------------------------------
+
+/// The slot key's algorithm from its metadata record.
+fn slot_algorithm(session: &mut PivSession, slot: Slot) -> CliResult<Algorithm> {
+    let metadata = session.run(|profile, exchange| {
+        piv::metadata(
+            profile,
+            MetadataReference::Key(slot),
+            canokey::piv::Access::None,
+            exchange,
+        )
+    })?;
+    let id = metadata
+        .fields()
+        .algorithm_id
+        .ok_or("no key in this slot")?;
+    session
+        .profile()
+        .algorithm_from_wire_id(id)
+        .ok_or_else(|| format!("unknown key algorithm (wire id 0x{id:02x})").into())
+}
+
+/// The card demands PIN verification (6982): prompt once and retry with the
+/// PIN adjacent to the operation, like the Admin-PIN retry elsewhere.
+fn needs_pin(error: &PivError<io::Error>) -> bool {
+    matches!(
+        error,
+        PivError::Drive(DriveError::Protocol(error))
+            if error.kind == ErrorKind::SecurityStatusNotSatisfied
+    )
+}
+
+/// Run a private-key operation without a PIN first; when the card requires
+/// verification, resolve the PIN (argument or prompt) and retry once.
+fn run_with_pin<T>(
+    session: &mut PivSession,
+    pin: &Option<crate::commands::SecretString>,
+    operation: impl Fn(
+        &DeviceProfile,
+        piv::Access,
+        &mut Exchange<'_, io::Error>,
+    ) -> Result<T, PivError<io::Error>>,
+) -> CliResult<T> {
+    match session.run_typed(|profile, exchange| operation(profile, piv::Access::None, exchange)) {
+        Ok(value) => Ok(value),
+        Err(error) if needs_pin(&error) => {
+            let pin = session.resolve_pin(super::secret_str(pin), "Enter PIN")?;
+            session.run(|profile, exchange| operation(profile, piv::Access::Pin(pin), exchange))
+        }
+        Err(error) => Err(describe_piv(&error).into()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sign(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: Slot,
+    input: &str,
+    output: &str,
+    hash: Option<HashArg>,
+    raw: bool,
+    pin: &PinArgs,
+) -> CliResult<()> {
+    let data = read_input(input)?;
+    let mut session = PivSession::connect(device, reader)?;
+    let algorithm = slot_algorithm(&mut session, slot)?;
+    let signature = if raw {
+        #[derive(Clone, Copy)]
+        enum Mode {
+            RsaBlock,
+            Digest,
+            Message,
+        }
+        let mode = match algorithm {
+            Algorithm::Rsa1024 | Algorithm::Rsa2048 | Algorithm::Rsa3072 | Algorithm::Rsa4096 => {
+                Mode::RsaBlock
+            }
+            Algorithm::EccP256
+            | Algorithm::EccP384
+            | Algorithm::EccP521
+            | Algorithm::Secp256k1
+            | Algorithm::Sm2 => Mode::Digest,
+            Algorithm::Ed25519 => Mode::Message,
+            Algorithm::MlDsa65 => {
+                return Err("--raw does not apply to ML-DSA-65; omit it to sign the message".into())
+            }
+            Algorithm::X25519 | Algorithm::MlKem768 => {
+                return Err("this algorithm cannot sign".into())
+            }
+        };
+        run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+            let input = match mode {
+                Mode::RsaBlock => piv::SignInput::RsaEncodedBlock(SecretBytes::new(data.clone())),
+                Mode::Digest => piv::SignInput::Digest(SecretBytes::new(data.clone())),
+                Mode::Message => piv::SignInput::Message(SecretBytes::new(data.clone())),
+            };
+            piv::sign(profile, slot, algorithm, input, access, exchange)
+        })?
+        .as_bytes()
+        .to_vec()
+    } else {
+        if hash.is_some()
+            && matches!(
+                algorithm,
+                Algorithm::Sm2 | Algorithm::Ed25519 | Algorithm::MlDsa65
+            )
+        {
+            return Err(
+                "--hash applies to RSA/ECC only; this algorithm signs the message directly".into(),
+            );
+        }
+        let hash = match (hash, algorithm) {
+            (Some(hash), _) => Some(hash_algorithm(hash)),
+            (
+                None,
+                Algorithm::Rsa1024
+                | Algorithm::Rsa2048
+                | Algorithm::Rsa3072
+                | Algorithm::Rsa4096
+                | Algorithm::EccP256
+                | Algorithm::EccP384
+                | Algorithm::EccP521
+                | Algorithm::Secp256k1,
+            ) => Some(x509::HashAlgorithm::Sha256),
+            (None, _) => None,
+        };
+        run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+            piv::sign_message(profile, slot, algorithm, hash, &data, access, exchange)
+        })?
+    };
+    write_output(output, &signature)?;
+    println!("Signature written to {output}.");
+    Ok(())
+}
+
+fn decrypt(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: Slot,
+    input: &str,
+    output: &str,
+    pin: &PinArgs,
+) -> CliResult<()> {
+    let ciphertext = read_input(input)?;
+    let mut session = PivSession::connect(device, reader)?;
+    let algorithm = slot_algorithm(&mut session, slot)?;
+    if !matches!(
+        algorithm,
+        Algorithm::Rsa1024 | Algorithm::Rsa2048 | Algorithm::Rsa3072 | Algorithm::Rsa4096
+    ) {
+        return Err("decrypt requires an RSA key in the slot".into());
+    }
+    let plaintext = run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+        piv::decrypt(
+            profile,
+            slot,
+            algorithm,
+            SecretBytes::new(ciphertext.clone()),
+            access,
+            exchange,
+        )
+    })?;
+    write_output(output, plaintext.as_bytes())?;
+    println!("Plaintext block written to {output}.");
+    Ok(())
+}
+
+fn derive(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: Slot,
+    peer_public_key: &str,
+    output: &str,
+    pin: &PinArgs,
+) -> CliResult<()> {
+    let peer = read_input(peer_public_key)?;
+    let mut session = PivSession::connect(device, reader)?;
+    let algorithm = slot_algorithm(&mut session, slot)?;
+    if !matches!(
+        algorithm,
+        Algorithm::EccP256
+            | Algorithm::EccP384
+            | Algorithm::EccP521
+            | Algorithm::Secp256k1
+            | Algorithm::X25519
+    ) {
+        return Err("derive requires an ECC (ECDH) or X25519 key in the slot".into());
+    }
+    let secret = run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+        piv::derive(profile, slot, algorithm, peer.clone(), access, exchange)
+    })?;
+    write_output(output, secret.as_bytes())?;
+    println!("Shared secret written to {output}.");
+    Ok(())
+}
+
+fn decapsulate(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: Slot,
+    ciphertext: &str,
+    output: &str,
+    pin: &PinArgs,
+) -> CliResult<()> {
+    let ciphertext = read_input(ciphertext)?;
+    let mut session = PivSession::connect(device, reader)?;
+    let algorithm = slot_algorithm(&mut session, slot)?;
+    if algorithm != Algorithm::MlKem768 {
+        return Err("decapsulate requires an ML-KEM-768 key in the slot".into());
+    }
+    let secret = run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+        piv::decapsulate(
+            profile,
+            slot,
+            SecretBytes::new(ciphertext.clone()),
+            access,
+            exchange,
+        )
+    })?;
+    write_output(output, secret.as_bytes())?;
+    println!("Shared secret written to {output}.");
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn agree_sm2(
+    device: Option<u32>,
+    reader: Option<&str>,
+    slot: Slot,
+    peer_static: &str,
+    peer_ephemeral: &str,
+    key_output: &str,
+    role: Sm2RoleArg,
+    key_len: u16,
+    user_id: Option<&str>,
+    peer_id: Option<&str>,
+    pin: &PinArgs,
+) -> CliResult<()> {
+    let peer_static = read_input(peer_static)?;
+    let peer_ephemeral = read_input(peer_ephemeral)?;
+    let parse_id = |value: Option<&str>, name: &str| -> CliResult<Option<Vec<u8>>> {
+        value
+            .map(|text| {
+                hex_decode(text).ok_or_else(|| format!("{name} must be hex-encoded").into())
+            })
+            .transpose()
+    };
+    let user_id = parse_id(user_id, "--user-id")?;
+    let peer_id = parse_id(peer_id, "--peer-id")?;
+    let mut session = PivSession::connect(device, reader)?;
+    let algorithm = slot_algorithm(&mut session, slot)?;
+    if algorithm != Algorithm::Sm2 {
+        return Err("agree-sm2 requires an SM2 key in the slot".into());
+    }
+    let role = match role {
+        Sm2RoleArg::Initiator => piv::Sm2Role::Initiator,
+        Sm2RoleArg::Responder => piv::Sm2Role::Responder,
+    };
+    let agreement = run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
+        piv::agree_sm2(
+            profile,
+            slot,
+            piv::Sm2AgreementInput {
+                role,
+                peer_static: peer_static.clone(),
+                peer_ephemeral: peer_ephemeral.clone(),
+                user_id: user_id.clone(),
+                peer_id: peer_id.clone(),
+                key_len,
+            },
+            access,
+            exchange,
+        )
+    })?;
+    write_output(key_output, agreement.key.as_bytes())?;
+    // The peer needs our ephemeral point to complete its side.
+    eprintln!(
+        "Own ephemeral public key: {}",
+        hex_encode(&agreement.ephemeral_public)
+    );
+    println!("Session key written to {key_output}.");
+    Ok(())
+}
+
+fn random(
+    device: Option<u32>,
+    reader: Option<&str>,
+    length: usize,
+    output: Option<&str>,
+) -> CliResult<()> {
+    let mut session = PivSession::connect(device, reader)?;
+    let bytes = session.run(|profile, exchange| piv::random(profile, length, exchange))?;
+    match output {
+        Some(path) => {
+            write_output(path, bytes.as_bytes())?;
+            println!("{length} random byte(s) written to {path}.");
+        }
+        None => println!("{}", hex_encode(bytes.as_bytes())),
+    }
+    Ok(())
+}
+
+fn logout(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
+    let mut session = PivSession::connect(device, reader)?;
+    session.run(|profile, exchange| piv::logout(profile, exchange))?;
+    println!("PIV PIN verification state cleared.");
+    Ok(())
 }
 
 // --- shared plumbing ---------------------------------------------------------
@@ -1249,6 +1740,60 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 "Private key generated in slot {}, public key written to {public_key_output}.",
                 slot_name(*slot)
             );
+            Ok(())
+        }
+        KeysCommand::GenerateBatch {
+            slots,
+            algorithm,
+            output_dir,
+            pin_policy,
+            touch_policy,
+            format,
+            mgmt,
+        } => {
+            let mut session = PivSession::connect(device, reader)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
+            let parameters: Vec<KeyParameters> = slots
+                .iter()
+                .map(|slot| {
+                    let mut parameters = KeyParameters::new(*slot, key_algorithm(*algorithm));
+                    parameters.pin_policy = pin_policy_of(*pin_policy);
+                    parameters.touch_policy = touch_policy_of(*touch_policy);
+                    parameters
+                })
+                .collect();
+            let total = parameters.len();
+            // Progress on stderr (touch prompts live there too): one line per
+            // completed key, since RSA-4096 generation is slow.
+            let keys = session.run(|profile, exchange| {
+                piv::generate_keys(
+                    profile,
+                    parameters,
+                    piv::mutual_auth(management.key.clone())?,
+                    exchange,
+                    &mut |done| eprintln!("Generated {done}/{total} key(s)..."),
+                )
+            })?;
+            for (slot, public) in slots.iter().zip(&keys) {
+                let der = public
+                    .to_spki_der()
+                    .map_err(|error| format!("cannot encode the public key: {error}"))?;
+                let extension = match format {
+                    EncodingArg::Pem => "pem",
+                    EncodingArg::Der => "der",
+                };
+                let data = match format {
+                    EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
+                    EncodingArg::Der => der,
+                };
+                let path = format!("{output_dir}/{}.{extension}", slot_name(*slot));
+                write_output(&path, &data)?;
+                println!(
+                    "Private key generated in slot {}, public key written to {path}.",
+                    slot_name(*slot)
+                );
+            }
             Ok(())
         }
         KeysCommand::Import {

@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-cardholder-set-sex 1  ckman 
+.SH NAME
+ckman\-openpgp\-cardholder\-set\-sex \- Set the sex marker (ISO/IEC 5218)
+.SH SYNOPSIS
+\fBckman\-openpgp\-cardholder\-set\-sex\fR [\fB\-a\fR|\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEX\fR> 
+.SH DESCRIPTION
+Set the sex marker (ISO/IEC 5218)
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-admin\-pin\fR \fI<ADMIN_PIN>\fR
+Admin PIN (prompted when omitted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISEX\fR>
+Sex marker
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+male
+.IP \(bu 2
+female
+.IP \(bu 2
+unspecified
+.RE

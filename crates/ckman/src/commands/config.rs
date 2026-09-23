@@ -4,7 +4,7 @@ use ckman_core::admin::{self, AdminConfiguration, PassSlotState, Sm2Readout};
 use ckman_transport::pcsc::Pcsc;
 
 use canokey::SecretBytes;
-use clap::{Subcommand, ValueEnum};
+use clap::{ArgGroup, Subcommand, ValueEnum};
 use std::io;
 use std::io::{Read as _, Write as _};
 
@@ -56,14 +56,50 @@ pub enum ConfigCommand {
         #[command(subcommand)]
         command: KeyboardCommand,
     },
-    /// Show the CTAP SM2 configuration (3.0+; read-only).
-    Sm2,
+    /// Show or change the CTAP SM2 configuration (3.0+; writes need 3.1).
+    Sm2 {
+        #[command(subcommand)]
+        command: Option<Sm2Command>,
+    },
+    /// Manage the device Admin PIN.
+    AdminPin {
+        #[command(subcommand)]
+        command: AdminPinCommand,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum NfcState {
     On,
     Off,
+}
+
+#[derive(Subcommand)]
+pub enum AdminPinCommand {
+    /// Change the device Admin PIN (prompts for the current and new PIN).
+    Change,
+    /// Show the Admin PIN verification state and remaining retries.
+    Status,
+}
+
+#[derive(Subcommand)]
+pub enum Sm2Command {
+    /// Set the SM2 COSE curve/algorithm identifiers (3.1+; unspecified
+    /// identifiers keep their current values).
+    #[command(group(
+        ArgGroup::new("patch")
+            .args(["curve_id", "algorithm_id"])
+            .required(true)
+            .multiple(true)
+    ))]
+    Set {
+        /// Replacement COSE curve identifier (e.g. 9 for SM2).
+        #[arg(long, allow_negative_numbers = true)]
+        curve_id: Option<i32>,
+        /// Replacement COSE algorithm identifier (e.g. -54 for SM2).
+        #[arg(long, allow_negative_numbers = true)]
+        algorithm_id: Option<i32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -159,7 +195,46 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &ConfigCommand) -
         ConfigCommand::Pass { command } => pass(device, reader, command),
         ConfigCommand::Ndef { command } => ndef(device, reader, command),
         ConfigCommand::Keyboard { command } => keyboard(device, reader, command),
-        ConfigCommand::Sm2 => sm2(device, reader),
+        ConfigCommand::Sm2 { command } => sm2(device, reader, command),
+        ConfigCommand::AdminPin { command } => admin_pin(device, reader, command),
+    }
+}
+
+fn admin_pin(
+    device: Option<u32>,
+    reader: Option<&str>,
+    command: &AdminPinCommand,
+) -> CliResult<()> {
+    let pcsc = Pcsc::establish()?;
+    let mut target = single_target(&pcsc, device, reader)?;
+    match command {
+        AdminPinCommand::Change => {
+            let current = super::prompt_admin_pin()?;
+            let new = super::prompt_password("New Admin PIN: ")?;
+            let repeated = super::prompt_password("Repeat the new Admin PIN: ")?;
+            if new != repeated {
+                return Err("the Admin PINs do not match".into());
+            }
+            let new = admin::Pin::from_bytes(new.as_bytes()).map_err(|error| format!("{error}"))?;
+            admin::change_pin(&target.profile, current, new, &mut |command| {
+                target.connection.exchange(command)
+            })
+            .map_err(|error| describe_drive_error(&error))?;
+            println!("Admin PIN has been changed.");
+            Ok(())
+        }
+        AdminPinCommand::Status => {
+            let status = admin::pin_status(&target.profile, &mut |command| {
+                target.connection.exchange(command)
+            })
+            .map_err(|error| describe_drive_error(&error))?;
+            println!("Admin PIN verified: {}", yes_no(status.verified));
+            if let Some(retries) = status.retries_remaining {
+                println!("Retries remaining:  {retries}");
+            }
+            println!("Admin PIN blocked:  {}", yes_no(status.blocked));
+            Ok(())
+        }
     }
 }
 
@@ -575,9 +650,26 @@ fn keyboard(device: Option<u32>, reader: Option<&str>, command: &KeyboardCommand
     }
 }
 
-fn sm2(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
+fn sm2(device: Option<u32>, reader: Option<&str>, command: &Option<Sm2Command>) -> CliResult<()> {
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
+    if let Some(Sm2Command::Set {
+        curve_id,
+        algorithm_id,
+    }) = command
+    {
+        let patch = admin::Sm2Patch {
+            curve_id: *curve_id,
+            algorithm_id: *algorithm_id,
+        };
+        with_admin_pin_retry(None, |pin| {
+            admin::configure_sm2(&target.profile, patch, pin, &mut |command| {
+                target.connection.exchange(command)
+            })
+        })?;
+        println!("SM2 configuration updated.");
+        return Ok(());
+    }
     let readout = with_admin_pin_retry(None, |pin| {
         admin::sm2_configuration(&target.profile, pin, &mut |command| {
             target.connection.exchange(command)

@@ -6,10 +6,10 @@ use ckman_transport::hid::{self, HidReportIo};
 use ckman_transport::pcsc::Pcsc;
 
 use canokey::ctap::pin::Permissions;
-use canokey::ctap::{PinUvAuthProtocol, PublicKeyCredentialDescriptor};
+use canokey::ctap::{PinUvAuthProtocol, PublicKeyCredentialDescriptor, UserEntity};
 use canokey::ErrorKind;
-use clap::Subcommand;
-use std::io;
+use clap::{ArgGroup, Subcommand};
+use std::io::{self, Read as _, Write as _};
 use std::time::Duration;
 
 #[derive(Subcommand)]
@@ -39,6 +39,14 @@ pub enum FidoCommand {
     Credentials {
         #[command(subcommand)]
         command: CredentialsCommand,
+    },
+    /// Ask the key to identify itself: touch it (or watch it blink) and
+    /// report success or timeout.
+    TouchTest,
+    /// Read or replace the CTAP largeBlobs array.
+    Blobs {
+        #[command(subcommand)]
+        command: BlobsCommand,
     },
 }
 
@@ -96,6 +104,40 @@ pub enum ConfigCommand {
         #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
         pin: Option<crate::commands::SecretString>,
     },
+    /// Require a long touch (up to 30 seconds) to confirm a FIDO reset.
+    ///
+    /// This is persistent and cannot be turned off again; only a full FIDO
+    /// reset clears it (and over NFC a reset then always times out).
+    EnableLongTouchForReset {
+        /// Current PIN (prompted when omitted).
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
+        /// Do not ask for confirmation.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BlobsCommand {
+    /// Read the whole largeBlobs array to a file ('-' for stdout).
+    Read {
+        /// File to write the array to ('-' for stdout).
+        output: String,
+    },
+    /// Replace the whole largeBlobs array from a file ('-' for stdin); the
+    /// file must contain a complete serialized array, e.g. as produced by
+    /// "blobs read".
+    Write {
+        /// File containing the array ('-' for stdin).
+        file: String,
+        /// FIDO2 PIN (prompted when omitted and a PIN is set).
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
+        /// Do not ask for confirmation.
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -120,6 +162,30 @@ pub enum CredentialsCommand {
         #[arg(short, long)]
         force: bool,
     },
+    /// Rename a resident credential's user (fields not given keep their
+    /// current values; pass an empty string to clear a field).
+    #[command(group(
+        ArgGroup::new("rename")
+            .args(["username", "display_name"])
+            .required(true)
+            .multiple(true)
+    ))]
+    UpdateUser {
+        /// A unique substring of the credential ID (as shown by "list").
+        credential_id: String,
+        /// New username.
+        #[arg(short, long)]
+        username: Option<String>,
+        /// New display name.
+        #[arg(short = 'n', long)]
+        display_name: Option<String>,
+        /// FIDO2 PIN (prompted when omitted).
+        #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
+        pin: Option<crate::commands::SecretString>,
+        /// Do not ask for confirmation.
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 pub fn run(device: Option<u32>, reader: Option<&str>, command: &FidoCommand) -> CliResult<()> {
@@ -129,6 +195,89 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &FidoCommand) -> 
         FidoCommand::Access { command } => access(device, reader, command),
         FidoCommand::Config { command } => config(device, reader, command),
         FidoCommand::Credentials { command } => credentials(device, reader, command),
+        FidoCommand::TouchTest => touch_test(device, reader),
+        FidoCommand::Blobs { command } => blobs(device, reader, command),
+    }
+}
+
+fn touch_test(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
+    let mut link = FidoLink::connect(device, reader)?;
+    if matches!(link, FidoLink::Pcsc(_)) {
+        // The HID path prints the prompt from its keepalive callback.
+        eprintln!("Touch your CanoKey...");
+    }
+    link.run(|exchange| fido::selection(exchange))?;
+    println!("Touch detected.");
+    Ok(())
+}
+
+/// The getInfo "largeBlobs" option must be present and true.
+fn check_large_blobs(info: &canokey::ctap::AuthenticatorInfo) -> CliResult<()> {
+    let supported = info
+        .options()
+        .and_then(|options| options.iter().find(|(name, _)| name == "largeBlobs"))
+        .map(|(_, value)| *value);
+    if supported != Some(true) {
+        return Err("largeBlobs is not supported on this CanoKey".into());
+    }
+    Ok(())
+}
+
+fn blobs(device: Option<u32>, reader: Option<&str>, command: &BlobsCommand) -> CliResult<()> {
+    match command {
+        BlobsCommand::Read { output } => {
+            let mut link = FidoLink::connect(device, reader)?;
+            let info = link.run(|exchange| fido::get_info(exchange))?;
+            check_large_blobs(&info)?;
+            let array = link.run(|exchange| fido::large_blobs_read(exchange))?;
+            if output == "-" {
+                io::stdout().write_all(&array)?;
+            } else {
+                std::fs::write(output, &array)?;
+            }
+            println!(
+                "largeBlobs array written to {output} ({} byte(s)).",
+                array.len()
+            );
+            Ok(())
+        }
+        BlobsCommand::Write { file, pin, force } => {
+            let data = if file == "-" {
+                let mut data = Vec::new();
+                io::stdin().read_to_end(&mut data)?;
+                data
+            } else {
+                std::fs::read(file)?
+            };
+            let mut link = FidoLink::connect(device, reader)?;
+            let info = link.run(|exchange| fido::get_info(exchange))?;
+            check_large_blobs(&info)?;
+            if !force
+                && !confirm(&format!(
+                    "Replace the entire largeBlobs array ({} byte(s))?",
+                    data.len()
+                ))?
+            {
+                return Err("largeBlobs write aborted".into());
+            }
+            // The write is authenticated when the authenticator has a PIN set.
+            let client_pin_set = info
+                .options()
+                .and_then(|options| options.iter().find(|(name, _)| name == "clientPin"))
+                .map(|(_, value)| *value)
+                .unwrap_or(false);
+            if client_pin_set {
+                let protocol = fido::preferred_protocol(&info);
+                let token = blob_token(&mut link, protocol, super::secret_str(pin))?;
+                link.run(|exchange| {
+                    fido::large_blobs_write(&data, Some((&token, protocol)), exchange)
+                })?;
+            } else {
+                link.run(|exchange| fido::large_blobs_write(&data, None, exchange))?;
+            }
+            println!("largeBlobs array written ({} byte(s)).", data.len());
+            Ok(())
+        }
     }
 }
 
@@ -506,6 +655,32 @@ fn config(device: Option<u32>, reader: Option<&str>, command: &ConfigCommand) ->
             );
             Ok(())
         }
+        ConfigCommand::EnableLongTouchForReset { pin, force } => {
+            if !force
+                && !confirm(
+                    "This is permanent: a FIDO reset will then require holding the touch for up \
+                     to 30 seconds (and always times out over NFC), until a full reset clears \
+                     it. Proceed?",
+                )?
+            {
+                return Err("aborted".into());
+            }
+            let mut link = FidoLink::connect(device, reader)?;
+            let info = link.run(|exchange| fido::get_info(exchange))?;
+            if info
+                .options()
+                .and_then(|options| options.iter().find(|(name, _)| name == "authnrCfg"))
+                .map(|(_, value)| *value)
+                != Some(true)
+            {
+                return Err("authenticator configuration is not supported on this CanoKey".into());
+            }
+            let protocol = fido::preferred_protocol(&info);
+            let token = config_token(&mut link, protocol, super::secret_str(pin))?;
+            link.run(|exchange| fido::enable_long_touch_for_reset(&token, protocol, exchange))?;
+            println!("Long touch for reset is enabled.");
+            Ok(())
+        }
     }
 }
 
@@ -545,6 +720,27 @@ fn credman_token(
             &session,
             pin.as_bytes(),
             Permissions::CREDENTIAL_MANAGEMENT,
+            None,
+            exchange,
+        )
+    })
+}
+
+fn blob_token(
+    link: &mut FidoLink,
+    protocol: PinUvAuthProtocol,
+    pin: Option<&str>,
+) -> CliResult<canokey::ctap::pin::PinToken> {
+    let pin = match pin {
+        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+        None => super::prompt_password("Enter the FIDO2 PIN: ")?,
+    };
+    let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
+    link.run(|exchange| {
+        fido::pin_token(
+            &session,
+            pin.as_bytes(),
+            Permissions::LARGE_BLOB_WRITE,
             None,
             exchange,
         )
@@ -695,6 +891,61 @@ fn credentials(
                 PublicKeyCredentialDescriptor::new("public-key", row.credential_id.clone());
             link.run(|exchange| fido::delete_credential(&token, protocol, &descriptor, exchange))?;
             println!("Credential deleted.");
+            Ok(())
+        }
+        CredentialsCommand::UpdateUser {
+            credential_id,
+            username,
+            display_name,
+            pin,
+            force,
+        } => {
+            let query = credential_id.trim_end_matches('.').to_lowercase();
+            let mut link = FidoLink::connect(device, reader)?;
+            let protocol = {
+                let info = link.run(|exchange| fido::get_info(exchange))?;
+                fido::preferred_protocol(&info)
+            };
+            let token = credman_token(&mut link, protocol, super::secret_str(pin))?;
+            let rows = enumerate(&mut link, protocol, &token)?;
+            let hits: Vec<&CredRow> = rows
+                .iter()
+                .filter(|row| hex_encode(&row.credential_id).starts_with(&query))
+                .collect();
+            let [row] = hits.as_slice() else {
+                return Err(if hits.is_empty() {
+                    "no matching credential".into()
+                } else {
+                    "multiple matches; be more specific".into()
+                });
+            };
+            // The authenticator replaces the whole user entity: fields the
+            // caller did not set keep their current values.
+            let user = UserEntity {
+                id: row.user_id.clone(),
+                name: username
+                    .clone()
+                    .or_else(|| (!row.user_name.is_empty()).then(|| row.user_name.clone())),
+                display_name: display_name
+                    .clone()
+                    .or_else(|| (!row.display_name.is_empty()).then(|| row.display_name.clone())),
+            };
+            if !force
+                && !confirm(&format!(
+                    "Rename credential for {} to {} ({})?",
+                    row.rp_id,
+                    user.name.as_deref().unwrap_or(""),
+                    user.display_name.as_deref().unwrap_or("")
+                ))?
+            {
+                return Err("rename aborted".into());
+            }
+            let descriptor =
+                PublicKeyCredentialDescriptor::new("public-key", row.credential_id.clone());
+            link.run(|exchange| {
+                fido::update_user_information(&token, protocol, &descriptor, &user, exchange)
+            })?;
+            println!("Credential user updated.");
             Ok(())
         }
     }

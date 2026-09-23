@@ -10,6 +10,7 @@
 use crate::{execute, DriveError, Exchange};
 use canokey::ctap::credmgmt::{self, CredentialEntry, CredsMetadata, RpEntry};
 use canokey::ctap::pin::{self, Permissions, PinRetries, PinSession, PinToken};
+use canokey::ctap::UserEntity;
 use canokey::ctap::{self, AuthenticatorInfo, PinUvAuthProtocol, PublicKeyCredentialDescriptor};
 use canokey::{Error, ErrorKind, Operation, OperationOptions};
 use ckman_transport::ctaphid::{Command, CtapHidChannel, Keepalive, ReportIo};
@@ -313,6 +314,22 @@ pub fn delete_credential<E>(
     )
 }
 
+/// Replace the user name/display name on one resident credential, keeping its
+/// user handle. Unset `UserEntity` fields are cleared by the authenticator;
+/// callers preserving a field must pass its current value.
+pub fn update_user_information<E>(
+    token: &PinToken,
+    protocol: PinUvAuthProtocol,
+    credential_id: &PublicKeyCredentialDescriptor,
+    user: &UserEntity,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), FidoError<E>> {
+    run(
+        credmgmt::update_user_information(token, protocol, credential_id, user, options()),
+        exchange,
+    )
+}
+
 /// Toggle the persistent always-UV authenticator setting.
 pub fn toggle_always_uv<E>(
     token: &PinToken,
@@ -321,6 +338,40 @@ pub fn toggle_always_uv<E>(
 ) -> Result<(), FidoError<E>> {
     run(
         ctap::config::toggle_always_uv(token, protocol, options()),
+        exchange,
+    )
+}
+
+/// Enable the persistent long-touch-for-reset setting. There is no way back
+/// short of a full authenticator reset: once enabled, a reset requires
+/// holding the touch for up to 30 seconds and never succeeds over NFC.
+pub fn enable_long_touch_for_reset<E>(
+    token: &PinToken,
+    protocol: PinUvAuthProtocol,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), FidoError<E>> {
+    run(
+        ctap::config::enable_long_touch_for_reset(token, protocol, options()),
+        exchange,
+    )
+}
+
+/// Read the whole CTAP largeBlobs array (16-byte truncated SHA-256 prefix
+/// plus the CBOR array), fragmenting at the channel's capacity.
+pub fn large_blobs_read<E>(exchange: &mut Exchange<'_, E>) -> Result<Vec<u8>, FidoError<E>> {
+    run(ctap::largeblob::read_array(options()), exchange)
+}
+
+/// Replace the whole CTAP largeBlobs array. `token` is required when the
+/// authenticator has a PIN set (largeBlobWrite permission); the write is
+/// length-checked before any I/O (17..=4096 bytes on CanoKey).
+pub fn large_blobs_write<E>(
+    data: &[u8],
+    token: Option<(&PinToken, PinUvAuthProtocol)>,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), FidoError<E>> {
+    run(
+        ctap::largeblob::write_array(data, token, options()),
         exchange,
     )
 }
@@ -352,10 +403,171 @@ pub fn set_min_pin_length<E>(
 mod tests {
     use super::*;
     use ckman_transport::ctaphid::CtapHidChannel;
+    use std::collections::VecDeque;
     use std::time::Duration;
 
     // Reuse the loopback device-side CTAPHID from the transport tests.
     use ckman_transport::ctaphid::loopback;
+
+    /// Transcript-driven envelope exchange, mirroring the other applet tests:
+    /// one complete command APDU in, one complete response (with SW1/SW2) out.
+    struct Script {
+        transcript: VecDeque<(Vec<u8>, Vec<u8>)>,
+    }
+
+    impl Script {
+        fn new(transcript: &[(&[u8], &[u8])]) -> Self {
+            Script {
+                transcript: transcript
+                    .iter()
+                    .map(|(c, r)| (c.to_vec(), r.to_vec()))
+                    .collect(),
+            }
+        }
+        fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
+            let (expected, response) = self
+                .transcript
+                .pop_front()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "unexpected exchange"))?;
+            assert_eq!(command, expected, "command differs from transcript");
+            Ok(response)
+        }
+    }
+
+    const SELECT_OK: (&[u8], &[u8]) = (FIDO2_SELECT, &[0x90, 0x00]);
+
+    #[test]
+    fn selection_transcript_and_timeout() {
+        // authenticatorSelection (0x0B): success, and the 0x2f user-action
+        // timeout the CLI reports as "timed out waiting for user presence".
+        let mut script = Script::new(&[
+            SELECT_OK,
+            (&[0x80, 0x10, 0, 0, 1, 0x0b], &[0x00, 0x90, 0x00]),
+        ]);
+        selection(&mut |c| script.exchange(c)).unwrap();
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[
+            SELECT_OK,
+            (&[0x80, 0x10, 0, 0, 1, 0x0b], &[0x2f, 0x90, 0x00]),
+        ]);
+        let error = selection(&mut |c| script.exchange(c)).unwrap_err();
+        match error {
+            FidoError::Drive(DriveError::Protocol(error)) => {
+                assert_eq!(error.application_status, Some(0x2f))
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn large_blobs_read_array_transcript() {
+        // With this module's 7609-byte response budget the fragment size is
+        // the 1024-byte default: {1: 1024, 3: 0}. A short fragment terminates
+        // the read (fixture shape mirrored from canokey-ctap's largeblob.rs).
+        let mut script = Script::new(&[
+            SELECT_OK,
+            (
+                &[
+                    0x80, 0x10, 0, 0, 8, 0x0c, 0xa2, 0x01, 0x19, 0x04, 0x00, 0x03, 0x00,
+                ],
+                &[0x00, 0xa1, 0x01, 0x43, 1, 2, 3, 0x90, 0x00],
+            ),
+        ]);
+        let array = large_blobs_read(&mut |c| script.exchange(c)).unwrap();
+        assert_eq!(array, [1, 2, 3]);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn large_blobs_write_array_without_pin_transcript() {
+        // 17 bytes (16-byte prefix + empty CBOR array 0x80), no PIN set:
+        // {2: h'..', 3: 0, 4: 17} and no pinUvAuthParam.
+        let data: Vec<u8> = (0..16).chain([0x80]).collect();
+        let mut message = vec![0x0c, 0xa3, 0x02, 0x51];
+        message.extend(&data);
+        message.extend([0x03, 0x00, 0x04, 0x11]);
+        let mut command = vec![0x80, 0x10, 0, 0, message.len() as u8];
+        command.extend(&message);
+        let mut script = Script::new(&[SELECT_OK, (&[], &[0x00, 0x90, 0x00])]);
+        script.transcript[1].0 = command;
+        large_blobs_write(&data, None, &mut |c| script.exchange(c)).unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    /// Fixed ClientPIN V1 fixture (platform scalar 0x01..=0x20, PIN "1234",
+    /// token plaintext 0x10..=0x2F), mirrored from canokey-ctap's
+    /// tests/support; cross-checked there against an independent Python
+    /// implementation. Makes every pinUvAuthParam deterministic.
+    const EPHEMERAL_SCALAR: [u8; 32] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+        0x1f, 0x20,
+    ];
+    const PEER_KEY_AGREEMENT_PAYLOAD: &str = "a101a5010203381820012158200d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d22582019b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba";
+    const TOKEN_CT_V1: &str = "b98cc635132fa3ea8c191b7a4aa3e093ce926c35488221b4684fce766f3b14b0";
+
+    fn hex(s: &str) -> Vec<u8> {
+        let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+        (0..clean.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&clean[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn authenticated_config_and_credmgmt_goldens_over_loopback() {
+        // Golden messages from canokey-ctap's config.rs / credmgmt.rs tests
+        // (V1 token; HMACs cross-checked with Python stdlib hmac there).
+        const MSG_ENABLE_LONG_TOUCH: &str = "0da3010403010450967369eaf14c745bb57c5340d0cc9416";
+        const MSG_UPDATE: &str =
+            "0aa4010702a202a2626964440102030464747970656a7075626c69632d6b657903a36269644405060708646e616d6565616c6963656b646973706c61794e616d6565416c696365030104503f101861670b03d4287bc78e520e9a21";
+        let mut token_payload = vec![0x00, 0xa1, 0x02, 0x58, 0x20];
+        token_payload.extend(hex(TOKEN_CT_V1));
+        let mut peer_payload = vec![0x00];
+        peer_payload.extend(hex(PEER_KEY_AGREEMENT_PAYLOAD));
+        let device = loopback::Loopback::new(loopback::CborBehavior::Scripted(vec![
+            peer_payload,
+            token_payload,
+            vec![0x00],
+            vec![0x00],
+        ]));
+        let mut adapter = CtapHidAdapter::new(
+            CtapHidChannel::allocate(device, *b"nonce123", Duration::from_secs(1))
+                .unwrap()
+                .0,
+            Duration::from_secs(1),
+            |_| {},
+        );
+        let operation =
+            pin::get_key_agreement(PinUvAuthProtocol::V1, &EPHEMERAL_SCALAR, options()).unwrap();
+        let session = execute::<_, io::Error>(operation, &mut |c| adapter.exchange(c)).unwrap();
+        let operation = pin::get_pin_token(&session, b"1234", None, options()).unwrap();
+        let token = execute::<_, io::Error>(operation, &mut |c| adapter.exchange(c)).unwrap();
+
+        enable_long_touch_for_reset(&token, PinUvAuthProtocol::V1, &mut |c| adapter.exchange(c))
+            .unwrap();
+        let descriptor = PublicKeyCredentialDescriptor::new("public-key", vec![1, 2, 3, 4]);
+        let user = UserEntity {
+            id: vec![5, 6, 7, 8],
+            name: Some("alice".to_string()),
+            display_name: Some("Alice".to_string()),
+        };
+        update_user_information(
+            &token,
+            PinUvAuthProtocol::V1,
+            &descriptor,
+            &user,
+            &mut |c| adapter.exchange(c),
+        )
+        .unwrap();
+
+        let device = adapter.into_inner().into_inner();
+        assert_eq!(device.cbor_payloads().len(), 4);
+        assert_eq!(device.cbor_payloads()[2], hex(MSG_ENABLE_LONG_TOUCH));
+        assert_eq!(device.cbor_payloads()[3], hex(MSG_UPDATE));
+    }
 
     /// CanoKey 3.1.0-shaped getInfo response payload, mirrored in full from
     /// the canokey-ctap ctap2_commands fixture (17 map entries).

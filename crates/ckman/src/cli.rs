@@ -67,6 +67,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::openpgp::OpenPgpCommand,
     },
+    /// Print shell completions to stdout.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Manage FIDO2/U2F.
     Fido {
         #[command(subcommand)]
@@ -166,6 +172,14 @@ mod tests {
             &["ckman", "config", "keyboard", "clear-keymap"][..],
             &["ckman", "config", "keyboard", "return", "on"][..],
             &["ckman", "config", "sm2"][..],
+            &["ckman", "config", "sm2", "set", "--curve-id", "9"][..],
+            &["ckman", "config", "sm2", "set", "--algorithm-id=-54"][..],
+            &["ckman", "config", "admin-pin", "change"][..],
+            &["ckman", "config", "admin-pin", "status"][..],
+            &["ckman", "openpgp", "cardholder", "set-name", "Alice"][..],
+            &["ckman", "openpgp", "cardholder", "set-sex", "female"][..],
+            &["ckman", "openpgp", "access", "set-touch-cache", "15"][..],
+            &["ckman", "openpgp", "keys", "export", "sig", "-"][..],
             &[
                 "ckman",
                 "oath",
@@ -178,12 +192,85 @@ mod tests {
             ][..],
             &["ckman", "piv", "objects", "name", "9a", "My Key"][..],
             &["ckman", "piv", "objects", "name", "f9"][..],
+            &["ckman", "piv", "sign", "9c", "-", "-"][..],
+            &["ckman", "piv", "sign", "9c", "m.bin", "s.bin", "--raw"][..],
+            &["ckman", "piv", "decrypt", "9d", "c.bin", "p.bin"][..],
+            &["ckman", "piv", "derive", "9d", "peer.bin", "-"][..],
+            &["ckman", "piv", "decapsulate", "9d", "ct.bin", "ss.bin"][..],
+            &[
+                "ckman",
+                "piv",
+                "agree-sm2",
+                "9d",
+                "--peer-static",
+                "s.bin",
+                "--peer-ephemeral",
+                "e.bin",
+                "key.bin",
+            ][..],
+            &["ckman", "piv", "random", "32"][..],
+            &["ckman", "piv", "random", "32", "rand.bin"][..],
+            &["ckman", "piv", "logout"][..],
+            &["ckman", "piv", "keys", "generate-batch", "--slots", "9a,9c"][..],
+            &["ckman", "completions", "bash"][..],
+            &["ckman", "completions", "zsh"][..],
+            &["ckman", "oath", "serial"][..],
+            &["ckman", "oath", "challenge-response", "short", "deadbeef"][..],
+            &[
+                "ckman",
+                "oath",
+                "challenge-response",
+                "long",
+                "--text",
+                "hi",
+            ][..],
+            &["ckman", "fido", "touch-test"][..],
+            &["ckman", "fido", "config", "enable-long-touch-for-reset"][..],
+            &[
+                "ckman",
+                "fido",
+                "credentials",
+                "update-user",
+                "abcd",
+                "-u",
+                "x",
+            ][..],
+            &["ckman", "fido", "blobs", "read", "-"][..],
+            &["ckman", "fido", "blobs", "write", "f.bin"][..],
         ] {
             Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         }
+        // update-user requires at least one field to change.
+        assert!(
+            Cli::try_parse_from(["ckman", "fido", "credentials", "update-user", "abcd"]).is_err()
+        );
+        // --raw conflicts with --hash; generate-batch requires --slots.
+        assert!(Cli::try_parse_from([
+            "ckman", "piv", "sign", "9c", "-", "-", "--raw", "--hash", "sha256"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(["ckman", "piv", "keys", "generate-batch"]).is_err());
         // write-keymap requires --layout.
         assert!(
             Cli::try_parse_from(["ckman", "config", "keyboard", "write-keymap", "f.bin"]).is_err()
         );
+        // sm2 set requires at least one identifier.
+        assert!(Cli::try_parse_from(["ckman", "config", "sm2", "set"]).is_err());
+        // Negative algorithm identifiers parse as values, not flags.
+        let cli = Cli::try_parse_from(["ckman", "config", "sm2", "set", "--algorithm-id", "-54"])
+            .unwrap();
+        let Some(Commands::Config { command }) = cli.command else {
+            panic!("expected config command")
+        };
+        let commands::config::ConfigCommand::Sm2 {
+            command:
+                Some(commands::config::Sm2Command::Set {
+                    algorithm_id: Some(-54),
+                    ..
+                }),
+        } = command
+        else {
+            panic!("expected sm2 set --algorithm-id -54")
+        };
     }
 }

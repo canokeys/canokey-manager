@@ -59,6 +59,18 @@ pub fn run() -> std::process::ExitCode {
         Commands::Fido { command } => {
             commands::fido::run(cli.device, cli.reader.as_deref(), command)
         }
+        Commands::Completions { shell } => {
+            use std::io::Write as _;
+            let mut command = <Cli as clap::CommandFactory>::command();
+            let mut buffer = Vec::new();
+            clap_complete::generate(*shell, &mut command, "ckman", &mut buffer);
+            // A closed pipe (e.g. `ckman completions bash | head`) is not an error.
+            match std::io::stdout().write_all(&buffer) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+                Err(error) => Err(error.into()),
+            }
+        }
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

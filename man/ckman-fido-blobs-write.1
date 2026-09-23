@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-fido-blobs-write 1  ckman 
+.SH NAME
+ckman\-fido\-blobs\-write \- Replace the whole largeBlobs array from a file (\*(Aq\-\*(Aq for stdin); the file must contain a complete serialized array, e.g. as produced by "blobs read"
+.SH SYNOPSIS
+\fBckman\-fido\-blobs\-write\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.SH DESCRIPTION
+Replace the whole largeBlobs array from a file (\*(Aq\-\*(Aq for stdin); the file must contain a complete serialized array, e.g. as produced by "blobs read"
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+FIDO2 PIN (prompted when omitted and a PIN is set)
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Do not ask for confirmation
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIFILE\fR>
+File containing the array (\*(Aq\-\*(Aq for stdin)

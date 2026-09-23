@@ -4,7 +4,7 @@ use ckman_core::openpgp::{self, Password, PasswordReference, Slot};
 use ckman_core::{DriveError, Exchange};
 use ckman_transport::pcsc::Pcsc;
 
-use canokey::{DeviceProfile, ErrorKind, SecretReference};
+use canokey::{DeviceProfile, ErrorKind, SecretBytes, SecretReference};
 use clap::{Subcommand, ValueEnum};
 use std::io::{self, Read, Write as _};
 
@@ -25,6 +25,11 @@ pub enum OpenPgpCommand {
     Access {
         #[command(subcommand)]
         command: AccessCommand,
+    },
+    /// Manage cardholder data (name, login, language, sex, URL).
+    Cardholder {
+        #[command(subcommand)]
+        command: CardholderCommand,
     },
     /// Manage private keys.
     Keys {
@@ -112,6 +117,67 @@ pub enum AccessCommand {
         #[arg(short, long, value_parser = crate::commands::secret_arg)]
         admin_pin: Option<crate::commands::SecretString>,
     },
+    /// Set the card-wide touch cache duration in seconds (0 disables caching).
+    SetTouchCache {
+        /// Cache duration in seconds.
+        seconds: u8,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short, long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CardholderCommand {
+    /// Set the cardholder name (at most 39 bytes; empty clears it).
+    SetName {
+        /// The cardholder name.
+        name: String,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+    /// Set the login data (at most 63 bytes; empty clears it).
+    SetLogin {
+        /// The login (typically a user name).
+        login: String,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+    /// Set the language preferences (ISO 639-1 codes, at most 8 bytes; empty
+    /// clears them).
+    SetLanguage {
+        /// Language code(s), e.g. "en" or "de en".
+        language: String,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+    /// Set the sex marker (ISO/IEC 5218).
+    SetSex {
+        /// Sex marker.
+        #[arg(value_enum)]
+        sex: SexArg,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+    /// Set the public-key URL (at most 255 bytes; empty clears it).
+    SetUrl {
+        /// The URL pointing at the public key.
+        url: String,
+        /// Admin PIN (prompted when omitted).
+        #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum SexArg {
+    Male,
+    Female,
+    Unspecified,
 }
 
 #[derive(Subcommand)]
@@ -151,6 +217,17 @@ pub enum KeysCommand {
         /// Admin PIN (prompted when omitted).
         #[arg(short = 'a', long, value_parser = crate::commands::secret_arg)]
         admin_pin: Option<crate::commands::SecretString>,
+    },
+    /// Export the public key of a slot.
+    Export {
+        /// Key slot.
+        #[arg(value_enum)]
+        key: KeySlotArg,
+        /// File to write the public key to ('-' for stdout).
+        public_key_output: String,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = EncodingArg::Pem)]
+        format: EncodingArg,
     },
     /// Set the touch policy for a key slot.
     SetTouch {
@@ -252,6 +329,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &OpenPgpCommand) 
             reset(device, reader, *force, super::secret_str(admin_pin))
         }
         OpenPgpCommand::Access { command } => access(device, reader, command),
+        OpenPgpCommand::Cardholder { command } => cardholder(device, reader, command),
         OpenPgpCommand::Keys { command } => keys(device, reader, command),
         OpenPgpCommand::Certificates { command } => certificates(device, reader, command),
     }
@@ -490,6 +568,37 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     }
     // The pinned firmware evidence has no KDF data object at all.
     println!("KDF enabled:              no");
+    // Cardholder data is best-effort: a card without it must not fail the
+    // whole status output.
+    if let Ok(cardholder) =
+        session.run(|profile, exchange| openpgp::read_cardholder_data(profile, exchange))
+    {
+        if let Ok(Some(name)) = cardholder.name() {
+            println!(
+                "Cardholder name:          {}",
+                String::from_utf8_lossy(name)
+            );
+        }
+        if let Ok(Some(language)) = cardholder.language() {
+            println!(
+                "Language preferences:     {}",
+                String::from_utf8_lossy(language)
+            );
+        }
+        if let Ok(Some(sex)) = cardholder.sex() {
+            println!("Sex:                      {}", String::from_utf8_lossy(sex));
+        }
+    }
+    // Login and URL are standalone data objects outside DO 65.
+    for (tag, label) in [(0x5e, "Login:"), (0x5f50, "URL:")] {
+        if let Ok(bytes) =
+            session.run(|profile, exchange| openpgp::read_data(profile, tag, exchange))
+        {
+            if !bytes.as_bytes().is_empty() {
+                println!("{label:<26}{}", String::from_utf8_lossy(bytes.as_bytes()));
+            }
+        }
+    }
     for slot in [Slot::Signature, Slot::Decryption, Slot::Authentication] {
         let Some(fingerprint) = fingerprint_hex(data.fingerprint(slot)?) else {
             continue;
@@ -674,7 +783,75 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             println!("Signature PIN policy has been set.");
             Ok(())
         }
+        AccessCommand::SetTouchCache { seconds, admin_pin } => {
+            let mut session = OpenPgpSession::connect(device, reader)?;
+            let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
+            session.run(|profile, exchange| {
+                openpgp::set_touch_cache_time(profile, *seconds, admin, exchange)
+            })?;
+            println!("Touch cache time set to {seconds} second(s).");
+            Ok(())
+        }
     }
+}
+
+fn cardholder(
+    device: Option<u32>,
+    reader: Option<&str>,
+    command: &CardholderCommand,
+) -> CliResult<()> {
+    let mut session = OpenPgpSession::connect(device, reader)?;
+    let (label, value) = match command {
+        CardholderCommand::SetName { name, .. } => {
+            if name.len() > 39 {
+                return Err("the cardholder name must be at most 39 bytes".into());
+            }
+            ("Name", openpgp::DataWrite::Name(name.clone().into_bytes()))
+        }
+        CardholderCommand::SetLogin { login, .. } => {
+            if login.len() > 63 {
+                return Err("the login must be at most 63 bytes".into());
+            }
+            (
+                "Login",
+                openpgp::DataWrite::Login(SecretBytes::new(login.clone().into_bytes())),
+            )
+        }
+        CardholderCommand::SetLanguage { language, .. } => {
+            if language.len() > 8 {
+                return Err("the language preferences must be at most 8 bytes".into());
+            }
+            (
+                "Language preferences",
+                openpgp::DataWrite::Language(language.clone().into_bytes()),
+            )
+        }
+        CardholderCommand::SetSex { sex, .. } => (
+            "Sex marker",
+            openpgp::DataWrite::Sex(match sex {
+                SexArg::Male => b'1',
+                SexArg::Female => b'2',
+                SexArg::Unspecified => b'9',
+            }),
+        ),
+        CardholderCommand::SetUrl { url, .. } => {
+            if url.len() > 255 {
+                return Err("the URL must be at most 255 bytes".into());
+            }
+            ("URL", openpgp::DataWrite::Url(url.clone().into_bytes()))
+        }
+    };
+    let admin_pin = match command {
+        CardholderCommand::SetName { admin_pin, .. }
+        | CardholderCommand::SetLogin { admin_pin, .. }
+        | CardholderCommand::SetLanguage { admin_pin, .. }
+        | CardholderCommand::SetSex { admin_pin, .. }
+        | CardholderCommand::SetUrl { admin_pin, .. } => admin_pin,
+    };
+    let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
+    session.run(|profile, exchange| openpgp::write_data(profile, value, admin, exchange))?;
+    println!("{label} has been set.");
+    Ok(())
 }
 
 fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> CliResult<()> {
@@ -768,6 +945,30 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 openpgp::import_key(profile, slot, imported.algorithm, material, pw3, exchange)
             })?;
             println!("Private key imported for slot {}.", slot_name(slot));
+            Ok(())
+        }
+        KeysCommand::Export {
+            key,
+            public_key_output,
+            format,
+        } => {
+            let mut session = OpenPgpSession::connect(device, reader)?;
+            let slot = slot_of(*key);
+            let public = session
+                .run(|profile, exchange| openpgp::read_public_key(profile, slot, exchange))?;
+            let der = public
+                .to_spki_der()
+                .map_err(|error| format!("cannot encode the public key as SPKI: {error}"))?;
+            let data = match format {
+                EncodingArg::Pem => ckman_core::x509::pem_encode("PUBLIC KEY", &der),
+                EncodingArg::Der => der,
+            };
+            if public_key_output == "-" {
+                io::stdout().write_all(&data)?;
+            } else {
+                std::fs::write(public_key_output, data)?;
+            }
+            println!("Public key written to {public_key_output}.");
             Ok(())
         }
         KeysCommand::SetTouch {

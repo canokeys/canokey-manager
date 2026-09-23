@@ -2,12 +2,19 @@
 .el .ds Aq '
 .TH ckman-config-sm2 1  ckman 
 .SH NAME
-ckman\-config\-sm2 \- Show the CTAP SM2 configuration (3.0+; read\-only)
+ckman\-config\-sm2 \- Show or change the CTAP SM2 configuration (3.0+; writes need 3.1)
 .SH SYNOPSIS
-\fBckman\-config\-sm2\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-config\-sm2\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
-Show the CTAP SM2 configuration (3.0+; read\-only)
+Show or change the CTAP SM2 configuration (3.0+; writes need 3.1)
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-config\-sm2\-set(1)
+Set the SM2 COSE curve/algorithm identifiers (3.1+; unspecified identifiers keep their current values)
+.TP
+ckman\-config\-sm2\-help(1)
+Print this message or the help of the given subcommand(s)

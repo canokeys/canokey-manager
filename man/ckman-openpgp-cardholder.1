@@ -1,0 +1,32 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-openpgp-cardholder 1  ckman 
+.SH NAME
+ckman\-openpgp\-cardholder \- Manage cardholder data (name, login, language, sex, URL)
+.SH SYNOPSIS
+\fBckman\-openpgp\-cardholder\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage cardholder data (name, login, language, sex, URL)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-openpgp\-cardholder\-set\-name(1)
+Set the cardholder name (at most 39 bytes; empty clears it)
+.TP
+ckman\-openpgp\-cardholder\-set\-login(1)
+Set the login data (at most 63 bytes; empty clears it)
+.TP
+ckman\-openpgp\-cardholder\-set\-language(1)
+Set the language preferences (ISO 639\-1 codes, at most 8 bytes; empty clears them)
+.TP
+ckman\-openpgp\-cardholder\-set\-sex(1)
+Set the sex marker (ISO/IEC 5218)
+.TP
+ckman\-openpgp\-cardholder\-set\-url(1)
+Set the public\-key URL (at most 255 bytes; empty clears it)
+.TP
+ckman\-openpgp\-cardholder\-help(1)
+Print this message or the help of the given subcommand(s)

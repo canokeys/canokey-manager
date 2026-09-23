@@ -26,6 +26,7 @@ pub use canokey::piv::{
     Metadata, MetadataReference, MutationResult, ObjectId, Pin, PinPolicy, PinStatus,
     PrivateKeyMaterial, PublicKey, Puk, RetiredSlot, SignInput, Signature, Slot, TouchPolicy,
 };
+pub use canokey::piv::{BatchItem, BatchRequest, Sm2Agreement, Sm2AgreementInput, Sm2Role};
 
 /// Failure preparing or driving a PIV operation.
 #[derive(Debug, thiserror::Error)]
@@ -425,6 +426,130 @@ pub fn sign<E>(
         piv::sign(profile, slot, algorithm, input, access, options()),
         exchange,
     )
+}
+
+/// Perform the raw RSA private operation on a modulus-sized ciphertext block,
+/// returning the raw modulus-sized plaintext block (zeroized). Unpadding is
+/// the caller's job; libcanokey implements no padding-oracle policy.
+pub fn decrypt<E>(
+    profile: &DeviceProfile,
+    slot: Slot,
+    algorithm: Algorithm,
+    ciphertext: SecretBytes,
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    run(
+        piv::decrypt(profile, slot, algorithm, ciphertext, access, options()),
+        exchange,
+    )
+}
+
+/// Derive a raw ECDH/X25519 shared secret (no KDF); the peer encoding is
+/// validated against the algorithm before any I/O.
+pub fn derive<E>(
+    profile: &DeviceProfile,
+    slot: Slot,
+    algorithm: Algorithm,
+    peer: Vec<u8>,
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    run(
+        piv::derive(profile, slot, algorithm, peer, access, options()),
+        exchange,
+    )
+}
+
+/// Decapsulate an ML-KEM-768 ciphertext (exactly 1088 bytes) with the slot's
+/// key, returning the 32-byte shared secret (zeroized). Implicit rejection
+/// means a successful call does not authenticate the ciphertext's sender.
+pub fn decapsulate<E>(
+    profile: &DeviceProfile,
+    slot: Slot,
+    ciphertext: SecretBytes,
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    run(
+        piv::decapsulate(profile, slot, ciphertext, access, options()),
+        exchange,
+    )
+}
+
+/// Agree an SM2 session key from pre-exchanged peer static/ephemeral keys;
+/// the firmware runs the SM2 KDF. The initiator role rejects PIN-always keys
+/// before generating the ephemeral key (see libcanokey's notes).
+pub fn agree_sm2<E>(
+    profile: &DeviceProfile,
+    slot: Slot,
+    input: Sm2AgreementInput,
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<Sm2Agreement, PivError<E>> {
+    run(
+        piv::agree_sm2(profile, slot, input, access, options()),
+        exchange,
+    )
+}
+
+/// Read `length` bytes from the device RNG. SELECTs PIV, then issues the
+/// version-gated RNG commands; PIV application versions below 6 fail with
+/// `ErrorKind::UnsupportedFeature` after the version read.
+pub fn random<E>(
+    profile: &DeviceProfile,
+    length: usize,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    select(profile, exchange)?;
+    run(piv::random_selected(length, options()), exchange)
+}
+
+/// Generate one key pair per slot in a single batched operation: one SELECT,
+/// one explicit management authentication, then one GENERATE per slot.
+/// `progress` is called with the number of completed keys after each one
+/// finishes. A failure stops the batch (no rollback); the error retains its
+/// typed kind, and keys completed before it stay on the card.
+pub fn generate_keys<E>(
+    profile: &DeviceProfile,
+    slots: Vec<KeyParameters>,
+    management: ManagementAuthentication,
+    exchange: &mut Exchange<'_, E>,
+    progress: &mut dyn FnMut(usize),
+) -> Result<Vec<PublicKey>, PivError<E>> {
+    let total = slots.len();
+    let mut requests = Vec::with_capacity(total + 1);
+    requests.push(BatchRequest::AuthenticateManagement(management));
+    requests.extend(slots.into_iter().map(BatchRequest::GenerateKey));
+    let mut operation = piv::batch(profile, requests, options()).map_err(DriveError::from)?;
+    let mut step = operation.start().map_err(DriveError::from)?;
+    let mut reported = 0;
+    while step == canokey::Step::Exchange {
+        let response = exchange(operation.command().map_err(DriveError::from)?.as_bytes())
+            .map_err(DriveError::Transport)?;
+        step = operation.advance(&response).map_err(DriveError::from)?;
+        if let Some(done) = piv::batch_progress(&operation) {
+            // The first item is the management authentication.
+            let completed = done.items().len().saturating_sub(1);
+            if completed > reported {
+                reported = completed;
+                progress(completed);
+            }
+        }
+    }
+    let results = operation.take_result().map_err(DriveError::from)?;
+    let keys: Vec<PublicKey> = results
+        .into_items()
+        .into_iter()
+        .filter_map(|item| match item {
+            BatchItem::PublicKey(key) => Some(key),
+            _ => None,
+        })
+        .collect();
+    if keys.len() != total {
+        return Err(PivError::protocol(ErrorKind::InvalidResponse));
+    }
+    Ok(keys)
 }
 
 // --- Host-side signing for certificates/CSRs ---------------------------------
@@ -1490,6 +1615,269 @@ mod tests {
             &mut |c| script.exchange(c),
         )
         .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    // --- private-key operations, RNG, batch (libcanokey fixtures) -------------
+
+    fn tlv(tag: &[u8], bytes: &[u8]) -> Vec<u8> {
+        let mut writer = TlvWriter::new(4096);
+        writer.push(Tag::from_bytes(tag).unwrap(), bytes).unwrap();
+        writer.into_bytes().as_bytes().to_vec()
+    }
+
+    #[test]
+    fn sign_places_verify_adjacent_and_returns_der() {
+        // Fixture mirrored from canokey-piv's keys.rs signing test: P-256
+        // (wire id 0x11), slot 9c, VERIFY immediately before GENERAL
+        // AUTHENTICATE.
+        let mut ga = hex("0087119c267c2482008120");
+        ga.extend([0x42; 32]);
+        let mut script = Script::new(&[(SELECT, OK), (VERIFY_123456, OK), (&[], OK)]);
+        script.transcript[2] = (ga, hex("7c0a820830060201010201029000"));
+        let signature = sign(
+            &profile("3.1.0"),
+            Slot::Signature,
+            Algorithm::EccP256,
+            SignInput::Digest(SecretBytes::new(vec![0x42; 32])),
+            piv::Access::Pin(Pin::from_bytes(b"123456").unwrap()),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(signature.as_bytes(), &hex("3006020101020102"));
+        let mut fixed = vec![0; 64];
+        fixed[31] = 1;
+        fixed[63] = 2;
+        assert_eq!(signature.to_p1363().unwrap(), fixed);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn derive_and_decrypt_transcripts() {
+        // ECDH P-256 over slot 9d (fixture from canokey-piv's keys.rs).
+        let inner = tlv(
+            &[0x7c],
+            &[&[0x82, 0][..], &tlv(&[0x85], &hex(P256_POINT))].concat(),
+        );
+        let mut command = hex("0087119d");
+        command.push(inner.len() as u8);
+        command.extend(&inner);
+        let mut response = tlv(&[0x7c], &tlv(&[0x82], &[0x43; 32]));
+        response.extend(OK);
+        let mut script = Script::new(&[(SELECT, OK), (&[], OK)]);
+        script.transcript[1] = (command, response);
+        let secret = derive(
+            &profile("3.1.0"),
+            Slot::KeyManagement,
+            Algorithm::EccP256,
+            hex(P256_POINT),
+            piv::Access::None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(secret.as_bytes(), &[0x43; 32]);
+        assert!(script.transcript.is_empty());
+
+        // RSA-2048 decrypt chains the 266-byte command and reads the reply
+        // through GET RESPONSE (mirrored from canokey-piv's keys.rs).
+        let inner = tlv(
+            &[0x7c],
+            &[&[0x82, 0][..], &tlv(&[0x81], &[0x42; 256])].concat(),
+        );
+        let chunks: Vec<&[u8]> = inner.chunks(255).collect();
+        let reply = tlv(&[0x7c], &tlv(&[0x82], &[0x43; 256]));
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = vec![(SELECT.to_vec(), OK.to_vec())];
+        for (index, chunk) in chunks.iter().enumerate() {
+            let last = index == chunks.len() - 1;
+            let mut frame = vec![
+                if last { 0 } else { 0x10 },
+                0x87,
+                0x07,
+                0x9d,
+                chunk.len() as u8,
+            ];
+            frame.extend_from_slice(chunk);
+            let response = if last {
+                // First 200 reply bytes with a 61 00 continuation marker.
+                let mut r = reply[..200].to_vec();
+                r.extend([0x61, 0]);
+                r
+            } else {
+                OK.to_vec()
+            };
+            transcript.push((frame, response));
+        }
+        transcript.push((vec![0, 0xc0, 0, 0, 0], {
+            let mut r = reply[200..].to_vec();
+            r.extend(OK);
+            r
+        }));
+        let mut script = Script::new(&[]);
+        script.transcript = transcript.into();
+        let plaintext = decrypt(
+            &profile("3.1.0"),
+            Slot::KeyManagement,
+            Algorithm::Rsa2048,
+            SecretBytes::new(vec![0x42; 256]),
+            piv::Access::None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(plaintext.as_bytes(), &[0x43; 256]);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn decapsulate_chained_transcript() {
+        // Mirrored from canokey-piv's decapsulate.rs: 7C { 82 empty, 81
+        // ciphertext } chained in 255-byte frames with CLA 0x10.
+        let mut payload = hex("7c820446820081820440");
+        payload.extend([0x42; 1088]);
+        let chunks: Vec<&[u8]> = payload.chunks(255).collect();
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = vec![(SELECT.to_vec(), OK.to_vec())];
+        for (index, chunk) in chunks.iter().enumerate() {
+            let last = index == chunks.len() - 1;
+            let mut frame = vec![
+                if last { 0 } else { 0x10 },
+                0x87,
+                0x57,
+                0x9d,
+                chunk.len() as u8,
+            ];
+            frame.extend_from_slice(chunk);
+            let response = if last {
+                let mut r = tlv(&[0x7c], &tlv(&[0x82], &[0x24; 32]));
+                r.extend(OK);
+                r
+            } else {
+                OK.to_vec()
+            };
+            transcript.push((frame, response));
+        }
+        let mut script = Script::new(&[]);
+        script.transcript = transcript.into();
+        let secret = decapsulate(
+            &profile("3.1.0"),
+            Slot::KeyManagement,
+            SecretBytes::new(vec![0x42; 1088]),
+            piv::Access::None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(secret.as_bytes(), &[0x24; 32]);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn agree_sm2_responder_transcript() {
+        // Mirrored from canokey-piv's sm2_agreement.rs: the responder's single
+        // GENERAL AUTHENTICATE with both peer points and key length 16.
+        const SM2_POINT: &str = concat!(
+            "04",
+            "32c4ae2c1f1981195f9904466a39c9948fe30bbff2660be1715a4589334c74c7",
+            "bc3736a2f4f6779c59bdcee36b692153d0a9877cc62a474002df32e52139f0a0"
+        );
+        let mut command = hex("0087559d927c818f820085818a8641");
+        command.extend(hex(SM2_POINT));
+        command.extend([0x87, 65]);
+        command.extend(hex(SM2_POINT));
+        command.extend([0x89, 2, 0, 16]);
+        let mut response = hex("7c558241");
+        response.extend(hex(SM2_POINT));
+        response.extend([0x85, 16]);
+        response.extend([0x42; 16]);
+        response.extend(OK);
+        let mut script = Script::new(&[(SELECT, OK), (&[], OK)]);
+        script.transcript[1] = (command, response);
+        let agreement = agree_sm2(
+            &profile("3.1.0"),
+            Slot::KeyManagement,
+            Sm2AgreementInput {
+                role: Sm2Role::Responder,
+                peer_static: hex(SM2_POINT),
+                peer_ephemeral: hex(SM2_POINT),
+                user_id: None,
+                peer_id: None,
+                key_len: 16,
+            },
+            piv::Access::None,
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(agreement.key.as_bytes(), &[0x42; 16]);
+        assert_eq!(agreement.ephemeral_public, hex(SM2_POINT));
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn random_transcript_and_version_gate() {
+        // Fixture mirrored from canokey-piv's discovery.rs: GET VERSION, then
+        // chunked GET RESPONSE-style RNG reads (Le = remaining).
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (&[0, 0xfd, 0, 0, 0], &[6, 0, 0, 0x90, 0]),
+            (&[0, 0x84, 0, 0, 3], &[1, 2, 3, 0x90, 0]),
+        ]);
+        let bytes = random(&profile("3.1.0"), 3, &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(bytes.as_bytes(), &[1, 2, 3]);
+        assert!(script.transcript.is_empty());
+
+        // PIV application versions below 6 have no RNG command.
+        let mut script = Script::new(&[(SELECT, OK), (&[0, 0xfd, 0, 0, 0], &[5, 7, 0, 0x90, 0])]);
+        let error = random(&profile("3.1.0"), 1, &mut |c| script.exchange(c)).unwrap_err();
+        match error {
+            PivError::Drive(DriveError::Protocol(error)) => {
+                assert_eq!(error.kind, ErrorKind::UnsupportedFeature)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn logout_clears_pin_verification() {
+        let mut script = Script::new(&[(SELECT, OK), (&[0, 0x20, 0xff, 0x80, 0], OK)]);
+        logout(&profile("3.1.0"), &mut |c| script.exchange(c)).unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn batch_generate_reports_progress_per_key() {
+        // Fixture mirrored from canokey-piv's batch.rs: one AES-192 external
+        // authentication, then one GENERATE per slot.
+        let mut public = hex("7f49438641");
+        public.extend(hex(P256_POINT));
+        public.extend(OK);
+        let mut transcript: Vec<(Vec<u8>, Vec<u8>)> = AES_AUTH
+            .iter()
+            .map(|(c, r)| (c.to_vec(), r.to_vec()))
+            .collect();
+        transcript.push((hex("0047009a05ac03800111"), public.clone()));
+        transcript.push((hex("0047009c05ac03800111"), public));
+        let mut script = Script::new(&[]);
+        script.transcript = transcript.into();
+        let auth = ManagementAuthentication::external(
+            ManagementKey::from_bytes(
+                ManagementKeyAlgorithm::Aes192,
+                &(0u8..24).collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        let mut progress = Vec::new();
+        let keys = generate_keys(
+            &profile("3.1.0"),
+            vec![
+                KeyParameters::new(Slot::Authentication, Algorithm::EccP256),
+                KeyParameters::new(Slot::Signature, Algorithm::EccP256),
+            ],
+            auth,
+            &mut |c| script.exchange(c),
+            &mut |done| progress.push(done),
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(matches!(keys[0], PublicKey::Ec { .. }));
+        assert_eq!(progress, [1, 2]);
         assert!(script.transcript.is_empty());
     }
 }

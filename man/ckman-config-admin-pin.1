@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-config-admin-pin 1  ckman 
+.SH NAME
+ckman\-config\-admin\-pin \- Manage the device Admin PIN
+.SH SYNOPSIS
+\fBckman\-config\-admin\-pin\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage the device Admin PIN
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ckman\-config\-admin\-pin\-change(1)
+Change the device Admin PIN (prompts for the current and new PIN)
+.TP
+ckman\-config\-admin\-pin\-status(1)
+Show the Admin PIN verification state and remaining retries
+.TP
+ckman\-config\-admin\-pin\-help(1)
+Print this message or the help of the given subcommand(s)

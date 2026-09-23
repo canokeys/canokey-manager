@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-derive 1  ckman 
+.SH NAME
+ckman\-piv\-derive \- Derive a raw ECDH/X25519 shared secret with a slot\*(Aqs key (no KDF)
+.SH SYNOPSIS
+\fBckman\-piv\-derive\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPEER_PUBLIC_KEY\fR> <\fIOUTPUT\fR> 
+.SH DESCRIPTION
+Derive a raw ECDH/X25519 shared secret with a slot\*(Aqs key (no KDF)
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot holding an ECC/X25519 key
+.TP
+<\fIPEER_PUBLIC_KEY\fR>
+File containing the peer public key (uncompressed SEC1 point, or 32 bytes for X25519) (\*(Aq\-\*(Aq for stdin)
+.TP
+<\fIOUTPUT\fR>
+File to write the shared secret to (\*(Aq\-\*(Aq for stdout)

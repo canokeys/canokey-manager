@@ -30,8 +30,8 @@ use canokey::{DeviceProfile, Error, ErrorKind, OperationOptions, Phase, SecretBy
 use zeroize::Zeroizing;
 
 pub use canokey::oath::{
-    Access, AccessKey, Algorithm, Calculation, Code, Credential, DefaultSlot, Entry, Format, Kind,
-    Name,
+    Access, AccessKey, Algorithm, Calculation, Code, Credential, DefaultSlot, Entry, Format,
+    HmacSlot, Kind, Name,
 };
 
 /// The conventional TOTP time step, seconds.
@@ -245,6 +245,44 @@ pub fn calculate_all<E>(
         exchange,
     )? {
         Outcome::Calculations(calculations) => Ok(calculations),
+        _ => Err(unexpected()),
+    }
+}
+
+/// The four-byte device serial answered by the OATH applet's vendor GET
+/// SERIAL extension (KeePassXC-style challenge-response clients use it). The
+/// firmware answers before its access-validation gate, so no access key is
+/// accepted; gated by `Capability::OathChallengeResponse` (pinned 3.1
+/// evidence).
+pub fn get_serial<E>(
+    profile: &DeviceProfile,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<[u8; 4], OathError<E>> {
+    match run(profile, Request::GetSerial, None, exchange)? {
+        Outcome::Serial(serial) => Ok(serial),
+        _ => Err(unexpected()),
+    }
+}
+
+/// HMAC-SHA1 challenge-response answered from a PASS HMAC slot (vendor
+/// extension for KeePassXC-style clients). Like [`get_serial`] it bypasses
+/// the OATH access gate, so no access key is accepted; a slot that is not
+/// configured as HMAC-SHA1 fails with `NotFound`. The challenge is zero
+/// through 64 bytes (longer inputs fail before any I/O). The 20-byte response
+/// is credential material: owned and zeroized on drop.
+pub fn challenge_response_hmac<E>(
+    profile: &DeviceProfile,
+    slot: HmacSlot,
+    challenge: Vec<u8>,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, OathError<E>> {
+    match run(
+        profile,
+        Request::ChallengeResponseHmac { slot, challenge },
+        None,
+        exchange,
+    )? {
+        Outcome::ChallengeResponse(response) => Ok(response),
         _ => Err(unexpected()),
     }
 }
@@ -574,6 +612,76 @@ mod tests {
         assert!(matches!(calculations[1].code, Code::TouchRequired));
         assert_eq!(calculations[1].name.as_ref().unwrap().as_bytes(), b"b");
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn vendor_get_serial_and_challenge_response_transcripts() {
+        // The vendor extensions are answered before the access-validation
+        // gate: no VALIDATE even when the applet is locked (fixtures mirrored
+        // from canokey-oath's operations.rs).
+        let mut script = Script::new(&[
+            (SELECT, SELECTION_LOCKED),
+            (&[0, 1, 0x10, 0], &[1, 2, 3, 4, 0x90, 0]),
+        ]);
+        let serial = get_serial(&profile(b"3.1.0"), &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(serial, [1, 2, 3, 4]);
+        assert!(script.transcript.is_empty());
+
+        const HMAC_RESPONSE: &[u8] = &[
+            7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0x90, 0,
+        ];
+        let mut script = Script::new(&[
+            (SELECT, SELECTION_OPEN),
+            (b"\0\x01\x30\0\x09challenge", HMAC_RESPONSE),
+        ]);
+        let response = challenge_response_hmac(
+            &profile(b"3.1.0"),
+            HmacSlot::Short,
+            b"challenge".to_vec(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(response.as_bytes(), &[7u8; 20]);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn vendor_extensions_require_pinned_31_evidence() {
+        // Audited 1.5.2/2.0.1/3.0.x firmware sources lack the vendor command
+        // dispatch; the gate must fire at construction, before any I/O.
+        for firmware in [&b"2.0.1"[..], b"3.0.3"] {
+            let mut calls = 0;
+            let error = get_serial(&profile(firmware), &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!("capability gate must reject before any exchange")
+            })
+            .unwrap_err();
+            match error {
+                OathError::Drive(DriveError::Protocol(error)) => {
+                    assert_eq!(error.kind, ErrorKind::UnsupportedFeature)
+                }
+                other => panic!("unexpected error: {other}"),
+            }
+            assert_eq!(calls, 0);
+        }
+        let mut calls = 0;
+        let error = challenge_response_hmac(
+            &profile(b"3.0.3"),
+            HmacSlot::Long,
+            vec![1],
+            &mut |_| -> io::Result<Vec<u8>> {
+                calls += 1;
+                unreachable!("capability gate must reject before any exchange")
+            },
+        )
+        .unwrap_err();
+        match error {
+            OathError::Drive(DriveError::Protocol(error)) => {
+                assert_eq!(error.kind, ErrorKind::UnsupportedFeature)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert_eq!(calls, 0);
     }
 
     /// Fixed-challenge access for deterministic transcripts; production code

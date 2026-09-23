@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-sign 1  ckman 
+.SH NAME
+ckman\-piv\-sign \- Sign data with a slot\*(Aqs key (hash with \-\-hash, or pass the exact operation input with \-\-raw)
+.SH SYNOPSIS
+\fBckman\-piv\-sign\fR [\fB\-\-hash\fR] [\fB\-\-raw\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIINPUT\fR> <\fIOUTPUT\fR> 
+.SH DESCRIPTION
+Sign data with a slot\*(Aqs key (hash with \-\-hash, or pass the exact operation input with \-\-raw)
+.SH OPTIONS
+.TP
+\fB\-\-hash\fR \fI<HASH>\fR
+Hash algorithm for the message (RSA/ECC; default SHA\-256). SM2, Ed25519 and ML\-DSA\-65 sign the message directly
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+sha256
+.IP \(bu 2
+sha384
+.IP \(bu 2
+sha512
+.RE
+.TP
+\fB\-\-raw\fR
+Input is already the exact operation input: a modulus\-sized encoded block (RSA), a digest (ECC/SM2), or the message (Ed25519)
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot
+.TP
+<\fIINPUT\fR>
+File containing the message (or, with \-\-raw, the exact operation input) (\*(Aq\-\*(Aq for stdin)
+.TP
+<\fIOUTPUT\fR>
+File to write the signature to (\*(Aq\-\*(Aq for stdout). ECDSA signatures are DER\-encoded; RSA/Ed25519 are raw bytes

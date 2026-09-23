@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-decrypt 1  ckman 
+.SH NAME
+ckman\-piv\-decrypt \- Perform the raw RSA private operation on a ciphertext (the output is still padded; unpadding is the caller\*(Aqs job)
+.SH SYNOPSIS
+\fBckman\-piv\-decrypt\fR [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIINPUT\fR> <\fIOUTPUT\fR> 
+.SH DESCRIPTION
+Perform the raw RSA private operation on a ciphertext (the output is still padded; unpadding is the caller\*(Aqs job)
+.SH OPTIONS
+.TP
+\fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
+PIN code (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLOT\fR>
+PIV slot holding an RSA key
+.TP
+<\fIINPUT\fR>
+File containing the modulus\-sized ciphertext (\*(Aq\-\*(Aq for stdin)
+.TP
+<\fIOUTPUT\fR>
+File to write the raw plaintext block to (\*(Aq\-\*(Aq for stdout)

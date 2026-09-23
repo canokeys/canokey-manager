@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-oath-challenge-response 1  ckman 
+.SH NAME
+ckman\-oath\-challenge\-response \- Compute an HMAC\-SHA1 challenge\-response from a PASS slot
+.SH SYNOPSIS
+\fBckman\-oath\-challenge\-response\fR [\fB\-t\fR|\fB\-\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fICHALLENGE\fR> 
+.SH DESCRIPTION
+Compute an HMAC\-SHA1 challenge\-response from a PASS slot.
+.PP
+The slot must be configured as HMAC\-SHA1 (see `config pass set`).
+.SH OPTIONS
+.TP
+\fB\-t\fR, \fB\-\-text\fR
+Treat the challenge as a plain UTF\-8 string instead of hex
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISLOT\fR>
+PASS HMAC\-SHA1 slot to answer from
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+short
+.IP \(bu 2
+long
+.RE
+.TP
+<\fICHALLENGE\fR>
+The challenge, hex\-encoded (a plain string with \-\-text)
