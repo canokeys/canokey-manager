@@ -40,16 +40,16 @@ if [[ "$FEATURE_AVAILABLE" == true ]]; then
 fi
 
 fido_blobs_roundtrip() {
-  # A complete serialized largeBlobs array: the leftmost 16 bytes of the
-  # SHA-256 of the CBOR payload, followed by the payload (an empty CBOR
-  # array).
+  # A complete serialized largeBlobs array: the CBOR payload (an empty
+  # array) followed by its trailer, the leftmost 16 bytes of the
+  # SHA-256 of the payload.
   python3 -c '
 import hashlib
 import sys
 
 payload = b"\x80"
 with open(sys.argv[1], "wb") as output:
-    output.write(hashlib.sha256(payload).digest()[:16] + payload)
+    output.write(payload + hashlib.sha256(payload).digest()[:16])
 ' "$CANOKEY_USBIP_WORK_DIR/blobs.bin"
   "${CKMAN[@]}" fido blobs write "$CANOKEY_USBIP_WORK_DIR/blobs.bin" \
     --pin "$FIDO_PIN" \
