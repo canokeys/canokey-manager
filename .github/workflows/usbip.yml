@@ -226,6 +226,7 @@ jobs:
           ./target/debug/ckman piv --help >/dev/null
           ./target/debug/ckman oath --help >/dev/null
           ./target/debug/ckman openpgp --help >/dev/null
+          ./target/debug/ckman completions bash >/dev/null
           echo "ckman integration command syntax verified."
 
       - name: Configure PC/SC for the noninteractive runner
@@ -358,6 +359,108 @@ jobs:
 
           if ((run_status != 0)); then
             echo "ERROR: PIV lifecycle failed on firmware ${CANOKEY_FIRMWARE_ID} (exit ${run_status})"
+            exit "$run_status"
+          fi
+
+      # The destructive OpenPGP/OATH/FIDO lifecycles follow the same contract
+      # as the PIV one: each runs only on firmware whose matrix entry supports
+      # it, against the disposable virtual device.
+      - name: Run destructive OpenPGP lifecycle against a virtual CanoKey
+        shell: bash
+        env:
+          CANOKEY_USBIP_DEBUG: "1"
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          status="$(tests/device/firmware.sh status "$CANOKEY_FIRMWARE_ID" openpgp-lifecycle)"
+          if [[ "$status" != "supported" ]]; then
+            echo "Skipping the OpenPGP lifecycle on firmware ${CANOKEY_FIRMWARE_ID} (matrix: ${status})."
+            exit 0
+          fi
+          set +e
+          CKMAN_DESTRUCTIVE=1 external/canokey-usbip/compat/run \
+            --core-ref "$CANOKEY_CORE_REF" \
+            --timeout 240 \
+            --require usb \
+            --require ccid \
+            --require pcsc \
+            --test-command "./tests/device/openpgp-lifecycle.sh" \
+            --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+          run_status=$?
+          set -e
+
+          test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
+          test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
+          [[ ! -f "$test_stdout" ]] || cat "$test_stdout"
+          [[ ! -s "$test_stderr" ]] || cat "$test_stderr" >&2
+
+          if ((run_status != 0)); then
+            echo "ERROR: OpenPGP lifecycle failed on firmware ${CANOKEY_FIRMWARE_ID} (exit ${run_status})"
+            exit "$run_status"
+          fi
+
+      - name: Run destructive OATH lifecycle against a virtual CanoKey
+        shell: bash
+        env:
+          CANOKEY_USBIP_DEBUG: "1"
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          status="$(tests/device/firmware.sh status "$CANOKEY_FIRMWARE_ID" oath-lifecycle)"
+          if [[ "$status" != "supported" ]]; then
+            echo "Skipping the OATH lifecycle on firmware ${CANOKEY_FIRMWARE_ID} (matrix: ${status})."
+            exit 0
+          fi
+          set +e
+          CKMAN_DESTRUCTIVE=1 external/canokey-usbip/compat/run \
+            --core-ref "$CANOKEY_CORE_REF" \
+            --timeout 240 \
+            --require usb \
+            --require ccid \
+            --require pcsc \
+            --test-command "./tests/device/oath-lifecycle.sh" \
+            --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+          run_status=$?
+          set -e
+
+          test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
+          test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
+          [[ ! -f "$test_stdout" ]] || cat "$test_stdout"
+          [[ ! -s "$test_stderr" ]] || cat "$test_stderr" >&2
+
+          if ((run_status != 0)); then
+            echo "ERROR: OATH lifecycle failed on firmware ${CANOKEY_FIRMWARE_ID} (exit ${run_status})"
+            exit "$run_status"
+          fi
+
+      - name: Run destructive FIDO lifecycle against a virtual CanoKey
+        shell: bash
+        env:
+          CANOKEY_USBIP_DEBUG: "1"
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          status="$(tests/device/firmware.sh status "$CANOKEY_FIRMWARE_ID" fido-lifecycle)"
+          if [[ "$status" != "supported" ]]; then
+            echo "Skipping the FIDO lifecycle on firmware ${CANOKEY_FIRMWARE_ID} (matrix: ${status})."
+            exit 0
+          fi
+          set +e
+          CKMAN_DESTRUCTIVE=1 external/canokey-usbip/compat/run \
+            --core-ref "$CANOKEY_CORE_REF" \
+            --timeout 240 \
+            --require usb \
+            --require ccid \
+            --require pcsc \
+            --test-command "./tests/device/fido-lifecycle.sh" \
+            --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+          run_status=$?
+          set -e
+
+          test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
+          test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
+          [[ ! -f "$test_stdout" ]] || cat "$test_stdout"
+          [[ ! -s "$test_stderr" ]] || cat "$test_stderr" >&2
+
+          if ((run_status != 0)); then
+            echo "ERROR: FIDO lifecycle failed on firmware ${CANOKEY_FIRMWARE_ID} (exit ${run_status})"
             exit "$run_status"
           fi
 

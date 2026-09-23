@@ -34,6 +34,12 @@ if [[ "$reported_firmware" != "$CANOKEY_FIRMWARE_VERSION_NORMALIZED" ]]; then
 fi
 echo "CanoKey firmware identity verified: ${reported_firmware}."
 
+section "ckman info: chip ID"
+# The vendor chip-ID command exists on newer firmware; older firmware prints
+# <unavailable> instead of failing the read-only info output. Either way the
+# line must be present.
+grep -Fq "Chip ID:" <<<"$device_info"
+
 section "ckman list"
 list_output="$("${CKMAN[@]}" list)"
 printf '%s\n' "$list_output"
@@ -46,6 +52,15 @@ grep -Fxq "$reported_serial" <<<"$serials_output"
 
 section "ckman config info"
 "${CKMAN[@]}" config info
+
+section "ckman config admin-pin status"
+# Read-only verification-state query (empty VERIFY); every catalog firmware
+# answers it. Changing the Admin PIN is prompt-only by design (no argv
+# secret) and therefore cannot run on a TTY-less runner.
+run_versioned_feature \
+  "ckman config admin-pin status" \
+  "admin-pin-status" \
+  "${CKMAN[@]}" config admin-pin status
 
 section "ckman oath info"
 "${CKMAN[@]}" oath info

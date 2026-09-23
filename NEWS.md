@@ -35,6 +35,13 @@
   generates into several slots under one management authentication with
   per-slot progress. `piv random <n>` reads the device RNG (PIV 6.0+),
   `piv logout` clears the PIN-verified state.
+- Configuration: `config pass set` accepts `--admin-pin` for non-interactive
+  use.
+- Device-test harness: the usbip matrix now also runs
+  `openpgp-lifecycle.sh` (2.0+), `oath-lifecycle.sh` (3.1) and
+  `fido-lifecycle.sh` (2.0+), and `piv-lifecycle.sh` covers the raw
+  private-key operations, batch generation, RNG and logout; `smoke.sh` checks
+  the chip-ID line and `config admin-pin status`.
 
 ## ckman 0.1.0 (2026-09-20)
 

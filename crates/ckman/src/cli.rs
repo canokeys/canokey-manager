@@ -156,6 +156,18 @@ mod tests {
             &[
                 "ckman", "config", "pass", "set", "long", "hmac", "--key", "00",
             ][..],
+            &[
+                "ckman",
+                "config",
+                "pass",
+                "set",
+                "short",
+                "hmac",
+                "--key",
+                "00",
+                "--admin-pin",
+                "123456",
+            ][..],
             &["ckman", "config", "ndef", "read"][..],
             &["ckman", "config", "ndef", "write", "-"][..],
             &["ckman", "config", "keyboard", "layout"][..],

@@ -4,7 +4,7 @@
 .SH NAME
 ckman\-config\-pass\-set \- Configure a PASS slot
 .SH SYNOPSIS
-\fBckman\-config\-pass\-set\fR [\fB\-\-key\fR] [\fB\-\-enter\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIKIND\fR> 
+\fBckman\-config\-pass\-set\fR [\fB\-\-key\fR] [\fB\-\-enter\fR] [\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIKIND\fR> 
 .SH DESCRIPTION
 Configure a PASS slot
 .SH OPTIONS
@@ -14,6 +14,9 @@ HMAC\-SHA1 key as 40 hex characters (prompted when omitted)
 .TP
 \fB\-\-enter\fR
 Append Return after typing (static passwords only)
+.TP
+\fB\-\-admin\-pin\fR \fI<PIN>\fR
+CanoKey Admin PIN (prompted when omitted)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

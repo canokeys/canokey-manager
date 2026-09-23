@@ -27,6 +27,21 @@
 3.1	oath-sha512	supported
 3.1	oath-set-default-slots	supported
 
+# OATH vendor extensions (KeePassXC-style challenge-response): pinned 3.1
+# evidence only (Capability::OathChallengeResponse).
+1.3	oath-challenge-response	unsupported
+1.5	oath-challenge-response	unsupported
+1.6	oath-challenge-response	unsupported
+2.0	oath-challenge-response	unsupported
+3.0	oath-challenge-response	unsupported
+3.1	oath-challenge-response	supported
+1.3	oath-lifecycle	unsupported
+1.5	oath-lifecycle	unsupported
+1.6	oath-lifecycle	unsupported
+2.0	oath-lifecycle	unsupported
+3.0	oath-lifecycle	unsupported
+3.1	oath-lifecycle	supported
+
 # PIV
 1.3	piv-metadata	unsupported
 1.3	piv-set-retries	unsupported
@@ -47,10 +62,52 @@
 3.1	piv-set-retries	supported
 3.1	piv-lifecycle	supported
 
+# PIV private-key operations gated beyond the lifecycle's 2.0 baseline:
+# ML-KEM-768 decapsulation and SM2 agreement are 3.1 evidence; the RNG
+# command needs PIV application version 6.0+, and catalog firmware reports
+# 5.7.0, so piv-rng is unsupported on every prefix.
+1.3	piv-ml-kem	unsupported
+1.5	piv-ml-kem	unsupported
+1.6	piv-ml-kem	unsupported
+2.0	piv-ml-kem	unsupported
+3.0	piv-ml-kem	unsupported
+3.1	piv-ml-kem	supported
+1.3	piv-sm2-agree	unsupported
+1.5	piv-sm2-agree	unsupported
+1.6	piv-sm2-agree	unsupported
+2.0	piv-sm2-agree	unsupported
+3.0	piv-sm2-agree	unsupported
+3.1	piv-sm2-agree	supported
+1.3	piv-rng	unsupported
+1.5	piv-rng	unsupported
+1.6	piv-rng	unsupported
+2.0	piv-rng	unsupported
+3.0	piv-rng	unsupported
+3.1	piv-rng	unsupported
+
+# Admin
+# Empty-VERIFY status query; the Admin VERIFY dialect exists on every
+# cataloged firmware.
+1.3	admin-pin-status	supported
+1.5	admin-pin-status	supported
+1.6	admin-pin-status	supported
+2.0	admin-pin-status	supported
+3.0	admin-pin-status	supported
+3.1	admin-pin-status	supported
+
 # OpenPGP
 1.3	openpgp-touch	unsupported
 1.5	openpgp-touch	supported
 3.1	openpgp-set-retries	supported
+
+# OpenPGP lifecycle: cardholder data, touch cache, key generate/export.
+# Baseline 2.0, matching the piv-lifecycle gate.
+1.3	openpgp-lifecycle	unsupported
+1.5	openpgp-lifecycle	unsupported
+1.6	openpgp-lifecycle	unsupported
+2.0	openpgp-lifecycle	supported
+3.0	openpgp-lifecycle	supported
+3.1	openpgp-lifecycle	supported
 
 # FIDO
 1.3	fido-pcsc	unsupported
@@ -59,5 +116,22 @@
 2.0	fido-pcsc	supported
 3.0	fido-pcsc	supported
 3.1	fido-pcsc	supported
+1.3	fido-credential-management	unsupported
+1.5	fido-credential-management	unsupported
+1.6	fido-credential-management	unsupported
 2.0	fido-credential-management	supported
+3.0	fido-credential-management	supported
+3.1	fido-credential-management	supported
+1.3	fido-large-blobs	unsupported
+1.5	fido-large-blobs	unsupported
+1.6	fido-large-blobs	unsupported
+2.0	fido-large-blobs	unsupported
+3.0	fido-large-blobs	unsupported
+3.1	fido-large-blobs	supported
+1.3	fido-lifecycle	unsupported
+1.5	fido-lifecycle	unsupported
+1.6	fido-lifecycle	unsupported
+2.0	fido-lifecycle	supported
+3.0	fido-lifecycle	supported
+3.1	fido-lifecycle	supported
 3.1	fido-authenticator-config	supported

@@ -120,6 +120,9 @@ pub enum PassCommand {
         /// Append Return after typing (static passwords only).
         #[arg(long)]
         enter: bool,
+        /// CanoKey Admin PIN (prompted when omitted).
+        #[arg(long, value_name = "PIN", value_parser = crate::commands::secret_arg)]
+        admin_pin: Option<crate::commands::SecretString>,
     },
 }
 
@@ -476,6 +479,7 @@ fn pass(device: Option<u32>, reader: Option<&str>, command: &PassCommand) -> Cli
             kind,
             key,
             enter,
+            admin_pin,
         } => {
             // Prompt for secrets once; the config is rebuilt per attempt
             // because the operation consumes it (it is not Clone).
@@ -520,7 +524,13 @@ fn pass(device: Option<u32>, reader: Option<&str>, command: &PassCommand) -> Cli
                 PassSlotArg::Short => admin::PassSlotId::Short,
                 PassSlotArg::Long => admin::PassSlotId::Long,
             };
-            with_admin_pin_retry(None, |pin| {
+            let admin_pin = admin_pin
+                .as_ref()
+                .map(|pin| {
+                    admin::Pin::from_bytes(pin.as_bytes()).map_err(|error| format!("{error}"))
+                })
+                .transpose()?;
+            with_admin_pin_retry(admin_pin, |pin| {
                 admin::set_pass_slot(&target.profile, slot, build(&secret), pin, &mut |command| {
                     target.connection.exchange(command)
                 })

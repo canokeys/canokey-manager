@@ -95,6 +95,124 @@ echo -n "ckman-object-test" > "$CANOKEY_USBIP_WORK_DIR/object.bin"
 "${CKMAN[@]}" piv objects export 5fc10a "$CANOKEY_USBIP_WORK_DIR/object-out.bin"
 cmp "$CANOKEY_USBIP_WORK_DIR/object.bin" "$CANOKEY_USBIP_WORK_DIR/object-out.bin"
 
+section "ckman piv sign"
+echo -n "ckman-sign-test" > "$CANOKEY_USBIP_WORK_DIR/sign-message.bin"
+"${CKMAN[@]}" piv sign 9a \
+  "$CANOKEY_USBIP_WORK_DIR/sign-message.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/sign-signature.bin" \
+  --pin "$PIV_DEFAULT_PIN"
+openssl dgst -sha256 \
+  -verify "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem" \
+  -signature "$CANOKEY_USBIP_WORK_DIR/sign-signature.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/sign-message.bin"
+
+section "ckman piv keys generate-batch"
+"${CKMAN[@]}" piv keys generate-batch \
+  --slots 9d,9e \
+  --algorithm ecc-p256 \
+  --output-dir "$CANOKEY_USBIP_WORK_DIR" \
+  --management-key "$PIV_MANAGEMENT_KEY"
+openssl pkey -pubin -in "$CANOKEY_USBIP_WORK_DIR/9d.pem" -noout -text >/dev/null
+openssl pkey -pubin -in "$CANOKEY_USBIP_WORK_DIR/9e.pem" -noout -text >/dev/null
+
+section "ckman piv derive"
+# Both-sides ECDH: the card's raw secret must match the host-side derivation.
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+  -out "$CANOKEY_USBIP_WORK_DIR/derive-peer-private.pem" 2>/dev/null
+# The raw uncompressed SEC1 point is the tail of the SPKI DER encoding.
+openssl pkey -in "$CANOKEY_USBIP_WORK_DIR/derive-peer-private.pem" \
+  -pubout -outform DER 2>/dev/null \
+  | tail -c 65 > "$CANOKEY_USBIP_WORK_DIR/derive-peer-public.bin"
+"${CKMAN[@]}" piv derive 9d \
+  "$CANOKEY_USBIP_WORK_DIR/derive-peer-public.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/derive-secret-card.bin" \
+  --pin "$PIV_DEFAULT_PIN"
+openssl pkeyutl -derive \
+  -inkey "$CANOKEY_USBIP_WORK_DIR/derive-peer-private.pem" \
+  -peerkey "$CANOKEY_USBIP_WORK_DIR/9d.pem" -pubin \
+  -out "$CANOKEY_USBIP_WORK_DIR/derive-secret-host.bin"
+cmp "$CANOKEY_USBIP_WORK_DIR/derive-secret-card.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/derive-secret-host.bin"
+
+section "ckman piv decrypt"
+# Raw RSA private operation: the padded block round-trips, message last.
+"${CKMAN[@]}" piv keys generate \
+  --algorithm rsa2048 \
+  --management-key "$PIV_MANAGEMENT_KEY" \
+  82 "$CANOKEY_USBIP_WORK_DIR/piv-rsa-public.pem"
+echo -n "ckman-decrypt-test" > "$CANOKEY_USBIP_WORK_DIR/decrypt-message.bin"
+openssl pkeyutl -encrypt \
+  -pubin -inkey "$CANOKEY_USBIP_WORK_DIR/piv-rsa-public.pem" \
+  -in "$CANOKEY_USBIP_WORK_DIR/decrypt-message.bin" \
+  -out "$CANOKEY_USBIP_WORK_DIR/decrypt-cipher.bin"
+"${CKMAN[@]}" piv decrypt 82 \
+  "$CANOKEY_USBIP_WORK_DIR/decrypt-cipher.bin" \
+  "$CANOKEY_USBIP_WORK_DIR/decrypt-padded.bin" \
+  --pin "$PIV_DEFAULT_PIN"
+message_bytes="$(wc -c < "$CANOKEY_USBIP_WORK_DIR/decrypt-message.bin")"
+cmp \
+  <(tail -c "$message_bytes" "$CANOKEY_USBIP_WORK_DIR/decrypt-padded.bin") \
+  "$CANOKEY_USBIP_WORK_DIR/decrypt-message.bin"
+
+# ML-KEM-768 decapsulation and SM2 key agreement exist on 3.1 only.
+piv_decapsulate_roundtrip() {
+  "${CKMAN[@]}" piv keys generate \
+    --algorithm ml-kem768 \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    83 "$CANOKEY_USBIP_WORK_DIR/piv-kem-public.pem"
+  # ML-KEM implicit rejection yields a 32-byte secret even for an invalid
+  # ciphertext; this checks the round trip, not sender authenticity.
+  head -c 1088 /dev/zero > "$CANOKEY_USBIP_WORK_DIR/kem-ciphertext.bin"
+  "${CKMAN[@]}" piv decapsulate 83 \
+    "$CANOKEY_USBIP_WORK_DIR/kem-ciphertext.bin" \
+    "$CANOKEY_USBIP_WORK_DIR/kem-secret.bin" \
+    --pin "$PIV_DEFAULT_PIN"
+  [[ "$(wc -c < "$CANOKEY_USBIP_WORK_DIR/kem-secret.bin")" -eq 32 ]]
+}
+run_versioned_feature \
+  "ckman piv decapsulate" \
+  "piv-ml-kem" \
+  piv_decapsulate_roundtrip
+
+piv_agree_sm2_roundtrip() {
+  "${CKMAN[@]}" piv keys generate \
+    --algorithm sm2 \
+    --management-key "$PIV_MANAGEMENT_KEY" \
+    84 "$CANOKEY_USBIP_WORK_DIR/piv-sm2-public.pem"
+  # Host-side SM2 peer: static and ephemeral points are the raw 65-byte
+  # uncompressed SEC1 tail of the SPKI DER encoding.
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:SM2 \
+    -out "$CANOKEY_USBIP_WORK_DIR/sm2-peer-private.pem" 2>/dev/null
+  openssl pkey -in "$CANOKEY_USBIP_WORK_DIR/sm2-peer-private.pem" \
+    -pubout -outform DER 2>/dev/null \
+    | tail -c 65 > "$CANOKEY_USBIP_WORK_DIR/sm2-peer-public.bin"
+  "${CKMAN[@]}" piv agree-sm2 84 \
+    --peer-static "$CANOKEY_USBIP_WORK_DIR/sm2-peer-public.bin" \
+    --peer-ephemeral "$CANOKEY_USBIP_WORK_DIR/sm2-peer-public.bin" \
+    "$CANOKEY_USBIP_WORK_DIR/sm2-session-key.bin" \
+    --pin "$PIV_DEFAULT_PIN"
+  [[ "$(wc -c < "$CANOKEY_USBIP_WORK_DIR/sm2-session-key.bin")" -eq 16 ]]
+}
+run_versioned_feature \
+  "ckman piv agree-sm2" \
+  "piv-sm2-agree" \
+  piv_agree_sm2_roundtrip
+
+section "ckman piv logout"
+"${CKMAN[@]}" piv logout
+
+# The RNG command requires PIV application version 6.0+; the catalog firmware
+# reports 5.7.0, so the matrix marks this unsupported everywhere for now.
+piv_random_check() {
+  local output
+  output="$("${CKMAN[@]}" piv random 32)"
+  [[ "$output" =~ ^[0-9a-f]{64}$ ]]
+}
+run_versioned_feature \
+  "ckman piv random" \
+  "piv-rng" \
+  piv_random_check
+
 section "ckman piv access set-retries"
 run_versioned_feature \
   "ckman piv access set-retries" \
