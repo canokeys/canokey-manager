@@ -129,7 +129,7 @@ openssl pkey -in "$CANOKEY_USBIP_WORK_DIR/derive-peer-private.pem" \
   --pin "$PIV_DEFAULT_PIN"
 openssl pkeyutl -derive \
   -inkey "$CANOKEY_USBIP_WORK_DIR/derive-peer-private.pem" \
-  -peerkey "$CANOKEY_USBIP_WORK_DIR/9d.pem" -pubin \
+  -peerkey "$CANOKEY_USBIP_WORK_DIR/9d.pem" \
   -out "$CANOKEY_USBIP_WORK_DIR/derive-secret-host.bin"
 cmp "$CANOKEY_USBIP_WORK_DIR/derive-secret-card.bin" \
   "$CANOKEY_USBIP_WORK_DIR/derive-secret-host.bin"
