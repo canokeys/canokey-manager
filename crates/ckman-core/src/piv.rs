@@ -194,6 +194,28 @@ pub fn pin_managed_key<E>(
     )
 }
 
+/// Finish explicitly requested PIN protection before recovering the stored key.
+/// Authenticates the stored management key before blocking any remaining PUK
+/// retries. Ordinary key resolution must use [`pin_managed_key`] instead.
+pub fn complete_pin_managed_key<E>(
+    profile: &DeviceProfile,
+    pin: Pin,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    let replacement = random_puk_replacement()?;
+    run(
+        piv::protection::pin_managed(profile, Some(replacement), piv::Access::Pin(pin), options()),
+        exchange,
+    )
+}
+
+fn random_puk_replacement() -> Result<SecretBytes, getrandom::Error> {
+    // The SDK maps eight random bytes to the PIV eight-digit PUK format.
+    let mut bytes = Zeroizing::new([0; 8]);
+    getrandom::fill(bytes.as_mut())?;
+    Ok(SecretBytes::new(bytes.to_vec()))
+}
+
 /// Perform one standalone management-key authentication (selects PIV first).
 pub fn authenticate<E>(
     profile: &DeviceProfile,
@@ -947,7 +969,7 @@ pub struct ManagementKeyUpdate {
     pub algorithm: ManagementKeyAlgorithm,
     /// Touch requirement (AES-192 only).
     pub touch: ManagementTouchPolicy,
-    /// Store the key on-device, protected by PIN.
+    /// Store the key on-device, protected by PIN, and block PUK recovery.
     pub protect: bool,
     /// PIN, required when `protect` is set or an old stored key is cleared.
     pub pin: Option<Pin>,
@@ -960,6 +982,8 @@ pub struct ManagementKeyUpdate {
 /// the stored-key flag in ADMIN DATA, and stores/clears the key in PRINTED.
 /// Follow-up writes authenticate externally with the new key within the same
 /// connection. The PIN is verified adjacent to the protected-object writes.
+/// Protection also blocks the PUK and verifies its live retry count before
+/// returning, so PUK recovery cannot bypass the protected management key.
 pub fn set_management_key_synced<E>(
     profile: &DeviceProfile,
     update: ManagementKeyUpdate,
@@ -975,6 +999,11 @@ pub fn set_management_key_synced<E>(
     } = update;
     let new_key_bytes = &new_key_bytes;
     let new_key = ManagementKey::from_bytes(algorithm, new_key_bytes).map_err(DriveError::from)?;
+    let replacement = if protect {
+        Some(random_puk_replacement()?)
+    } else {
+        None
+    };
     let pivman = read_pivman_data(profile, exchange)?;
     // Ensure protected-data access before committing the key replacement.
     let protected = if protect || pivman.has_stored_key() {
@@ -996,6 +1025,9 @@ pub fn set_management_key_synced<E>(
         updated.salt = None;
     }
     updated.set_stored_key(protect);
+    if protect {
+        updated.set_puk_blocked(true);
+    }
     if updated.to_value() != old_value {
         let auth = external_auth(new_key.clone());
         write_object(
@@ -1021,11 +1053,22 @@ pub fn set_management_key_synced<E>(
             pivman_protected_object_id(),
             SecretBytes::new(protected.to_value()),
             piv::Access::PinAndManagement {
-                pin,
+                pin: pin.clone(),
                 management: auth,
             },
             exchange,
         )?;
+        if let Some(replacement) = replacement {
+            run(
+                piv::protection::pin_managed(
+                    profile,
+                    Some(replacement),
+                    piv::Access::Pin(pin),
+                    options(),
+                ),
+                exchange,
+            )?;
+        }
     }
     Ok(())
 }
@@ -1588,10 +1631,10 @@ mod tests {
         let mut set_key = hex("00ffffff1b0a9b18");
         set_key.extend(new_key);
         transcript.push((set_key, OK.to_vec()));
-        // 4. write ADMIN DATA (flags: stored key) under the new key.
+        // 4. write ADMIN DATA (flags: stored key and PUK blocking).
         transcript.push((SELECT.to_vec(), OK.to_vec()));
         transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
-        transcript.push((hex("00db3fff0c5c035fff0053058003810102"), OK.to_vec()));
+        transcript.push((hex("00db3fff0c5c035fff0053058003810103"), OK.to_vec()));
         // 5. write PRINTED under the new key, PIN verified adjacent.
         transcript.push((SELECT.to_vec(), OK.to_vec()));
         transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
@@ -1599,6 +1642,17 @@ mod tests {
         let mut printed = hex("00db3fff235c035fc109531c881a8918");
         printed.extend(new_key);
         transcript.push((printed, OK.to_vec()));
+        // 6. Authenticate the stored key and confirm an already blocked PUK.
+        transcript.push((SELECT.to_vec(), OK.to_vec()));
+        transcript.push((VERIFY_123456.to_vec(), OK.to_vec()));
+        transcript.push((hex("00cb3fff055c035fff0000"), hex("530580038101039000")));
+        transcript.push((hex("00f7008100"), hex("060203009000")));
+        let mut stored = hex("531c881a8918");
+        stored.extend(new_key);
+        stored.extend([0x90, 0]);
+        transcript.push((hex("00cb3fff055c035fc10900"), stored));
+        transcript.push((hex("00f7009b00"), hex("01010a9000")));
+        transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
         let mut script = Script {
             transcript: transcript.into(),
         };
@@ -1616,6 +1670,58 @@ mod tests {
         )
         .unwrap();
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn explicit_protection_resumes_after_stored_key_was_written() {
+        // Protection flags and PRINTED are durable, but the PUK still has
+        // retries. Authenticate the stored key before the explicit block.
+        let key: Vec<u8> = (0..24).collect();
+        let mut stored = hex("531c881a8918");
+        stored.extend(&key);
+        stored.extend([0x90, 0x00]);
+        let mut transcript = vec![
+            (SELECT.to_vec(), OK.to_vec()),
+            (VERIFY_123456.to_vec(), OK.to_vec()),
+            (hex("00cb3fff055c035fff0000"), hex("530580038101039000")),
+            (hex("00f7008100"), hex("060203019000")),
+            (hex("00cb3fff055c035fc10900"), stored),
+            (hex("00f7009b00"), hex("01010a9000")),
+        ];
+        // pin_managed keeps the existing selection for authentication.
+        transcript.extend(
+            AES_AUTH
+                .iter()
+                .skip(1)
+                .map(|(c, r)| (c.to_vec(), r.to_vec())),
+        );
+        let mut script = Script {
+            transcript: transcript.into(),
+        };
+        let mut blocked = false;
+        let result = complete_pin_managed_key(
+            &profile("3.1.0"),
+            Pin::from_bytes(b"123456").unwrap(),
+            &mut |command| {
+                if !script.transcript.is_empty() {
+                    return script.exchange(command);
+                }
+                if !blocked {
+                    assert_eq!(&command[..5], &hex("0024008110"));
+                    assert_eq!(&command[5..13], b"00000000");
+                    assert_eq!(command.len(), 21);
+                    assert!(command[13..].iter().all(u8::is_ascii_digit));
+                    blocked = true;
+                    Ok(hex("63c0"))
+                } else {
+                    assert_eq!(command, &hex("00f7008100"));
+                    Ok(hex("060203009000"))
+                }
+            },
+        )
+        .unwrap();
+        assert!(blocked);
+        assert_eq!(result.as_bytes(), key);
     }
 
     // --- private-key operations, RNG, batch (libcanokey fixtures) -------------

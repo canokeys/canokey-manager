@@ -135,3 +135,25 @@
 3.0	fido-lifecycle	supported
 3.1	fido-lifecycle	supported
 3.1	fido-authenticator-config	supported
+
+# Independent Rust firmware (CCID only in this acceptance suite).
+4.0.0	admin-pin-status	supported
+4.0.0	oath-rename	supported
+4.0.0	oath-sha512	supported
+4.0.0	oath-set-default-slots	supported
+4.0.0	oath-challenge-response	supported
+4.0.0	oath-lifecycle	supported
+4.0.0	piv-metadata	supported
+4.0.0	piv-set-retries	supported
+4.0.0	piv-lifecycle	supported
+4.0.0	piv-ml-kem	supported
+4.0.0	piv-sm2-agree	supported
+4.0.0	piv-rng	supported
+4.0.0	openpgp-touch	supported
+4.0.0	openpgp-set-retries	supported
+4.0.0	openpgp-lifecycle	supported
+4.0.0	fido-pcsc	supported
+4.0.0	fido-credential-management	supported
+4.0.0	fido-large-blobs	supported
+4.0.0	fido-lifecycle	supported
+4.0.0	fido-authenticator-config	supported

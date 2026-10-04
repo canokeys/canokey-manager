@@ -196,7 +196,7 @@ pub enum AccessCommand {
         /// Management key algorithm (default: the card's current algorithm).
         #[arg(short, long, value_enum)]
         algorithm: Option<MgmtAlgorithmArg>,
-        /// Store the new management key on the CanoKey, protected by PIN.
+        /// Store the new management key protected by PIN and block PUK recovery.
         #[arg(short = 'p', long)]
         protect: bool,
         /// Generate a random management key.
@@ -1099,6 +1099,15 @@ impl PivSession {
         management_key: Option<&str>,
         pin: Option<&str>,
     ) -> CliResult<ResolvedManagement> {
+        self.resolve_management_protection(management_key, pin, false)
+    }
+
+    fn resolve_management_protection(
+        &mut self,
+        management_key: Option<&str>,
+        pin: Option<&str>,
+        complete_protection: bool,
+    ) -> CliResult<ResolvedManagement> {
         if let Some(hex) = management_key {
             let bytes = hex_decode(hex).ok_or("management key must be hex-encoded")?;
             let algorithm = self.management_algorithm()?;
@@ -1109,8 +1118,23 @@ impl PivSession {
         let pivman = self.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
         if pivman.has_stored_key() {
             let pin = self.resolve_pin(pin, "Enter PIN (to unlock the stored management key)")?;
-            let key_bytes =
-                self.run(|profile, exchange| piv::pin_managed_key(profile, pin.clone(), exchange))?;
+            let key_bytes = if complete_protection && !pivman.puk_blocked() {
+                // Legacy stored-key records gain the blocking policy in
+                // set_management_key_synced, after current-key authentication.
+                self.run(|profile, exchange| {
+                    piv::read_pivman_protected(profile, piv::Access::Pin(pin.clone()), exchange)
+                })?
+                .key
+                .ok_or("PIN-protected management key is missing")?
+            } else {
+                self.run(|profile, exchange| {
+                    if complete_protection {
+                        piv::complete_pin_managed_key(profile, pin.clone(), exchange)
+                    } else {
+                        piv::pin_managed_key(profile, pin.clone(), exchange)
+                    }
+                })?
+            };
             let algorithm = self.management_algorithm()?;
             let key = ManagementKey::from_bytes(algorithm, key_bytes.as_bytes())
                 .map_err(|_| "stored management key has an unexpected length")?;
@@ -1625,19 +1649,6 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 Some(MgmtAlgorithmArg::Aes192) => ManagementKeyAlgorithm::Aes192,
                 None => session.management_algorithm()?,
             };
-            // The current key is needed first; --protect also needs the PIN.
-            let management = session.resolve_management(
-                super::secret_str(&mgmt.management_key),
-                super::secret_str(&pin.pin),
-            )?;
-            let pin = if *protect {
-                Some(match management.pin.clone() {
-                    Some(pin) => pin,
-                    None => session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?,
-                })
-            } else {
-                management.pin.clone()
-            };
             let new_bytes: [u8; 24] = if let Some(hex) = new_management_key {
                 hex_decode(hex)
                     .and_then(|bytes| bytes.try_into().ok())
@@ -1663,6 +1674,22 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 hex_decode(&entered)
                     .and_then(|bytes| bytes.try_into().ok())
                     .ok_or("management key must be 24 bytes (48 hex characters)")?
+            };
+            ManagementKey::from_bytes(algorithm, &new_bytes)
+                .map_err(|_| "new management key is invalid for the requested algorithm")?;
+            // Validate inputs before explicit protection can block PUK retries.
+            let management = session.resolve_management_protection(
+                super::secret_str(&mgmt.management_key),
+                super::secret_str(&pin.pin),
+                *protect,
+            )?;
+            let pin = if *protect {
+                Some(match management.pin.clone() {
+                    Some(pin) => pin,
+                    None => session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?,
+                })
+            } else {
+                management.pin.clone()
             };
             let touch = if *touch {
                 piv::ManagementTouchPolicy::Always

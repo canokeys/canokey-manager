@@ -3,7 +3,10 @@
 # device identity and that every applet answers its info command.
 set -euo pipefail
 
-: "${CANOKEY_USBIP:?This test must run under canokey-usbip}"
+if [[ -z "${CANOKEY_USBIP:-}" && "${CANOKEY_TEST_PRIVATE_IFD:-}" != 1 ]]; then
+  echo "ERROR: this test requires canokey-usbip or an isolated private test IFD" >&2
+  exit 1
+fi
 : "${CANOKEY_PCSC_READER:?canokey-usbip did not expose a PC/SC reader}"
 : "${CANOKEY_FIRMWARE_VERSION:?canokey-usbip did not expose a firmware version}"
 
@@ -55,8 +58,8 @@ section "ckman config info"
 
 section "ckman config admin-pin status"
 # Read-only verification-state query (empty VERIFY); every catalog firmware
-# answers it. Changing the Admin PIN is prompt-only by design (no argv
-# secret) and therefore cannot run on a TTY-less runner.
+# answers it. The Rust functional suite separately changes the Admin PIN
+# through a pseudo-terminal, preserving the prompt-only secret interface.
 run_versioned_feature \
   "ckman config admin-pin status" \
   "admin-pin-status" \

@@ -6,7 +6,8 @@ USB/CCID/PC/SC stack. Environment contract:
 
 | Variable | Meaning |
 | --- | --- |
-| `CANOKEY_USBIP` | must be set (guards against accidental real-hardware runs) |
+| `CANOKEY_USBIP` | set by the USB/IP harness (guards against accidental hardware runs) |
+| `CANOKEY_TEST_PRIVATE_IFD=1` | alternative guard for an isolated Rust PC/SC IFD; does not validate USB/IP transport |
 | `CANOKEY_PCSC_READER` | PC/SC reader name to select |
 | `CANOKEY_FIRMWARE_VERSION` | firmware under test |
 | `CANOKEY_USBIP_WORK_DIR` | scratch dir (smoke.sh creates one) |
@@ -51,29 +52,55 @@ CKMAN_DESTRUCTIVE=1 tests/device/piv-lifecycle.sh
 - `fido-lifecycle.sh` — destructive FIDO-over-CCID lifecycle (2.0+): `access
   set-pin`/`verify-pin`, `blobs write`/`read` round trip with a minimal valid
   largeBlobs array (3.1), and `credentials update-user` failing cleanly on an
-  empty device (the CLI has no make-credential path, so no resident
-  credential can be provisioned for a rename round trip).
+  empty device.
 
-## Gap list
+## Rust 4.0.0 functional coverage
 
-Still missing — contributions should add these in this order:
+`rust-functional.py` supplements the lifecycle scripts with 144 checks on a
+dedicated disposable Rust 4.0.0 reader. It changes PINs, imports throwaway
+keys, deletes credentials and resets applets. It requires `CKMAN_DESTRUCTIVE=1`,
+an explicit reader and a virtual-device guard. Install `requirements.txt` in
+a Python virtual environment, then run inside the USB/IP harness:
 
-1. **Deeper lifecycle coverage** — OATH account add/list/code/rename/delete
-   (incl. legacy 1.3 dialect, TOTP/HOTP variants, URI import, touch
-   metadata); OpenPGP SIG/DEC/AUT provisioning with sign/decrypt/auth round
-   trips and certificate round trips; FIDO resident-credential creation (needs
-   a make-credential path — the CLI has none, so `credentials update-user`
-   can only be exercised against an empty store) and `fido reset` (needs the
-   power-up window). Deliberately untested: `fido touch-test` (user presence
-   needs the HID path) and `fido config enable-long-touch-for-reset`
-   (persistent setting; only a full reset clears it, so it would poison the
-   rig for later steps), and `config admin-pin change` (prompt-only by
-   design — no argv secret — so it cannot run on a TTY-less runner).
-2. **Deeper protocol coverage** — candidate: integration tests in
-   `crates/ckman/tests/` exercising full command flows over a scripted
-   or usbip device.
-3. **Keyring test double** — the CLI uses the OS keyring directly, and there
-   is no injection point yet.
-4. **HID coverage in CI** — the usbip matrix runs
-   (`.github/workflows/usbip.yml`) drive FIDO over PC/SC only; the CTAPHID
-   transport is covered by loopback tests, not by the virtual-device rig.
+```sh
+CKMAN_DESTRUCTIVE=1 .venv-device/bin/python tests/device/rust-functional.py \
+  --output "$CANOKEY_USBIP_WORK_DIR/rust-functional.json"
+```
+
+Coverage includes Admin PIN prompts and PASS HMACs; OATH SHA-1/256/512,
+HOTP/TOTP, URI import, account lifecycle, touch and password changes; PIV
+key-file formats, independent signature/certificate/CSR verification,
+attestation, key moves/deletion and protected management keys; OpenPGP
+SIG/DEC/AUT imports and generation, independent cryptographic operations,
+certificate round trips, PIN authorization and touch policies; FIDO PIN
+policies, resident credential creation through python-fido2 followed by ckman
+CSV update/deletion, a 4096-byte largeBlob round trip, and ordinary/long-touch
+reset. Existing PIV scripts additionally cover RSA decryption, ECDH, ML-KEM
+and SM2. The JSON report identifies whether the transport was USB/IP or a
+private PC/SC IFD and records failures explicitly.
+
+The Rust host simulates presence through `/tmp/canokey-test-up`; long gestures
+use `/tmp/canokey-test-touch-ms`. The suite restores the gesture-duration file.
+`CANOKEY_DEVICE_RESTART` may name the harness restart command for the FIDO
+power-on reset window; the private IFD uses its test-only restart command.
+OATH keyring remember/recall/forget and error cases have mock credential tests;
+the platform OS keyring backend is not part of virtual-device acceptance.
+
+NFC/NDEF, HID/keyboard output, WebUSB and fault recovery are deferred.
+Legacy firmware retains its existing lifecycle coverage; the deeper suite
+currently targets exact version 4.0.0.
+
+The workspace temporarily pins libcanokey commit
+`29d021f55ce07202b483cd12e2c8fff17b23c430` for exact 4.0.0 recognition until
+that support is published to crates.io. This preserves the reported 4.0.0
+identity while using its supported modern applet dialect.
+
+Repeating `piv access change-management-key --protect` without an explicit
+current management key can complete PUK blocking when the protection flags
+and PIN-protected key were already stored. This requires the correct PIN and
+authenticates that stored key before blocking retries. Ordinary stored-key
+resolution never blocks the PUK implicitly; incomplete records still require
+explicit management credentials.
+Legacy records with a stored key and no PUK-blocked flag can also be upgraded
+with this explicit command: the PIN unlocks the current key, and key replacement
+authenticates it before updating protection policy and blocking the PUK.
