@@ -359,7 +359,16 @@ pub fn enable_long_touch_for_reset<E>(
 /// Read the whole CTAP largeBlobs array (16-byte truncated SHA-256 prefix
 /// plus the CBOR array), fragmenting at the channel's capacity.
 pub fn large_blobs_read<E>(exchange: &mut Exchange<'_, E>) -> Result<Vec<u8>, FidoError<E>> {
-    run(ctap::largeblob::read_array(options()), exchange)
+    run(ctap::largeblob::read_array(large_blob_options()), exchange)
+}
+
+fn large_blob_options() -> OperationOptions {
+    let mut options = options();
+    // Rust firmware accepts 1024-byte CTAP requests and 960-byte fragments.
+    // Reserve the library's CBOR/authentication overhead before fragmenting.
+    options.limits.max_input_bytes = 1024;
+    options.exchange.max_response_bytes = 960;
+    options
 }
 
 /// Replace the whole CTAP largeBlobs array. `token` is required when the
@@ -371,7 +380,7 @@ pub fn large_blobs_write<E>(
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), FidoError<E>> {
     run(
-        ctap::largeblob::write_array(data, token, options()),
+        ctap::largeblob::write_array(data, token, large_blob_options()),
         exchange,
     )
 }
@@ -463,14 +472,13 @@ mod tests {
 
     #[test]
     fn large_blobs_read_array_transcript() {
-        // With this module's 7609-byte response budget the fragment size is
-        // the 1024-byte default: {1: 1024, 3: 0}. A short fragment terminates
-        // the read (fixture shape mirrored from canokey-ctap's largeblob.rs).
+        // Reserve 16 bytes of response encoding within the 960-byte budget:
+        // {1: 944, 3: 0}. A short fragment terminates the read.
         let mut script = Script::new(&[
             SELECT_OK,
             (
                 &[
-                    0x80, 0x10, 0, 0, 8, 0x0c, 0xa2, 0x01, 0x19, 0x04, 0x00, 0x03, 0x00,
+                    0x80, 0x10, 0, 0, 8, 0x0c, 0xa2, 0x01, 0x19, 0x03, 0xb0, 0x03, 0x00,
                 ],
                 &[0x00, 0xa1, 0x01, 0x43, 1, 2, 3, 0x90, 0x00],
             ),

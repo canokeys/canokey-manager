@@ -14,6 +14,54 @@ use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
+fn store_remembered_key(entry: &keyring::Entry, key: &[u8; 16]) -> keyring::Result<()> {
+    let encoded = Zeroizing::new(hex_encode(key));
+    entry.set_password(&encoded)
+}
+
+fn recall_remembered_key(entry: &keyring::Entry) -> Option<Zeroizing<[u8; 16]>> {
+    let stored = Zeroizing::new(entry.get_password().ok()?);
+    let bytes = Zeroizing::new(hex_decode(stored.trim())?);
+    Some(Zeroizing::new(bytes.as_slice().try_into().ok()?))
+}
+
+#[cfg(test)]
+mod keyring_tests {
+    use super::*;
+    use keyring::mock::MockCredential;
+
+    #[test]
+    fn remember_recall_forget_and_unavailable_keyring() {
+        let entry = keyring::Entry::new_with_credential(Box::new(MockCredential::default()));
+        assert!(recall_remembered_key(&entry).is_none());
+        let key = [0x5a; 16];
+        store_remembered_key(&entry, &key).unwrap();
+        assert_eq!(*recall_remembered_key(&entry).unwrap(), key);
+        let mock = entry
+            .get_credential()
+            .downcast_ref::<MockCredential>()
+            .unwrap();
+        mock.set_error(keyring::Error::NoEntry);
+        assert!(recall_remembered_key(&entry).is_none());
+        assert_eq!(*recall_remembered_key(&entry).unwrap(), key);
+        mock.set_error(keyring::Error::NoEntry);
+        assert!(store_remembered_key(&entry, &[0; 16]).is_err());
+        assert_eq!(*recall_remembered_key(&entry).unwrap(), key);
+        entry.delete_credential().unwrap();
+        assert!(recall_remembered_key(&entry).is_none());
+        assert!(entry.delete_credential().is_err());
+    }
+
+    #[test]
+    fn malformed_remembered_keys_are_rejected() {
+        let entry = keyring::Entry::new_with_credential(Box::new(MockCredential::default()));
+        for value in ["not hex", "00", &"ab".repeat(17)] {
+            entry.set_password(value).unwrap();
+            assert!(recall_remembered_key(&entry).is_none());
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum OathCommand {
     /// Display general status of the OATH application.
@@ -467,7 +515,7 @@ impl OathSession {
             eprintln!("Warning: no readable serial number; password not remembered");
             return;
         };
-        match entry.set_password(&hex_encode(key)) {
+        match store_remembered_key(&entry, key) {
             Ok(()) => println!("Password remembered."),
             Err(error) => eprintln!("Warning: could not store password in the keyring: {error}"),
         }
@@ -475,9 +523,7 @@ impl OathSession {
 
     fn recall_key(&self) -> Option<Zeroizing<[u8; 16]>> {
         let entry = self.keyring_entry()?;
-        let stored = entry.get_password().ok()?;
-        let bytes = hex_decode(stored.trim())?;
-        Some(Zeroizing::new(bytes.as_slice().try_into().ok()?))
+        recall_remembered_key(&entry)
     }
 
     /// Delete the remembered key; returns whether one was stored.

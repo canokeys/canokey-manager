@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: 574a49ad5a92b47494f46dee0496af02c8e5826b
+  CANOKEY_USBIP_SHA: 17aae5867ee8448cbdb2386f0c8e482d4eb271dd
 
 jobs:
   firmware-catalog:
@@ -91,6 +91,7 @@ jobs:
             kmod \
             libccid \
             libpcsclite-dev \
+            libssl-dev \
             libudev-dev \
             libusb-1.0-0-dev \
             linux-tools-common \
@@ -101,6 +102,7 @@ jobs:
             pkg-config \
             python3-jinja2 \
             python3-jsonschema \
+            python3-venv \
             udev \
             usbutils
 
@@ -212,6 +214,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.85.1
+
+      - name: Install Rust firmware compiler and functional test dependencies
+        if: matrix.firmware.id == '4.0.0'
+        run: |
+          rustup toolchain install nightly-2026-09-04 --profile minimal
+          python3 -m venv .venv-device
+          .venv-device/bin/pip install -r tests/device/requirements.txt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -464,6 +473,17 @@ jobs:
             exit "$run_status"
           fi
 
+      - name: Run Rust 4.0.0 functional regressions over CCID
+        if: matrix.firmware.id == '4.0.0'
+        env:
+          CKMAN_DESTRUCTIVE: "1"
+        run: |
+          external/canokey-usbip/compat/run \
+            --core-ref "$CANOKEY_CORE_REF" --timeout 600 \
+            --require usb --require ccid --require pcsc \
+            --test-command ".venv-device/bin/python tests/device/rust-functional.py --output $RUNNER_TEMP/canokey-usbip-artifacts/functional.json" \
+            --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+
       - name: Collect hosted runner diagnostics
         if: always()
         shell: bash
@@ -503,4 +523,5 @@ jobs:
             ${{ runner.temp }}/canokey-usbip-artifacts/kernel.log
             ${{ runner.temp }}/canokey-usbip-artifacts/usb-drivers.txt
             ${{ runner.temp }}/canokey-usbip-artifacts/host-state.txt
+            ${{ runner.temp }}/canokey-usbip-artifacts/functional.json
           if-no-files-found: warn

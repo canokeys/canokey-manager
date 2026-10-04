@@ -102,6 +102,7 @@ impl ImportedKey {
 
     /// OpenPGP import material (4D/7F48/5F48 CRT framing is libcanokey's).
     /// Components are left-padded to the half-modulus width the card expects.
+    /// X25519 PKCS#8 bytes are decoded to a clamped big-endian card scalar.
     pub fn openpgp_key(&self) -> Result<canokey::openpgp::PrivateKey, KeyError> {
         let pad = |bytes: &Zeroizing<Vec<u8>>, width: usize| -> Result<SecretBytes, KeyError> {
             if bytes.len() > width {
@@ -136,9 +137,21 @@ impl ImportedKey {
                     d_q: pad(dq, width)?,
                 })
             }
-            Material::Ec(bytes) => Ok(canokey::openpgp::PrivateKey::Ec(SecretBytes::new(
-                bytes.to_vec(),
-            ))),
+            Material::Ec(bytes) => {
+                let mut scalar = Zeroizing::new(bytes.to_vec());
+                if self.algorithm == Algorithm::X25519 {
+                    if scalar.len() != 32 {
+                        return Err(KeyError::Encoding);
+                    }
+                    // RFC 7748 decoding precedes the card's big-endian MPI ABI.
+                    scalar[0] &= 0xf8;
+                    scalar[31] = (scalar[31] & 0x7f) | 0x40;
+                    scalar.reverse();
+                }
+                Ok(canokey::openpgp::PrivateKey::Ec(SecretBytes::new(
+                    scalar.to_vec(),
+                )))
+            }
         }
     }
 }
@@ -589,6 +602,12 @@ mod tests {
         der.extend([9; 32]);
         let key = parse_private_key(&der, None).unwrap();
         assert_eq!(key.algorithm, Algorithm::X25519);
+        let canokey::openpgp::PrivateKey::Ec(scalar) = key.openpgp_key().unwrap() else {
+            panic!("X25519 import must contain a scalar");
+        };
+        assert_eq!(scalar.as_bytes()[0], 0x49);
+        assert_eq!(scalar.as_bytes()[31], 0x08);
+        assert_eq!(&scalar.as_bytes()[1..31], &[9; 30]);
     }
 
     #[test]

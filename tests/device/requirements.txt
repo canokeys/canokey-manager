@@ -1,0 +1,5 @@
+# Independent oracles and a PTY for prompt-only commands on a virtual key.
+cryptography>=50
+fido2>=2
+pyscard>=2
+pexpect>=4

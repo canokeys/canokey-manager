@@ -196,7 +196,7 @@ pub enum AccessCommand {
         /// Management key algorithm (default: the card's current algorithm).
         #[arg(short, long, value_enum)]
         algorithm: Option<MgmtAlgorithmArg>,
-        /// Store the new management key on the CanoKey, protected by PIN.
+        /// Store the new management key protected by PIN and block PUK recovery.
         #[arg(short = 'p', long)]
         protect: bool,
         /// Generate a random management key.
