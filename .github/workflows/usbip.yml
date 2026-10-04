@@ -214,11 +214,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.85.1
+        with:
+          components: rustfmt, clippy
 
       - name: Install Rust firmware compiler and functional test dependencies
         if: matrix.firmware.id == '4.0.0'
         run: |
-          rustup toolchain install nightly-2026-09-04 --profile minimal
+          rustup toolchain install nightly-2026-09-04 --profile minimal --no-self-update
           python3 -m venv .venv-device
           .venv-device/bin/pip install -r tests/device/requirements.txt
 
