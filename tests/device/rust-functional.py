@@ -123,8 +123,9 @@ class Suite:
             with Card(self.reader) as card:
                 card.command(0xEE, data=bytes.fromhex('1256abf0'))
         else:
-            subprocess.run([os.environ['CANOKEY_DEVICE_RESTART']], check=True, timeout=120,
-                           capture_output=True)
+            result = subprocess.run([os.environ['CANOKEY_DEVICE_RESTART']], timeout=120,
+                                    capture_output=True, text=True)
+            assert result.returncode == 0, f'virtual restart: {result.stdout}{result.stderr}'
 
     def oath(self):
         self.reset('oath')
