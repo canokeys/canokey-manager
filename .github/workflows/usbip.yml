@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  CANOKEY_USBIP_SHA: 6ef51365fc0efa74c6cdd85b6005b38d3ef1e965
+  CANOKEY_USBIP_SHA: a5f5d4d0025a564b1c9670857b11b45a008c1f71
 
 jobs:
   firmware-catalog:
