@@ -56,7 +56,7 @@ CKMAN_DESTRUCTIVE=1 tests/device/piv-lifecycle.sh
 
 ## Rust 4.0.0 functional coverage
 
-`rust-functional.py` supplements the lifecycle scripts with 143 checks on a
+`rust-functional.py` supplements the lifecycle scripts with 144 checks on a
 dedicated disposable Rust 4.0.0 reader. It changes PINs, imports throwaway
 keys, deletes credentials and resets applets. It requires `CKMAN_DESTRUCTIVE=1`,
 an explicit reader and a virtual-device guard. Install `requirements.txt` in
@@ -101,3 +101,6 @@ and PIN-protected key were already stored. This requires the correct PIN and
 authenticates that stored key before blocking retries. Ordinary stored-key
 resolution never blocks the PUK implicitly; incomplete records still require
 explicit management credentials.
+Legacy records with a stored key and no PUK-blocked flag can also be upgraded
+with this explicit command: the PIN unlocks the current key, and key replacement
+authenticates it before updating protection policy and blocking the PUK.

@@ -268,8 +268,27 @@ class Suite:
         attested = x509.load_pem_x509_certificate(cert_file.read_bytes())
         signer.public_key().verify(attested.signature, attested.tbs_certificate_bytes, ec.ECDSA(attested.signature_hash_algorithm))
         assert attested.public_key().public_numbers() == serialization.load_pem_public_key(public_file.read_bytes()).public_numbers()
-        self.run('PIV PIN-protected management key', 'piv', 'access', 'change-management-key',
-                 '--new-management-key', '11' * 24, '--protect', '--force', *management, *pin)
+        # Legacy policy claims a stored key, with no PUK-blocked claim. Keep
+        # the live PUK available to verify validation precedes protection.
+        with Card(self.reader) as card:
+            card.select('a000000308000010000100')
+            algorithm = card.command(0xF7, p2=0x9B)[2]
+            challenge = card.command(0x87, algorithm, 0x9B, tlv(0x7C, tlv(0x81, b'')))
+            block = algorithms.AES(bytes.fromhex(DEFAULT_MANAGEMENT_KEY)) if algorithm == 0x0A else TripleDES(bytes.fromhex(DEFAULT_MANAGEMENT_KEY))
+            cipher = Cipher(block, modes.ECB()).encryptor()
+            card.command(0x87, algorithm, 0x9B, tlv(0x7C, tlv(0x82, cipher.update(challenge[4:]) + cipher.finalize())))
+            card.command(0x20, p2=0x80, data=DEFAULT_ADMIN_PIN.encode().ljust(8, b'\xff'))
+            card.command(0xDB, 0x3F, 0xFF, tlv(0x5C, bytes.fromhex('5fc109')) +
+                         tlv(0x53, tlv(0x88, tlv(0x89, bytes.fromhex(DEFAULT_MANAGEMENT_KEY)))))
+            card.command(0xDB, 0x3F, 0xFF, tlv(0x5C, bytes.fromhex('5fff00')) +
+                         tlv(0x53, tlv(0x80, tlv(0x81, b'\x02'))))
+        self.run('PIV invalid key leaves PUK available', 'piv', 'access', 'change-management-key',
+                 '--new-management-key', '11', '--protect', '--force', *pin, failure='management key must be 24 bytes')
+        with Card(self.reader) as card:
+            card.select('a000000308000010000100')
+            assert card.command(0xF7, p2=0x81)[-1] == 3
+        self.run('PIV legacy stored management key protection', 'piv', 'access', 'change-management-key',
+                 '--new-management-key', '11' * 24, '--protect', '--force', *pin)
         self.prompt('PIV protected management key used',
                     ['piv', 'keys', 'generate', '9d', public_file, '-a', 'ecc-p256'],
                     [('Enter PIN (to unlock the stored management key): ', DEFAULT_ADMIN_PIN)])
