@@ -473,7 +473,7 @@ def main():
     parser.add_argument('--suite', choices=['configuration', 'oath', 'piv', 'openpgp', 'fido', 'all'], default='all')
     args = parser.parse_args()
     if not (os.environ.get('CANOKEY_USBIP') or os.environ.get('CANOKEY_TEST_PRIVATE_IFD') == '1') or os.environ.get('CKMAN_DESTRUCTIVE') != '1':
-        parser.error('requires CANOKEY_USBIP and CKMAN_DESTRUCTIVE=1; use a dedicated virtual key')
+        parser.error('requires CANOKEY_USBIP or CANOKEY_TEST_PRIVATE_IFD=1, plus CKMAN_DESTRUCTIVE=1; use a dedicated virtual key')
     if os.environ.get('CANOKEY_FIRMWARE_VERSION') != '4.0.0':
         parser.error('this suite requires mapped Rust firmware 4.0.0')
     reader = os.environ['CANOKEY_PCSC_READER']

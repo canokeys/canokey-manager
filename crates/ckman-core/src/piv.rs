@@ -194,6 +194,28 @@ pub fn pin_managed_key<E>(
     )
 }
 
+/// Finish explicitly requested PIN protection before recovering the stored key.
+/// Authenticates the stored management key before blocking any remaining PUK
+/// retries. Ordinary key resolution must use [`pin_managed_key`] instead.
+pub fn complete_pin_managed_key<E>(
+    profile: &DeviceProfile,
+    pin: Pin,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    let replacement = random_puk_replacement()?;
+    run(
+        piv::protection::pin_managed(profile, Some(replacement), piv::Access::Pin(pin), options()),
+        exchange,
+    )
+}
+
+fn random_puk_replacement() -> Result<SecretBytes, getrandom::Error> {
+    // The SDK maps eight random bytes to the PIV eight-digit PUK format.
+    let mut bytes = Zeroizing::new([0; 8]);
+    getrandom::fill(bytes.as_mut())?;
+    Ok(SecretBytes::new(bytes.to_vec()))
+}
+
 /// Perform one standalone management-key authentication (selects PIV first).
 pub fn authenticate<E>(
     profile: &DeviceProfile,
@@ -977,6 +999,11 @@ pub fn set_management_key_synced<E>(
     } = update;
     let new_key_bytes = &new_key_bytes;
     let new_key = ManagementKey::from_bytes(algorithm, new_key_bytes).map_err(DriveError::from)?;
+    let replacement = if protect {
+        Some(random_puk_replacement()?)
+    } else {
+        None
+    };
     let pivman = read_pivman_data(profile, exchange)?;
     // Ensure protected-data access before committing the key replacement.
     let protected = if protect || pivman.has_stored_key() {
@@ -1031,13 +1058,11 @@ pub fn set_management_key_synced<E>(
             },
             exchange,
         )?;
-        if protect {
-            let mut replacement = vec![0; 8];
-            getrandom::fill(&mut replacement)?;
+        if let Some(replacement) = replacement {
             run(
                 piv::protection::pin_managed(
                     profile,
-                    Some(SecretBytes::new(replacement)),
+                    Some(replacement),
                     piv::Access::Pin(pin),
                     options(),
                 ),
@@ -1645,6 +1670,58 @@ mod tests {
         )
         .unwrap();
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn explicit_protection_resumes_after_stored_key_was_written() {
+        // Protection flags and PRINTED are durable, but the PUK still has
+        // retries. Authenticate the stored key before the explicit block.
+        let key: Vec<u8> = (0..24).collect();
+        let mut stored = hex("531c881a8918");
+        stored.extend(&key);
+        stored.extend([0x90, 0x00]);
+        let mut transcript = vec![
+            (SELECT.to_vec(), OK.to_vec()),
+            (VERIFY_123456.to_vec(), OK.to_vec()),
+            (hex("00cb3fff055c035fff0000"), hex("530580038101039000")),
+            (hex("00f7008100"), hex("060203019000")),
+            (hex("00cb3fff055c035fc10900"), stored),
+            (hex("00f7009b00"), hex("01010a9000")),
+        ];
+        // pin_managed keeps the existing selection for authentication.
+        transcript.extend(
+            AES_AUTH
+                .iter()
+                .skip(1)
+                .map(|(c, r)| (c.to_vec(), r.to_vec())),
+        );
+        let mut script = Script {
+            transcript: transcript.into(),
+        };
+        let mut blocked = false;
+        let result = complete_pin_managed_key(
+            &profile("3.1.0"),
+            Pin::from_bytes(b"123456").unwrap(),
+            &mut |command| {
+                if !script.transcript.is_empty() {
+                    return script.exchange(command);
+                }
+                if !blocked {
+                    assert_eq!(&command[..5], &hex("0024008110"));
+                    assert_eq!(&command[5..13], b"00000000");
+                    assert_eq!(command.len(), 21);
+                    assert!(command[13..].iter().all(u8::is_ascii_digit));
+                    blocked = true;
+                    Ok(hex("63c0"))
+                } else {
+                    assert_eq!(command, &hex("00f7008100"));
+                    Ok(hex("060203009000"))
+                }
+            },
+        )
+        .unwrap();
+        assert!(blocked);
+        assert_eq!(result.as_bytes(), key);
     }
 
     // --- private-key operations, RNG, batch (libcanokey fixtures) -------------

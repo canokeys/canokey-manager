@@ -1099,6 +1099,15 @@ impl PivSession {
         management_key: Option<&str>,
         pin: Option<&str>,
     ) -> CliResult<ResolvedManagement> {
+        self.resolve_management_protection(management_key, pin, false)
+    }
+
+    fn resolve_management_protection(
+        &mut self,
+        management_key: Option<&str>,
+        pin: Option<&str>,
+        complete_protection: bool,
+    ) -> CliResult<ResolvedManagement> {
         if let Some(hex) = management_key {
             let bytes = hex_decode(hex).ok_or("management key must be hex-encoded")?;
             let algorithm = self.management_algorithm()?;
@@ -1109,8 +1118,13 @@ impl PivSession {
         let pivman = self.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
         if pivman.has_stored_key() {
             let pin = self.resolve_pin(pin, "Enter PIN (to unlock the stored management key)")?;
-            let key_bytes =
-                self.run(|profile, exchange| piv::pin_managed_key(profile, pin.clone(), exchange))?;
+            let key_bytes = self.run(|profile, exchange| {
+                if complete_protection {
+                    piv::complete_pin_managed_key(profile, pin.clone(), exchange)
+                } else {
+                    piv::pin_managed_key(profile, pin.clone(), exchange)
+                }
+            })?;
             let algorithm = self.management_algorithm()?;
             let key = ManagementKey::from_bytes(algorithm, key_bytes.as_bytes())
                 .map_err(|_| "stored management key has an unexpected length")?;
@@ -1626,9 +1640,10 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 None => session.management_algorithm()?,
             };
             // The current key is needed first; --protect also needs the PIN.
-            let management = session.resolve_management(
+            let management = session.resolve_management_protection(
                 super::secret_str(&mgmt.management_key),
                 super::secret_str(&pin.pin),
+                *protect,
             )?;
             let pin = if *protect {
                 Some(match management.pin.clone() {

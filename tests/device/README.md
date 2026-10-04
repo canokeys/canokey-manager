@@ -94,3 +94,10 @@ The workspace temporarily pins libcanokey commit
 `29d021f55ce07202b483cd12e2c8fff17b23c430` for exact 4.0.0 recognition until
 that support is published to crates.io. This preserves the reported 4.0.0
 identity while using its supported modern applet dialect.
+
+Repeating `piv access change-management-key --protect` without an explicit
+current management key can complete PUK blocking when the protection flags
+and PIN-protected key were already stored. This requires the correct PIN and
+authenticates that stored key before blocking retries. Ordinary stored-key
+resolution never blocks the PUK implicitly; incomplete records still require
+explicit management credentials.
