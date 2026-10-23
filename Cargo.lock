@@ -162,8 +162,9 @@ dependencies = [
 
 [[package]]
 name = "canokey"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a92275f2c67ac6dc5fabf265e4068a23094d5bdfa8dacb3f3897cb7167b28aee"
 dependencies = [
  "canokey-admin",
  "canokey-compat",
@@ -178,8 +179,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-admin"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d5e13020741076d0d326ae9383c0a2abce1fdaf0dd2cef61827ba77527fa459"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -187,16 +189,18 @@ dependencies = [
 
 [[package]]
 name = "canokey-compat"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4f336443e1581180b8684a6035f5dcbd09533d55594864a9c1fee432f63c932"
 dependencies = [
  "canokey-protocol",
 ]
 
 [[package]]
 name = "canokey-ctap"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcf52b083e05ed4301cc2290431803dcd137452bb4c6270fa2d97cb78defe125"
 dependencies = [
  "aes",
  "canokey-protocol",
@@ -210,8 +214,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-key"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3e90218f15271283c4c9896c1e3828ec10b206397384fc666296aaa1bb1993"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -222,16 +227,18 @@ dependencies = [
 
 [[package]]
 name = "canokey-ndef"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bff632fb70ad6272f758935db8794c88988721accbb7d7f6029ea559260b584"
 dependencies = [
  "canokey-protocol",
 ]
 
 [[package]]
 name = "canokey-oath"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "664b437af497a7896e8d1c080ed0d08ebab8f5449dfa8cf424251473761b6d9e"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -243,8 +250,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-openpgp"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d077a702fa7d4e5405ec922463b2bf3f04a28bc305e9d6b7cdefa893a01f442"
 dependencies = [
  "canokey-compat",
  "canokey-key",
@@ -253,8 +261,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-piv"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba5d7029194021745d3b1b99204f32d6ca2be9ffbf4e9768b2b9c1fe6c8eba53"
 dependencies = [
  "aes",
  "canokey-compat",
@@ -274,8 +283,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-protocol"
-version = "0.1.0"
-source = "git+https://github.com/canokeys/libcanokey?rev=29d021f#29d021f55ce07202b483cd12e2c8fff17b23c430"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68d46952f2c3a9535aac64459fa35b56b00c51f5e62d1eebf8af17e8a35be8a3"
 dependencies = [
  "thiserror",
  "zeroize",
