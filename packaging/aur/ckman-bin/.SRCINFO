@@ -1,0 +1,19 @@
+pkgbase = ckman-bin
+	pkgdesc = CanoKey management CLI (device config, OATH, PIV, OpenPGP, FIDO2)
+	pkgver = 0.1.2
+	pkgrel = 1
+	url = https://github.com/canokeys/canokey-manager
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	depends = pcsclite
+	depends = systemd-libs
+	depends = ccid
+	provides = ckman
+	conflicts = ckman
+	source_x86_64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.2/ckman-x86_64-unknown-linux-gnu.tar.xz
+	sha256sums_x86_64 = cea0fbe413640a2602be878ed07f948153de96f5ddfd7d2a642cd5500c49bb47
+	source_aarch64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.2/ckman-aarch64-unknown-linux-gnu.tar.xz
+	sha256sums_aarch64 = 4b724d0757791ad178568fbbab98c10d6a94786e0b7903658002181e5746c9b6
+
+pkgname = ckman-bin
