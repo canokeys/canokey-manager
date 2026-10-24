@@ -8,6 +8,12 @@ name: Publish to WinGet
 on:
   release:
     types: [released]
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: GitHub release tag to publish to WinGet
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -16,5 +22,6 @@ jobs:
       - uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: Canokeys.Ckman
+          release-tag: ${{ inputs.release-tag || github.event.release.tag_name }}
           installers-regex: '\.zip$'
           token: ${{ secrets.WINGET_TOKEN }}
