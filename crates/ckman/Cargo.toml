@@ -16,8 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 canokey.workspace = true
-ckman-core = { path = "../ckman-core", version = "0.1.2" }
-ckman-transport = { path = "../ckman-transport", version = "0.1.2" }
+ckman-core = { path = "../ckman-core", version = "0.1.3" }
+ckman-transport = { path = "../ckman-transport", version = "0.1.3" }
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true

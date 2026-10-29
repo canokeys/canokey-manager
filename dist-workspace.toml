@@ -35,6 +35,8 @@ publish-jobs = ["homebrew"]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# Publish a prepared draft so release notes stay concise.
+create-release = false
 
 # System packages needed to build on Linux (PC/SC and hidapi/udev headers).
 [dist.dependencies.apt]

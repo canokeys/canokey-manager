@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "ckman"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "canokey",
  "ckman-core",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64ct",
  "canokey",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-mangen"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ckman",
  "clap",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-transport"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "hidapi",
  "pcsc",

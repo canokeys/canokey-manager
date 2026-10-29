@@ -55,7 +55,10 @@ Publish crates in dependency order: `ckman-transport` → `ckman-core` →
 (`dist-workspace.toml`); pushing a `v*` tag runs
 `.github/workflows/v-release.yml`, which also publishes the Homebrew
 formula to `canokeys/homebrew-tap` (needs a `HOMEBREW_TAP_TOKEN` secret
-with write access to the tap). `.github/workflows/winget.yml` submits each
+with write access to the tap). Before pushing the tag, create a draft GitHub
+release with the matching tag and concise notes from `release-notes/<tag>.md`;
+the workflow uploads artifacts and publishes that draft.
+`.github/workflows/winget.yml` submits each
 release to winget via winget-releaser (needs the `canokeys/winget-pkgs`
 fork and a `WINGET_TOKEN` secret). The AUR package lives at
 `packaging/aur/ckman-bin/` and is published manually (see the PKGBUILD
