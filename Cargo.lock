@@ -162,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "canokey"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f02311b333c79a1a204dc59039444fd8e38aa72761b1d4320530c8d55c5a358"
+checksum = "60b85e473d88f07c775207b7932a11f7d41ce807d36eefd12f5b40003d20a4e8"
 dependencies = [
  "canokey-admin",
  "canokey-compat",
@@ -179,9 +179,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-admin"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd92f7eb853b543dc559202700cb9ee99d21ed0db02cfb518401f97f942ffda"
+checksum = "40280da2278c1cb9bef7a720cceeff6bcdc162f7e34f6c59349cd265f97ea877"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -189,18 +189,18 @@ dependencies = [
 
 [[package]]
 name = "canokey-compat"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2afcc22a5c419c56ddfa57dcbf22b157ed6e2fb2f974a1745c61466df6827eee"
+checksum = "9e8073c5e842b6521c7ef10ea55cd8fc789cbc75113d6d4a4bcdfd33b88cf382"
 dependencies = [
  "canokey-protocol",
 ]
 
 [[package]]
 name = "canokey-ctap"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "241ef3dfc59152a468d7634c02bcaaf84052b7d80bed35bdb903661440d053aa"
+checksum = "2b45c177d1580b0dbbef61914d5d41ef291d4597f98a8d388f03152568037f84"
 dependencies = [
  "aes",
  "canokey-protocol",
@@ -214,9 +214,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-key"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fcc8a4ae99a8f8ac4984f20073fb9ccf073d560b8a397405528449b62fd6c51"
+checksum = "107535ef88b28032c66ba3555e4c6d8ef7651e84f08eb2a4b17a8b51a67364bf"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -227,18 +227,18 @@ dependencies = [
 
 [[package]]
 name = "canokey-ndef"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7609bf9d2f47e41ec831fb832450d12061b2d06a041418ed22253c79a09f7a93"
+checksum = "ed06c83ea6df0cdbcbd6deca1d87a0404f7c8e3694978e5aefcda35553a3d759"
 dependencies = [
  "canokey-protocol",
 ]
 
 [[package]]
 name = "canokey-oath"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed13e34b3c6ec89236656ccdbf4a8583f747fdd733f3be2b5e2471089632239"
+checksum = "0f58393290df9f234a2e7fd1c078e1ece52133c6b07327be0f1ffee160274083"
 dependencies = [
  "canokey-compat",
  "canokey-protocol",
@@ -250,9 +250,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-openpgp"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a83359aaa6f9ff56fdd36b1558fd18ecdc9dbeb11b7ddd00f23e5be0aa1ac4d"
+checksum = "cb4c847019bffc65ba163a2325f9a1404e30872f0ea92220ea88d55f24aae335"
 dependencies = [
  "canokey-compat",
  "canokey-key",
@@ -261,9 +261,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-piv"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b142c27f2bf7fce0d5b9d87c353e93b9fc19c949eb73ba016719ec928f2f6cea"
+checksum = "6dac7a292b420c2ae4134bdfc6bb9821741f60a40f3bcb2dc50e8dc15bfa28cd"
 dependencies = [
  "aes",
  "canokey-compat",
@@ -283,9 +283,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-protocol"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155797328343461043b9796676be9f1622e536584c6cf5950d69d1e909d46e96"
+checksum = "5b6db79f97b6fa76adccb4b30f9df3435f26b693f975eb9ee0b572bf3e038dd7"
 dependencies = [
  "thiserror",
  "zeroize",

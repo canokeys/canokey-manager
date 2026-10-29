@@ -49,8 +49,13 @@ fn options() -> OperationOptions {
     }
 }
 
-/// FIDO2 AID selected by every envelope operation.
-const FIDO2_SELECT: &[u8] = &[
+/// CanoKey USB management AID, tried first by libcanokey 0.1.3+.
+const FIDO2_USB_SELECT: &[u8] = &[
+    0x00, 0xa4, 0x04, 0x00, 0x08, 0xf0, 0x43, 0x41, 0x4e, 0x4f, 0x46, 0x49, 0x44,
+];
+
+/// Standard FIDO2 AID used for NFC and legacy firmware fallback.
+const FIDO2_STANDARD_SELECT: &[u8] = &[
     0x00, 0xa4, 0x04, 0x00, 0x08, 0xa0, 0x00, 0x00, 0x06, 0x47, 0x2f, 0x00, 0x01,
 ];
 
@@ -99,7 +104,7 @@ impl<T: ReportIo> CtapHidAdapter<T> {
     /// One logical APDU of the envelope in, one full response out; satisfies
     /// the [`crate::Exchange`] contract.
     pub fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
-        if command == FIDO2_SELECT {
+        if command == FIDO2_USB_SELECT || command == FIDO2_STANDARD_SELECT {
             return Ok(vec![0x90, 0x00]);
         }
         if command.len() < 5 {
@@ -443,7 +448,21 @@ mod tests {
         }
     }
 
-    const SELECT_OK: (&[u8], &[u8]) = (FIDO2_SELECT, &[0x90, 0x00]);
+    const SELECT_OK: (&[u8], &[u8]) = (FIDO2_USB_SELECT, &[0x90, 0x00]);
+
+    #[test]
+    fn selection_falls_back_to_standard_aid_on_legacy_firmware() {
+        // Firmware before 3.1.2 rejects the USB management AID with 6A82.
+        // Mirror canokey-ctap's envelope fallback fixture: select the
+        // standard applet before sending the authenticatorSelection command.
+        let mut script = Script::new(&[
+            (FIDO2_USB_SELECT, &[0x6a, 0x82]),
+            (FIDO2_STANDARD_SELECT, &[0x90, 0x00]),
+            (&[0x80, 0x10, 0, 0, 1, 0x0b], &[0x00, 0x90, 0x00]),
+        ]);
+        selection(&mut |c| script.exchange(c)).unwrap();
+        assert!(script.transcript.is_empty());
+    }
 
     #[test]
     fn selection_transcript_and_timeout() {
