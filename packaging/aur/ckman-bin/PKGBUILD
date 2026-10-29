@@ -4,9 +4,9 @@
 #   git clone ssh://aur@aur.archlinux.org/ckman-bin.git aur-ckman-bin
 #   cp PKGBUILD aur-ckman-bin/
 #   cd aur-ckman-bin && makepkg --printsrcinfo > .SRCINFO
-#   git add PKGBUILD .SRCINFO && git commit -m "ckman-bin 0.1.2" && git push
+#   git add PKGBUILD .SRCINFO && git commit -m "ckman-bin 0.1.3" && git push
 pkgname=ckman-bin
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc="CanoKey management CLI (device config, OATH, PIV, OpenPGP, FIDO2)"
 arch=('x86_64' 'aarch64')
@@ -17,8 +17,8 @@ provides=('ckman')
 conflicts=('ckman')
 source_x86_64=("${url}/releases/download/v${pkgver}/ckman-x86_64-unknown-linux-gnu.tar.xz")
 source_aarch64=("${url}/releases/download/v${pkgver}/ckman-aarch64-unknown-linux-gnu.tar.xz")
-sha256sums_x86_64=('cea0fbe413640a2602be878ed07f948153de96f5ddfd7d2a642cd5500c49bb47')
-sha256sums_aarch64=('4b724d0757791ad178568fbbab98c10d6a94786e0b7903658002181e5746c9b6')
+sha256sums_x86_64=('677e92d8808b86d491deb2ca03988062e3c4509c20917e10ad0dc27bb25068a4')
+sha256sums_aarch64=('9c3d9fec12d1fb94f4fa64efacc1a3fa74aa941f944dc62401af557746eadbac')
 
 package() {
     cd "${srcdir}/ckman-${CARCH}-unknown-linux-gnu"
