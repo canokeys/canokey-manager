@@ -90,9 +90,8 @@ NFC/NDEF, HID/keyboard output, WebUSB and fault recovery are deferred.
 Legacy firmware retains its existing lifecycle coverage; the deeper suite
 currently targets exact version 4.0.0.
 
-The workspace temporarily pins libcanokey commit
-`29d021f55ce07202b483cd12e2c8fff17b23c430` for exact 4.0.0 recognition until
-that support is published to crates.io. This preserves the reported 4.0.0
+The workspace uses libcanokey from crates.io (`canokey = "0.1"`), with the
+exact version recorded in `Cargo.lock`. It preserves the reported 4.0.0
 identity while using its supported modern applet dialect.
 
 Repeating `piv access change-management-key --protect` without an explicit

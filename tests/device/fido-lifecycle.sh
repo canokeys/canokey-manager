@@ -56,6 +56,8 @@ with open(sys.argv[1], "wb") as output:
     --force
   "${CKMAN[@]}" fido blobs read "$CANOKEY_USBIP_WORK_DIR/blobs-out.bin"
   cmp "$CANOKEY_USBIP_WORK_DIR/blobs.bin" "$CANOKEY_USBIP_WORK_DIR/blobs-out.bin"
+  "${CKMAN[@]}" fido blobs read - >"$CANOKEY_USBIP_WORK_DIR/blobs-stdout.bin"
+  cmp "$CANOKEY_USBIP_WORK_DIR/blobs.bin" "$CANOKEY_USBIP_WORK_DIR/blobs-stdout.bin"
 }
 run_versioned_feature \
   "ckman fido blobs write/read" \

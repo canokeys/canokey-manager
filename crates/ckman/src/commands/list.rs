@@ -1,13 +1,13 @@
-use super::{all_targets, CliResult};
+use super::{targets_matching_reader, CliResult};
 use ckman_transport::pcsc::Pcsc;
 
-pub fn run(serials_only: bool, reader: Option<&str>) -> CliResult<()> {
+pub fn run(serials_only: bool, device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     let pcsc = Pcsc::establish()?;
-    let mut targets = all_targets(&pcsc)?;
-    if let Some(name) = reader {
-        targets.retain(|target| target.connection.reader_name() == name);
-    }
+    let targets = targets_matching_reader(&pcsc, reader)?;
     for target in &targets {
+        if device.is_some_and(|serial| target.serial() != Some(serial)) {
+            continue;
+        }
         let info = target.profile.info();
         let serial = target.serial();
         if serials_only {

@@ -140,13 +140,43 @@ class Suite:
             after = int(time.time()) // 30
             expected = {self.otp(secret, counter, algorithm, 8) for counter in range(before, after + 1)}
             assert code in expected, (name, code, expected)
+        # PUT's tag/value property 0x78/0x01 enables increasing challenges.
+        # CALCULATE ALL used to persist a 30-second step into the 60-second
+        # account before retrying it at its own (now smaller) time step.
+        increasing = [('60/oracle-increasing', 60), ('120/unmatched-increasing', 120)]
+        with Card(self.reader) as card:
+            card.select('A0000005272101')
+            for name, _ in increasing:
+                card.command(1, data=tlv(0x71, name.encode()) + tlv(0x73, b'\x21\x06' + secret) + b'\x78\x01')
+        before = int(time.time())
+        output = self.run('OATH filtered mixed-period calculation', 'oath', 'accounts', 'code', 'oracle')
+        after = int(time.time())
+        rows = dict(line.split(None, 1) for line in output.strip().splitlines())
+        assert '120/unmatched-increasing' not in rows
+        assert rows['60/oracle-increasing'].strip() in {
+            self.otp(secret, step, 'sha1', 6) for step in range(before // 60, after // 60 + 1)
+        }
+        # A zero challenge still succeeds only if the filtered query left the
+        # unrelated increasing account untouched.
+        with Card(self.reader) as card:
+            card.select('A0000005272101')
+            card.command(0xA2, p2=1, data=tlv(0x71, b'120/unmatched-increasing') + tlv(0x74, bytes(8)))
+        self.run('OATH all mixed-period calculation', 'oath', 'accounts', 'code')
+        for name, period in increasing:
+            before = int(time.time()) // period
+            code = self.run(f'OATH {period}s increasing account remains usable',
+                            'oath', 'accounts', 'code', name, '--single').strip()
+            after = int(time.time()) // period
+            assert code in {self.otp(secret, step, 'sha1', 6) for step in range(before, after + 1)}
+            self.run(f'OATH {period}s increasing cleanup', 'oath', 'accounts', 'delete', name, '--force')
         self.run('OATH URI import', 'oath', 'accounts', 'uri',
-                 f'otpauth://hotp/CI:counter?secret={encoded}&issuer=CI&counter=0&digits=6')
+                 f'otpauth://hotp/CI:counter?secret={encoded}&issuer=CI&counter=1&digits=6')
         assert 'CI:counter' in self.run('OATH account list', 'oath', 'accounts', 'list', '--oath-type', '--period')
-        for counter in range(3):
+        for counter in range(1, 4):
             code = self.run(f'OATH HOTP counter {counter}', 'oath', 'accounts', 'code', 'CI:counter', '--single').strip()
-            # CanoKey increments its stored HOTP counter before calculation.
-            assert code == self.otp(secret, counter + 1, 'sha1', 6), repr(code)
+            # The URI counter is the next RFC 4226 moving factor, not the
+            # device's internal stored counter before its pre-increment.
+            assert code == self.otp(secret, counter, 'sha1', 6), repr(code)
         self.run('OATH rename', 'oath', 'accounts', 'rename', 'CI:counter', 'CI:renamed', '--force')
         assert 'CI:renamed' in self.run('OATH rename readback', 'oath', 'accounts', 'list')
         self.run('OATH short default', 'oath', 'accounts', 'set-default', 'CI:renamed', '--slot', 'short')
@@ -242,6 +272,20 @@ class Suite:
             assert actual.public_numbers() == key.public_key().public_numbers()
         self.run('PIV random', 'piv', 'random', '32', self.work / 'random')
         assert len((self.work / 'random').read_bytes()) == 32
+        # Small binary stdout writes must report a closed receiving pipe,
+        # including errors deferred until the stdout buffer is flushed.
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        try:
+            result = subprocess.run(
+                [self.binary, '--reader', self.reader, 'piv', 'random', '1', '-'],
+                stdout=write_fd, stderr=subprocess.PIPE, timeout=30)
+        finally:
+            os.close(write_fd)
+        assert result.returncode != 0, result.stderr
+        assert b'ERROR:' in result.stderr and b'written to' not in result.stderr
+        self.cases.append('PIV binary stdout closed pipe')
+        print('PASS PIV binary stdout closed pipe', flush=True)
         # Provision a throwaway attestation signer using the firmware F9 slot.
         signer = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'Test PIV issuer')])
@@ -397,6 +441,16 @@ class Suite:
         self.run('FIDO PIN change', 'fido', 'access', 'change-pin', '--pin', pin, '--new-pin', '87654321')
         pin = '87654321'
         self.run('FIDO PIN verify', 'fido', 'access', 'verify-pin', '--pin', pin)
+        self.run('FIDO decomposed Unicode PIN change', 'fido', 'access', 'change-pin',
+                 '--pin', pin, '--new-pin', 'e\u0301abc')
+        # An independent CTAP client uses the canonical spelling. A PIN set
+        # with the unnormalized UTF-8 bytes cannot pass this check.
+        with CtapPcscDevice(Card(self.reader).connection, self.reader) as device:
+            client_pin = ClientPin(Ctap2(device), PinProtocolV2())
+            client_pin.get_pin_token('éabc', ClientPin.PERMISSION.GET_ASSERTION, 'ckman-test.example')
+        self.run('FIDO decomposed Unicode PIN verifies', 'fido', 'access', 'verify-pin', '--pin', 'e\u0301abc')
+        self.run('FIDO Unicode PIN restored', 'fido', 'access', 'change-pin',
+                 '--pin', 'e\u0301abc', '--new-pin', pin)
         self.run('FIDO PIN minimum length', 'fido', 'access', 'set-min-length', '8', '--pin', pin)
         self.run('FIDO force PIN change', 'fido', 'access', 'force-change', '--pin', pin)
         self.run('FIDO forced PIN blocks token', 'fido', 'credentials', 'list', '--pin', pin, failure='0x37')
@@ -458,6 +512,9 @@ class Suite:
         self.run('FIDO final reset', 'fido', 'reset', '--force')
 
     def configuration(self):
+        with Card(self.reader):
+            self.run('Busy reader preserves PC/SC failure', 'info', failure='PC/SC error')
+        self.run('Reader works after competing connection closes', 'info')
         self.prompt('Admin PIN prompt change', ['config', 'admin-pin', 'change'],
                     [('Admin PIN: ', DEFAULT_ADMIN_PIN), ('New Admin PIN: ', '654321'), ('Repeat the new Admin PIN: ', '654321')])
         self.prompt('Admin PIN prompt restore', ['config', 'admin-pin', 'change'],

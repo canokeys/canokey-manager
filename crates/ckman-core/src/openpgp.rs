@@ -60,6 +60,48 @@ pub fn read_application_data<E>(
     ApplicationData::parse_with_profile(profile, bytes.as_bytes(), 4096).map_err(DriveError::from)
 }
 
+/// Read a slot's key status from DO DE (key-reference/status pairs).
+/// Missing fields/references remain absent; malformed or duplicate entries fail.
+/// Status 0 means absent, 1 generated, 2 imported; other values stay observable.
+pub fn key_information(data: &ApplicationData, slot: Slot) -> Result<Option<u8>, canokey::Error> {
+    let invalid =
+        || canokey::Error::new(canokey::ErrorKind::InvalidResponse).at(canokey::Phase::Parsing);
+    let mut fields = data.discretionary.iter().filter(|field| field.tag == 0xde);
+    let Some(field) = fields.next() else {
+        return Ok(None);
+    };
+    if fields.next().is_some() {
+        return Err(invalid());
+    }
+    let bytes = field.value.as_bytes();
+    if bytes.len() % 2 != 0 {
+        return Err(invalid());
+    }
+    let mut seen = [false; 256];
+    let mut status = None;
+    for pair in bytes.chunks_exact(2) {
+        if std::mem::replace(&mut seen[pair[0] as usize], true) {
+            return Err(invalid());
+        }
+        if pair[0] == slot.occurrence() + 1 {
+            status = Some(pair[1]);
+        }
+    }
+    Ok(status)
+}
+
+/// Read the card-wide touch cache duration (seconds), separately from slot UIF.
+pub fn read_touch_cache_time<E>(
+    profile: &DeviceProfile,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<u8, DriveError<E>> {
+    let bytes = read_data(profile, 0x0102, exchange)?;
+    match bytes.as_bytes() {
+        [seconds] => Ok(*seconds),
+        _ => Err(unexpected()),
+    }
+}
+
 /// Read and parse the cardholder data DO 65.
 pub fn read_cardholder_data<E>(
     profile: &DeviceProfile,
@@ -473,6 +515,70 @@ mod tests {
             Some(&[1, 8, 0, 0, 32, 2][..])
         );
         assert!(script.transcript.is_empty());
+    }
+
+    // Reduced from a CanoKey Canary 3.1.2 read-only capture on 2026-10-31.
+    // DE and UIF
+    // match canokey-core/applets/openpgp/openpgp.c's GET DATA implementation.
+    #[test]
+    fn canary_312_key_information_and_touch_cache_transcripts() {
+        let mut discretionary = wrap(&[0xde], &[1, 1, 2, 1, 3, 0]);
+        discretionary.extend(wrap(&[0xd6], &[0, 0x20]));
+        let mut response = wrap(&[0x6e], &wrap(&[0x73], &discretionary));
+        response.extend(OK);
+        let mut script = Script::new(&[(SELECT, OK), (GET_6E, &response)]);
+        let app = read_application_data(&profile("3.1.2"), &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(key_information(&app, Slot::Signature).unwrap(), Some(1));
+        assert_eq!(key_information(&app, Slot::Decryption).unwrap(), Some(1));
+        assert_eq!(
+            key_information(&app, Slot::Authentication).unwrap(),
+            Some(0)
+        );
+        assert_eq!(app.touch_policy(Slot::Signature).unwrap(), Some([0, 0x20]));
+        assert!(script.transcript.is_empty());
+
+        let mut script = Script::new(&[(SELECT, OK), (&[0, 0xca, 1, 2, 0], &[0, 0x90, 0])]);
+        assert_eq!(
+            read_touch_cache_time(&profile("3.1.2"), &mut |c| script.exchange(c)).unwrap(),
+            0
+        );
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn key_information_validates_pairs_and_references() {
+        let parse = |fields: &[u8]| {
+            ApplicationData::parse(&wrap(&[0x6e], &wrap(&[0x73], fields)), 4096).unwrap()
+        };
+        // Resolve by key reference, not array position; retain future statuses.
+        let app = parse(&wrap(&[0xde], &[3, 0, 1, 2, 2, 7]));
+        assert_eq!(key_information(&app, Slot::Signature).unwrap(), Some(2));
+        assert_eq!(key_information(&app, Slot::Decryption).unwrap(), Some(7));
+        let app = parse(&wrap(&[0xde], &[2, 1]));
+        assert_eq!(key_information(&app, Slot::Signature).unwrap(), None);
+        assert_eq!(key_information(&parse(&[]), Slot::Signature).unwrap(), None);
+        for bytes in [&[1, 1, 2][..], &[1, 1, 1, 2][..]] {
+            assert!(key_information(&parse(&wrap(&[0xde], bytes)), Slot::Signature).is_err());
+        }
+        let mut duplicate = wrap(&[0xde], &[1, 1]);
+        duplicate.extend(wrap(&[0xde], &[1, 2]));
+        assert!(key_information(&parse(&duplicate), Slot::Signature).is_err());
+    }
+
+    #[test]
+    fn touch_cache_read_rejects_malformed_and_unsupported_responses() {
+        for response in [&[0x90, 0][..], &[0, 1, 0x90, 0][..]] {
+            let mut script = Script::new(&[(SELECT, OK), (&[0, 0xca, 1, 2, 0], response)]);
+            assert!(read_touch_cache_time(&profile("3.1.2"), &mut |c| script.exchange(c)).is_err());
+            assert!(script.transcript.is_empty());
+        }
+        let error = read_touch_cache_time(&profile("1.3"), &mut |_| -> io::Result<Vec<u8>> {
+            panic!("unsupported cache read must fail before I/O")
+        })
+        .unwrap_err();
+        assert!(
+            matches!(error, DriveError::Protocol(error) if error.kind == canokey::ErrorKind::UnsupportedFeature)
+        );
     }
 
     #[test]

@@ -85,6 +85,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pass_hmac_key_is_a_protected_argument() {
+        use commands::config::{ConfigCommand, PassCommand};
+        let key = "0123456789abcdef0123456789abcdef01234567";
+        let cli = Cli::try_parse_from([
+            "ckman", "config", "pass", "set", "short", "hmac", "--key", key,
+        ])
+        .unwrap();
+        let Some(Commands::Config {
+            command:
+                ConfigCommand::Pass {
+                    command:
+                        PassCommand::Set {
+                            key: Some(parsed), ..
+                        },
+                },
+        }) = cli.command
+        else {
+            panic!("expected PASS HMAC key")
+        };
+        assert_eq!(parsed.as_str(), key);
+        assert!(!format!("{parsed:?}").contains(key));
+    }
+
+    #[test]
+    fn oath_secrets_and_uris_use_protected_argument_values() {
+        use commands::oath::{AccountsCommand, OathCommand};
+        let secret = "JBSWY3DPEHPK3PXP";
+        let uri = "otpauth://totp/audit?secret=JBSWY3DPEHPK3PXP";
+        for (args, expected) in [
+            (
+                vec!["ckman", "oath", "accounts", "add", "audit", secret],
+                secret,
+            ),
+            (vec!["ckman", "oath", "accounts", "uri", uri], uri),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Some(Commands::Oath {
+                command: OathCommand::Accounts { command },
+            }) = cli.command
+            else {
+                panic!("expected OATH accounts command");
+            };
+            let value = match command {
+                AccountsCommand::Add {
+                    secret: Some(value),
+                    ..
+                } => value,
+                AccountsCommand::Uri {
+                    uri: Some(value), ..
+                } => value,
+                _ => panic!("expected a protected argument"),
+            };
+            assert_eq!(value.as_str(), expected);
+            assert!(!format!("{value:?}").contains(secret));
+        }
+    }
+
+    #[test]
     fn device_and_reader_are_global_options() {
         // Global args must parse after the subcommand path.
         let cli = Cli::try_parse_from(["ckman", "oath", "info", "--device", "42"]).unwrap();

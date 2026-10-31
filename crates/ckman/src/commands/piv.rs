@@ -1,3 +1,4 @@
+use super::output::SecretOutput;
 use super::{confirm, single_target, CliResult, Target};
 use ckman_core::admin::{self, Applet};
 use ckman_core::piv::{self, PivError};
@@ -11,7 +12,7 @@ use canokey::piv::{
 };
 use canokey::{DeviceProfile, ErrorKind, SecretBytes, SecretReference};
 use clap::{Args, Subcommand, ValueEnum};
-use std::io::{self, Read, Write as _};
+use std::io::{self, Read};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Subcommand)]
@@ -79,6 +80,7 @@ pub enum PivCommand {
         /// File containing the modulus-sized ciphertext ('-' for stdin).
         input: String,
         /// File to write the raw plaintext block to ('-' for stdout).
+        /// File permissions are restricted to 0600 on Unix.
         output: String,
         #[command(flatten)]
         pin: PinArgs,
@@ -92,6 +94,7 @@ pub enum PivCommand {
         /// 32 bytes for X25519) ('-' for stdin).
         peer_public_key: String,
         /// File to write the shared secret to ('-' for stdout).
+        /// File permissions are restricted to 0600 on Unix.
         output: String,
         #[command(flatten)]
         pin: PinArgs,
@@ -104,6 +107,7 @@ pub enum PivCommand {
         /// File containing the 1088-byte ciphertext ('-' for stdin).
         ciphertext: String,
         /// File to write the 32-byte shared secret to ('-' for stdout).
+        /// File permissions are restricted to 0600 on Unix.
         output: String,
         #[command(flatten)]
         pin: PinArgs,
@@ -121,6 +125,7 @@ pub enum PivCommand {
         #[arg(long)]
         peer_ephemeral: String,
         /// File to write the session key to ('-' for stdout).
+        /// File permissions are restricted to 0600 on Unix.
         key_output: String,
         /// Protocol role.
         #[arg(long, value_enum, default_value_t = Sm2RoleArg::Initiator)]
@@ -143,6 +148,7 @@ pub enum PivCommand {
         length: usize,
         /// File to write raw bytes to ('-' for stdout); printed as hex when
         /// omitted.
+        /// File permissions are restricted to 0600 on Unix.
         output: Option<String>,
     },
     /// Deauthenticate: clear the PIN-verified state on the card.
@@ -186,6 +192,10 @@ pub enum AccessCommand {
         new_puk: Option<crate::commands::SecretString>,
     },
     /// Change the management key.
+    ///
+    /// Persist a private recovery file before replacing the key. The file is
+    /// removed on success and retained on failure or interruption; it contains
+    /// the new key and instructions for finishing an interrupted replacement.
     ChangeManagementKey {
         /// Require touch when authenticating with the management key (AES-192 only).
         #[arg(short, long)]
@@ -202,6 +212,10 @@ pub enum AccessCommand {
         /// Generate a random management key.
         #[arg(short, long)]
         generate: bool,
+        /// Recovery file (must not exist; default: a unique file in the current
+        /// directory). Unix permissions are 0600. Removed on success.
+        #[arg(long, value_name = "FILE")]
+        recovery_file: Option<std::path::PathBuf>,
         /// Do not prompt; requires --generate or --new-management-key.
         #[arg(long)]
         force: bool,
@@ -292,7 +306,8 @@ pub enum KeysCommand {
         /// Output format.
         #[arg(long, value_enum, default_value_t = EncodingArg::Pem)]
         format: EncodingArg,
-        /// Verify that the private key matches by a test signature (needs PIN).
+        /// Verify that the private key matches by a test signature (RSA,
+        /// ECCP256 or ECCP384; needs PIN).
         #[arg(long)]
         verify: bool,
         #[command(flatten)]
@@ -300,8 +315,11 @@ pub enum KeysCommand {
     },
     /// Generate the same algorithm into several slots in one batch (one
     /// management authentication, progress per slot).
+    ///
+    /// Save each public key before generating the next slot. On failure,
+    /// completed keys and their files remain; no rollback is attempted.
     GenerateBatch {
-        /// Comma-separated PIV slots (e.g. 9a,9c,9d,9e).
+        /// Distinct comma-separated PIV slots (e.g. 9a,9c,9d,9e).
         #[arg(long, required = true, value_delimiter = ',', value_parser = parse_slot)]
         slots: Vec<Slot>,
         /// Algorithm to use in key generation.
@@ -383,7 +401,7 @@ pub enum CertificatesCommand {
         /// Number of days until the certificate expires.
         #[arg(short, long, default_value_t = 365)]
         valid_days: u32,
-        /// Hash algorithm used for the signature.
+        /// Hash for RSA/ECDSA (message-signing algorithms use their own scheme).
         #[arg(long, value_enum, default_value_t = HashArg::Sha256)]
         hash: HashArg,
         #[command(flatten)]
@@ -403,7 +421,7 @@ pub enum CertificatesCommand {
         /// Subject for the requested certificate, as an RFC 4514 string.
         #[arg(short, long)]
         subject: String,
-        /// Hash algorithm used for the signature.
+        /// Hash for RSA/ECDSA (message-signing algorithms use their own scheme).
         #[arg(long, value_enum, default_value_t = HashArg::Sha256)]
         hash: HashArg,
         #[command(flatten)]
@@ -721,7 +739,7 @@ fn sign(
         })?
     };
     write_output(output, &signature)?;
-    println!("Signature written to {output}.");
+    eprintln!("Signature written to {output}.");
     Ok(())
 }
 
@@ -734,6 +752,7 @@ fn decrypt(
     pin: &PinArgs,
 ) -> CliResult<()> {
     let ciphertext = read_input(input)?;
+    let mut destination = SecretOutput::new(output)?;
     let mut session = PivSession::connect(device, reader)?;
     let algorithm = slot_algorithm(&mut session, slot)?;
     if !matches!(
@@ -752,8 +771,8 @@ fn decrypt(
             exchange,
         )
     })?;
-    write_output(output, plaintext.as_bytes())?;
-    println!("Plaintext block written to {output}.");
+    destination.write(plaintext.as_bytes())?;
+    eprintln!("Plaintext block written to {output}.");
     Ok(())
 }
 
@@ -766,6 +785,7 @@ fn derive(
     pin: &PinArgs,
 ) -> CliResult<()> {
     let peer = read_input(peer_public_key)?;
+    let mut destination = SecretOutput::new(output)?;
     let mut session = PivSession::connect(device, reader)?;
     let algorithm = slot_algorithm(&mut session, slot)?;
     if !matches!(
@@ -781,8 +801,8 @@ fn derive(
     let secret = run_with_pin(&mut session, &pin.pin, |profile, access, exchange| {
         piv::derive(profile, slot, algorithm, peer.clone(), access, exchange)
     })?;
-    write_output(output, secret.as_bytes())?;
-    println!("Shared secret written to {output}.");
+    destination.write(secret.as_bytes())?;
+    eprintln!("Shared secret written to {output}.");
     Ok(())
 }
 
@@ -795,6 +815,7 @@ fn decapsulate(
     pin: &PinArgs,
 ) -> CliResult<()> {
     let ciphertext = read_input(ciphertext)?;
+    let mut destination = SecretOutput::new(output)?;
     let mut session = PivSession::connect(device, reader)?;
     let algorithm = slot_algorithm(&mut session, slot)?;
     if algorithm != Algorithm::MlKem768 {
@@ -809,8 +830,8 @@ fn decapsulate(
             exchange,
         )
     })?;
-    write_output(output, secret.as_bytes())?;
-    println!("Shared secret written to {output}.");
+    destination.write(secret.as_bytes())?;
+    eprintln!("Shared secret written to {output}.");
     Ok(())
 }
 
@@ -839,6 +860,7 @@ fn agree_sm2(
     };
     let user_id = parse_id(user_id, "--user-id")?;
     let peer_id = parse_id(peer_id, "--peer-id")?;
+    let mut destination = SecretOutput::new(key_output)?;
     let mut session = PivSession::connect(device, reader)?;
     let algorithm = slot_algorithm(&mut session, slot)?;
     if algorithm != Algorithm::Sm2 {
@@ -864,13 +886,13 @@ fn agree_sm2(
             exchange,
         )
     })?;
-    write_output(key_output, agreement.key.as_bytes())?;
+    destination.write(agreement.key.as_bytes())?;
     // The peer needs our ephemeral point to complete its side.
     eprintln!(
         "Own ephemeral public key: {}",
         hex_encode(&agreement.ephemeral_public)
     );
-    println!("Session key written to {key_output}.");
+    eprintln!("Session key written to {key_output}.");
     Ok(())
 }
 
@@ -880,12 +902,16 @@ fn random(
     length: usize,
     output: Option<&str>,
 ) -> CliResult<()> {
+    let mut destination = output.map(SecretOutput::new).transpose()?;
     let mut session = PivSession::connect(device, reader)?;
     let bytes = session.run(|profile, exchange| piv::random(profile, length, exchange))?;
     match output {
         Some(path) => {
-            write_output(path, bytes.as_bytes())?;
-            println!("{length} random byte(s) written to {path}.");
+            destination
+                .as_mut()
+                .expect("prepared output")
+                .write(bytes.as_bytes())?;
+            eprintln!("{length} random byte(s) written to {path}.");
         }
         None => println!("{}", hex_encode(bytes.as_bytes())),
     }
@@ -940,7 +966,7 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
+pub(super) fn hex_encode(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, byte| {
         let _ = write!(out, "{byte:02x}");
@@ -960,7 +986,7 @@ fn read_input(path: &str) -> CliResult<Vec<u8>> {
 
 fn write_output(path: &str, data: &[u8]) -> CliResult<()> {
     if path == "-" {
-        std::io::stdout().write_all(data)?;
+        super::output::write_stdout(data)?;
     } else {
         std::fs::write(path, data)?;
     }
@@ -970,12 +996,22 @@ fn write_output(path: &str, data: &[u8]) -> CliResult<()> {
 fn describe_piv(error: &PivError<io::Error>) -> String {
     match error {
         PivError::Random(error) => format!("failed to generate randomness: {error}"),
+        PivError::ManagementKeyUpdate { stage, source } => format!(
+            "management key replacement may already have committed (stage {stage:?}): {}",
+            describe_piv_drive(source)
+        ),
         PivError::X509(error) => format!("{error}"),
         PivError::Key(error) => format!("{error}"),
-        PivError::Drive(DriveError::Transport(error)) => {
+        PivError::Drive(error) => describe_piv_drive(error),
+    }
+}
+
+fn describe_piv_drive(error: &DriveError<io::Error>) -> String {
+    match error {
+        DriveError::Transport(error) => {
             format!("transport exchange failed: {error}")
         }
-        PivError::Drive(DriveError::Protocol(error)) => match error.kind {
+        DriveError::Protocol(error) => match error.kind {
             ErrorKind::AuthenticationFailed => match error.reference {
                 Some(SecretReference::Pin) => match error.retries_remaining {
                     Some(retries) => format!("incorrect PIN ({retries} attempts remaining)"),
@@ -1227,7 +1263,7 @@ impl PivSession {
         prompt: &str,
     ) -> CliResult<super::SecretString> {
         match pin {
-            Some(pin) => Ok(zeroize::Zeroizing::new(pin.to_string())),
+            Some(pin) => Ok(super::SecretString::new(pin.to_string())),
             None => Ok(super::prompt_password(&format!("{prompt}: "))?),
         }
     }
@@ -1239,7 +1275,7 @@ impl PivSession {
 
     fn resolve_puk(&mut self, puk: Option<&str>) -> CliResult<Puk> {
         let puk = match puk {
-            Some(puk) => zeroize::Zeroizing::new(puk.to_string()),
+            Some(puk) => super::SecretString::new(puk.to_string()),
             None => super::prompt_password("Enter PUK: ")?,
         };
         Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters".into())
@@ -1305,16 +1341,16 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     // GET METADATA exists only on 2.0+; on legacy firmware fall back to the
     // baseline empty-VERIFY for the PIN counter and
     // skip the PUK/management records.
-    let pin_meta = session.run(|profile, exchange| {
+    let pin_meta = optional_piv(session.run_typed(|profile, exchange| {
         piv::metadata(
             profile,
             MetadataReference::Pin,
             canokey::piv::Access::None,
             exchange,
         )
-    });
+    }))?;
     match pin_meta {
-        Ok(metadata) => {
+        Some(metadata) => {
             let fields = metadata.fields();
             if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
                 println!("WARNING: Using default PIN!");
@@ -1323,7 +1359,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
                 println!("PIN tries remaining:    {remaining}/{total}");
             }
         }
-        Err(_) => {
+        None => {
             let status = session.run(|profile, exchange| piv::pin_status(profile, exchange))?;
             if let Some(remaining) = status.retries_remaining {
                 let text = if remaining == 15 {
@@ -1335,15 +1371,15 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         }
     }
-    let puk_meta = session.run(|profile, exchange| {
+    let puk_meta = optional_piv(session.run_typed(|profile, exchange| {
         piv::metadata(
             profile,
             MetadataReference::Puk,
             canokey::piv::Access::None,
             exchange,
         )
-    });
-    if let Ok(puk_meta) = &puk_meta {
+    }))?;
+    if let Some(puk_meta) = &puk_meta {
         let fields = puk_meta.fields();
         if let Some((total, remaining)) = fields.retries {
             if remaining == 0 {
@@ -1354,16 +1390,16 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             println!("PUK tries remaining:    {remaining}/{total}");
         }
     }
-    let mgmt_meta = session.run(|profile, exchange| {
+    let mgmt_meta = optional_piv(session.run_typed(|profile, exchange| {
         piv::metadata(
             profile,
             MetadataReference::Management,
             canokey::piv::Access::None,
             exchange,
         )
-    });
+    }))?;
     let algorithm = match &mgmt_meta {
-        Ok(metadata) => {
+        Some(metadata) => {
             let fields = metadata.fields();
             if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
                 println!("WARNING: Using default Management key!");
@@ -1375,12 +1411,12 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         }
         // No metadata on legacy firmware: the management key is 3DES there.
-        Err(_) => "TDES",
+        None => "TDES",
     };
     println!("Management key algorithm: {algorithm}");
 
     let pivman = session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
-    if puk_meta.is_err() && pivman.puk_blocked() {
+    if puk_meta.is_none() && pivman.puk_blocked() {
         println!("PUK is blocked");
     }
     if pivman.has_derived_key() {
@@ -1393,11 +1429,11 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     // CHUID/CCC objects.
     for (name, id) in [("CHUID", [0x5f, 0xc1, 2]), ("CCC", [0x5f, 0xc1, 7])] {
         let id = canokey::piv::ObjectId::from_bytes(&id)?;
-        match session.run(|profile, exchange| {
+        match optional_piv(session.run_typed(|profile, exchange| {
             piv::read_object(profile, id, canokey::piv::Access::None, exchange)
-        }) {
-            Ok(data) => println!("{name}:                   {} bytes", data.as_bytes().len()),
-            Err(_) => println!("{name}:                   No data available."),
+        }))? {
+            Some(data) => println!("{name}:                   {} bytes", data.as_bytes().len()),
+            None => println!("{name}:                   No data available."),
         }
     }
 
@@ -1410,55 +1446,43 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     ];
     slots.extend((1..=20).map(|i| Slot::Retired(piv::RetiredSlot::new(i).unwrap())));
     for slot in slots {
-        let key = session
-            .run(|profile, exchange| {
-                piv::metadata(
-                    profile,
-                    MetadataReference::Key(slot),
-                    canokey::piv::Access::None,
-                    exchange,
-                )
-            })
-            .ok();
-        let certificate = session
-            .run(|profile, exchange| {
-                piv::read_certificate(profile, slot, canokey::piv::Access::None, exchange)
-            })
-            .ok();
+        let key = optional_piv(session.run_typed(|profile, exchange| {
+            piv::metadata(
+                profile,
+                MetadataReference::Key(slot),
+                canokey::piv::Access::None,
+                exchange,
+            )
+        }))?;
+        let certificate = optional_piv(session.run_typed(|profile, exchange| {
+            piv::read_certificate(profile, slot, canokey::piv::Access::None, exchange)
+        }))?;
         if key.is_none() && certificate.is_none() {
             continue;
         }
         println!("Slot {:>4}:", slot_name(slot));
-        match &key {
-            Some(Metadata::Key { fields, .. }) => {
-                let algorithm = fields
-                    .algorithm_id
-                    .and_then(|id| session_algorithm_name(session.profile(), id))
-                    .unwrap_or("unknown");
-                println!("  Private key type: {algorithm}");
-                if let Some(origin) = &fields.origin {
-                    let origin = match origin {
-                        piv::KnownOrUnknown::Known(piv::KeyOrigin::Generated) => {
-                            "generated on device".to_string()
-                        }
-                        piv::KnownOrUnknown::Known(piv::KeyOrigin::Imported) => {
-                            "imported".to_string()
-                        }
-                        piv::KnownOrUnknown::Known(piv::KeyOrigin::NotPresent) => {
-                            "none".to_string()
-                        }
-                        piv::KnownOrUnknown::Unknown(value) => format!("unknown ({value})"),
-                    };
-                    println!("  Origin:             {origin}");
-                }
-                if let Some(piv::KnownOrUnknown::Known(policy)) = fields.pin_policy {
-                    println!("  PIN policy:         {policy:?}");
-                }
-                if let Some(piv::KnownOrUnknown::Known(policy)) = fields.touch_policy {
-                    println!("  Touch policy:       {policy:?}");
-                }
+        println!(
+            "  Private key type: {}",
+            slot_key_type(session.profile(), key.as_ref())
+        );
+        if let Some(Metadata::Key { fields, .. }) = &key {
+            if let Some(origin) = &fields.origin {
+                let origin = match origin {
+                    piv::KnownOrUnknown::Known(piv::KeyOrigin::Generated) => {
+                        "generated on device".to_string()
+                    }
+                    piv::KnownOrUnknown::Known(piv::KeyOrigin::Imported) => "imported".to_string(),
+                    piv::KnownOrUnknown::Known(piv::KeyOrigin::NotPresent) => "none".to_string(),
+                    piv::KnownOrUnknown::Unknown(value) => format!("unknown ({value})"),
+                };
+                println!("  Origin:             {origin}");
             }
-            _ => println!("  Private key type: EMPTY"),
+            if let Some(piv::KnownOrUnknown::Known(policy)) = fields.pin_policy {
+                println!("  PIN policy:         {policy:?}");
+            }
+            if let Some(piv::KnownOrUnknown::Known(policy)) = fields.touch_policy {
+                println!("  Touch policy:       {policy:?}");
+            }
         }
         if let Some(certificate) = &certificate {
             match canokey::x509::parse_der(certificate.der(), Default::default()) {
@@ -1478,6 +1502,23 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         }
     }
     Ok(())
+}
+
+fn slot_key_type(profile: &DeviceProfile, metadata: Option<&Metadata>) -> &'static str {
+    match metadata {
+        Some(Metadata::Key { fields, .. }) => fields
+            .algorithm_id
+            .and_then(|id| session_algorithm_name(profile, id))
+            .unwrap_or("unknown"),
+        None if profile
+            .capability(canokey::compatibility::Capability::Metadata)
+            .support
+            == canokey::compatibility::Support::Supported =>
+        {
+            "EMPTY"
+        }
+        _ => "unknown (key metadata unavailable)",
+    }
 }
 
 fn session_algorithm_name(profile: &DeviceProfile, id: u8) -> Option<&'static str> {
@@ -1541,6 +1582,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             force,
         } => {
             let mut session = PivSession::connect(device, reader)?;
+            ensure_pin_reset_safe(&mut session)?;
             if !force
                 && !confirm(
                     "This sets the retry counters and resets PIN and PUK to the factory defaults (123456 / 12345678). Proceed?",
@@ -1636,6 +1678,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             algorithm,
             protect,
             generate,
+            recovery_file,
             force,
             mgmt,
             pin,
@@ -1675,7 +1718,8 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                     .and_then(|bytes| bytes.try_into().ok())
                     .ok_or("management key must be 24 bytes (48 hex characters)")?
             };
-            ManagementKey::from_bytes(algorithm, &new_bytes)
+            let new_bytes = zeroize::Zeroizing::new(new_bytes);
+            ManagementKey::from_bytes(algorithm, &new_bytes[..])
                 .map_err(|_| "new management key is invalid for the requested algorithm")?;
             // Validate inputs before explicit protection can block PUK retries.
             let management = session.resolve_management_protection(
@@ -1696,25 +1740,42 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             } else {
                 piv::ManagementTouchPolicy::Never
             };
-            session.run(|profile, exchange| {
-                piv::set_management_key_synced(
-                    profile,
-                    piv::ManagementKeyUpdate {
-                        new_key_bytes: new_bytes,
-                        algorithm,
-                        touch,
-                        protect: *protect,
-                        pin,
-                        access: management.access()?,
-                    },
-                    exchange,
-                )
+            let recovery = super::piv_recovery::ManagementKeyRecovery::create(
+                recovery_file.as_deref(),
+                session.target.serial(),
+                session.target.connection.reader_name(),
+                algorithm,
+                &new_bytes,
+                *protect,
+                touch == piv::ManagementTouchPolicy::Always,
+            )?;
+            eprintln!(
+                "Management key recovery file saved at {}",
+                recovery.path().display()
+            );
+            recovery.run(|| {
+                session.run(|profile, exchange| {
+                    piv::set_management_key_synced(
+                        profile,
+                        piv::ManagementKeyUpdate {
+                            new_key_bytes: *new_bytes,
+                            algorithm,
+                            touch,
+                            protect: *protect,
+                            pin,
+                            access: management.access()?,
+                        },
+                        exchange,
+                    )
+                })?;
+                Ok(())
             })?;
             println!("New management key set.");
             Ok(())
         }
         AccessCommand::UnblockPin { puk, new_pin } => {
             let mut session = PivSession::connect(device, reader)?;
+            ensure_pin_reset_safe(&mut session)?;
             let puk = session.resolve_puk(super::secret_str(puk))?;
             let new = match new_pin {
                 Some(pin) => pin.clone(),
@@ -1746,6 +1807,13 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             format,
             mgmt,
         } => {
+            let mut output = if public_key_output == "-" {
+                None
+            } else {
+                Some(super::output::PreparedFile::new(std::path::Path::new(
+                    public_key_output,
+                ))?)
+            };
             let mut session = PivSession::connect(device, reader)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
@@ -1762,8 +1830,11 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
                 EncodingArg::Der => der,
             };
-            write_output(public_key_output, &data)?;
-            println!(
+            match &mut output {
+                Some(output) => output.write(&data)?,
+                None => write_output(public_key_output, &data)?,
+            }
+            eprintln!(
                 "Private key generated in slot {}, public key written to {public_key_output}.",
                 slot_name(*slot)
             );
@@ -1778,6 +1849,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             format,
             mgmt,
         } => {
+            let mut outputs = prepare_batch_outputs(slots, output_dir, *format)?;
             let mut session = PivSession::connect(device, reader)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
@@ -1791,36 +1863,38 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 })
                 .collect();
             let total = parameters.len();
-            // Progress on stderr (touch prompts live there too): one line per
-            // completed key, since RSA-4096 generation is slow.
-            let keys = session.run(|profile, exchange| {
-                piv::generate_keys(
-                    profile,
-                    parameters,
-                    piv::mutual_auth(management.key.clone())?,
-                    exchange,
-                    &mut |done| eprintln!("Generated {done}/{total} key(s)..."),
-                )
+            let management = piv::mutual_auth(management.key.clone())?;
+            let target = &mut session.target;
+            piv::generate_keys_with_progress(
+                &target.profile,
+                parameters,
+                management,
+                &mut |command| target.connection.exchange(command),
+                &mut |done, public| -> CliResult<()> {
+                    let der = public
+                        .to_spki_der()
+                        .map_err(|error| format!("cannot encode the public key: {error}"))?;
+                    let data = match format {
+                        EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
+                        EncodingArg::Der => der,
+                    };
+                    outputs[done - 1].write(&data).map_err(|error| {
+                        format!(
+                            "key generated in slot {}, but its public key could not be saved: {error}; batch stopped",
+                            slot_name(slots[done - 1])
+                        )
+                    })?;
+                    eprintln!(
+                        "Generated {done}/{total} key(s); public key written to {}.",
+                        outputs[done - 1].destination().display()
+                    );
+                    Ok(())
+                },
+            )
+            .map_err(|error| match error {
+                piv::GenerateKeysError::Operation(error) => describe_piv(&error).into(),
+                piv::GenerateKeysError::Callback(error) => error,
             })?;
-            for (slot, public) in slots.iter().zip(&keys) {
-                let der = public
-                    .to_spki_der()
-                    .map_err(|error| format!("cannot encode the public key: {error}"))?;
-                let extension = match format {
-                    EncodingArg::Pem => "pem",
-                    EncodingArg::Der => "der",
-                };
-                let data = match format {
-                    EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
-                    EncodingArg::Der => der,
-                };
-                let path = format!("{output_dir}/{}.{extension}", slot_name(*slot));
-                write_output(&path, &data)?;
-                println!(
-                    "Private key generated in slot {}, public key written to {path}.",
-                    slot_name(*slot)
-                );
-            }
             Ok(())
         }
         KeysCommand::Import {
@@ -1831,17 +1905,17 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             touch_policy,
             mgmt,
         } => {
-            let data = read_input(private_key)?;
+            let data = super::input::read_secret(private_key)?;
             let imported = super::parse_private_key_input(&data, password)?;
+            let material = imported
+                .piv_material()
+                .map_err(|error| format!("{error}"))?;
             let mut session = PivSession::connect(device, reader)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let mut parameters = KeyParameters::new(*slot, imported.algorithm);
             parameters.pin_policy = pin_policy_of(*pin_policy);
             parameters.touch_policy = touch_policy_of(*touch_policy);
-            let material = imported
-                .piv_material()
-                .map_err(|error| format!("{error}"))?;
             session.run(|profile, exchange| {
                 piv::import_key(
                     profile,
@@ -1866,7 +1940,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 EncodingArg::Der => der,
             };
             write_output(certificate, &data)?;
-            println!("Attestation certificate written to {certificate}.");
+            eprintln!("Attestation certificate written to {certificate}.");
             Ok(())
         }
         KeysCommand::Info { slot } => {
@@ -1930,8 +2004,8 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
                 EncodingArg::Der => der,
             };
-            write_output(public_key_output, &data)?;
             if *verify {
+                require_export_verification(public.algorithm())?;
                 let pin = session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?;
                 let algorithm = public.algorithm();
                 let message = b"test";
@@ -1950,9 +2024,10 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 if !ok {
                     return Err("private key in slot does NOT match the exported public key".into());
                 }
-                println!("Private key verified against the public key.");
+                eprintln!("Private key verified against the public key.");
             }
-            println!("Public key written to {public_key_output}.");
+            write_output(public_key_output, &data)?;
+            eprintln!("Public key written to {public_key_output}.");
             Ok(())
         }
         KeysCommand::Move { source, dest, mgmt } => {
@@ -1980,6 +2055,104 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             Ok(())
         }
     }
+}
+
+fn prepare_batch_outputs(
+    slots: &[Slot],
+    directory: &str,
+    format: EncodingArg,
+) -> CliResult<Vec<super::output::PreparedFile>> {
+    piv::validate_generation_slots(slots)
+        .map_err(|_| "batch generation requires at least one slot and no duplicate slots")?;
+    let extension = match format {
+        EncodingArg::Pem => "pem",
+        EncodingArg::Der => "der",
+    };
+    let mut outputs: Vec<super::output::PreparedFile> = Vec::with_capacity(slots.len());
+    for slot in slots {
+        let path =
+            std::path::Path::new(directory).join(format!("{}.{extension}", slot_name(*slot)));
+        let output = super::output::PreparedFile::new(&path)?;
+        if outputs
+            .iter()
+            .any(|previous| previous.destination() == output.destination())
+        {
+            return Err("multiple public key outputs resolve to the same file".into());
+        }
+        outputs.push(output);
+    }
+    Ok(outputs)
+}
+
+// Missing/unsupported optional records are expected. Communication and parsing
+// failures must not be interpreted as an empty slot or bypass a key check.
+fn optional_piv<T>(result: Result<T, PivError<io::Error>>) -> CliResult<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(PivError::Drive(DriveError::Protocol(error)))
+            if matches!(
+                error.phase,
+                canokey::Phase::Construction | canokey::Phase::Command
+            ) && matches!(
+                error.kind,
+                ErrorKind::NotFound | ErrorKind::UnsupportedFeature
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(describe_piv(&error).into()),
+    }
+}
+
+fn require_export_verification(algorithm: Algorithm) -> CliResult<()> {
+    if matches!(
+        algorithm,
+        Algorithm::Rsa1024
+            | Algorithm::Rsa2048
+            | Algorithm::Rsa3072
+            | Algorithm::Rsa4096
+            | Algorithm::EccP256
+            | Algorithm::EccP384
+    ) {
+        Ok(())
+    } else {
+        Err("host-side --verify is supported only for RSA, ECCP256 and ECCP384; omit --verify to export this key".into())
+    }
+}
+
+fn certificate_hash(algorithm: Algorithm, hash: HashArg) -> Option<x509::HashAlgorithm> {
+    match algorithm {
+        Algorithm::Ed25519 | Algorithm::Sm2 | Algorithm::MlDsa65 => None,
+        _ => Some(hash_algorithm(hash)),
+    }
+}
+
+fn validate_slot_public_key(
+    metadata: &Metadata,
+    algorithm: Algorithm,
+    spki: &[u8],
+) -> CliResult<()> {
+    if let Some(public) = &metadata.fields().public_key {
+        let actual = public
+            .to_spki_der()
+            .map_err(|error| format!("cannot encode the slot public key: {error}"))?;
+        if public.algorithm() != algorithm || !keys::public_keys_equal(&actual, spki)? {
+            return Err("the public key does not match the private key in the slot".into());
+        }
+    }
+    Ok(())
+}
+
+fn ensure_pin_reset_safe(session: &mut PivSession) -> CliResult<()> {
+    let pivman = session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
+    validate_pin_reset(&pivman)
+}
+
+fn validate_pin_reset(pivman: &piv::PivmanData) -> CliResult<()> {
+    if pivman.has_derived_key() {
+        return Err("PIN reset would invalidate the PIN-derived management key; change to an independent or PIN-protected management key first".into());
+    }
+    Ok(())
 }
 
 /// Host-side signature verification for `keys export --verify`.
@@ -2040,11 +2213,23 @@ fn rsa_pkcs1v15_verify(
     let modulus_bytes = key.size();
     let expected = x509::rsa_pkcs1v15_encode(x509::HashAlgorithm::Sha256, message, modulus_bytes)
         .map_err(|_| rsa::Error::Verification)?;
+    if signature.len() != modulus_bytes {
+        return Ok(false);
+    }
     let signature_int = rsa::BigUint::from_bytes_be(signature);
+    if &signature_int >= key.n() {
+        return Ok(false);
+    }
     let em = signature_int.modpow(key.e(), key.n()).to_bytes_be();
     let mut padded = vec![0; modulus_bytes.saturating_sub(em.len())];
     padded.extend(em);
     Ok(padded == expected)
+}
+
+fn read_signing_public_key(path: &str, hash: HashArg) -> CliResult<keys::ImportedPublicKey> {
+    let parsed = keys::parse_public_key(&read_input(path)?).map_err(|error| format!("{error}"))?;
+    x509::signature_algorithm(parsed.algorithm, certificate_hash(parsed.algorithm, hash))?;
+    Ok(parsed)
 }
 
 fn certificates(
@@ -2058,23 +2243,23 @@ fn certificates(
             certificate,
             mgmt,
         } => {
-            let data = read_input(certificate)?;
+            let data = super::input::read_secret(certificate)?;
             let parsed = super::parse_certificate_input(&data)?;
             let mut session = PivSession::connect(device, reader)?;
             // When a key occupies the slot, the certificate must match it.
-            if let Ok(metadata) = session.run(|profile, exchange| {
+            if let Some(metadata) = optional_piv(session.run_typed(|profile, exchange| {
                 piv::metadata(
                     profile,
                     MetadataReference::Key(*slot),
                     canokey::piv::Access::None,
                     exchange,
                 )
-            }) {
+            }))? {
                 if let Some(public) = &metadata.fields().public_key {
                     let slot_spki = public
                         .to_spki_der()
                         .map_err(|error| format!("cannot encode the slot public key: {error}"))?;
-                    if slot_spki != parsed.public_key.spki_der {
+                    if !keys::public_keys_equal(&slot_spki, &parsed.public_key.spki_der)? {
                         return Err(
                             "the certificate does not match the private key in the slot".into()
                         );
@@ -2109,7 +2294,7 @@ fn certificates(
                 EncodingArg::Der => cert.der().to_vec(),
             };
             write_output(certificate, &data)?;
-            println!("Certificate written to {certificate}.");
+            eprintln!("Certificate written to {certificate}.");
             Ok(())
         }
         CertificatesCommand::Generate {
@@ -2121,29 +2306,39 @@ fn certificates(
             mgmt,
             pin,
         } => {
+            x509::parse_rfc4514(subject)?;
+            let now = i64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| "system clock is before the Unix epoch")?
+                    .as_secs(),
+            )
+            .map_err(|_| x509::X509Error::TimeRange)?;
+            let not_after = now
+                .checked_add(i64::from(*valid_days) * 86400)
+                .ok_or(x509::X509Error::TimeRange)?;
+            x509::validity(now, not_after)?;
+            let supplied_public = public_key
+                .as_ref()
+                .map(|path| read_signing_public_key(path, *hash))
+                .transpose()?;
             let mut session = PivSession::connect(device, reader)?;
-            let metadata = session
-                .run(|profile, exchange| {
-                    piv::metadata(
-                        profile,
-                        MetadataReference::Key(*slot),
-                        canokey::piv::Access::None,
-                        exchange,
-                    )
-                })
-                .map_err(|_| format!("no private key in slot {}", slot_name(*slot)))?;
+            let metadata = session.run(|profile, exchange| {
+                piv::metadata(
+                    profile,
+                    MetadataReference::Key(*slot),
+                    canokey::piv::Access::None,
+                    exchange,
+                )
+            })?;
             let fields = metadata.fields();
             if fields.touch_policy == Some(piv::KnownOrUnknown::Known(TouchPolicy::Always))
                 || fields.touch_policy == Some(piv::KnownOrUnknown::Known(TouchPolicy::Cached))
             {
                 eprintln!("Touch your CanoKey...");
             }
-            let (spki_der, algorithm) = match public_key {
-                Some(path) => {
-                    let parsed = keys::parse_public_key(&read_input(path)?)
-                        .map_err(|error| format!("{error}"))?;
-                    (parsed.spki_der, parsed.algorithm)
-                }
+            let (spki_der, algorithm) = match supplied_public {
+                Some(parsed) => (parsed.spki_der, parsed.algorithm),
                 None => {
                     let public = fields
                         .public_key
@@ -2157,14 +2352,8 @@ fn certificates(
                     )
                 }
             };
-            if !subject.contains('=') {
-                return Err("subject must be an RFC 4514 string (e.g. \"CN=name\")".into());
-            }
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| "system clock is before the Unix epoch")?
-                .as_secs() as i64;
-            let not_after = now + i64::from(*valid_days) * 86400;
+            validate_slot_public_key(&metadata, algorithm, &spki_der)?;
+            x509::signature_algorithm(algorithm, certificate_hash(algorithm, *hash))?;
             let management = session.resolve_management(
                 super::secret_str(&mgmt.management_key),
                 super::secret_str(&pin.pin),
@@ -2183,7 +2372,7 @@ fn certificates(
                         algorithm,
                         spki_der: &spki_der,
                         subject,
-                        hash: Some(hash_algorithm(*hash)),
+                        hash: certificate_hash(algorithm, *hash),
                         access: management.pin_and_management(pin)?,
                     },
                     now,
@@ -2211,19 +2400,24 @@ fn certificates(
             hash,
             pin,
         } => {
-            let parsed = keys::parse_public_key(&read_input(public_key)?)
-                .map_err(|error| format!("{error}"))?;
+            x509::parse_rfc4514(subject)?;
+            let parsed = read_signing_public_key(public_key, *hash)?;
+            let mut output = if csr_output == "-" {
+                None
+            } else {
+                Some(super::output::PreparedFile::new(std::path::Path::new(
+                    csr_output,
+                ))?)
+            };
             let mut session = PivSession::connect(device, reader)?;
-            let metadata = session
-                .run(|profile, exchange| {
-                    piv::metadata(
-                        profile,
-                        MetadataReference::Key(*slot),
-                        canokey::piv::Access::None,
-                        exchange,
-                    )
-                })
-                .map_err(|_| format!("no private key in slot {}", slot_name(*slot)))?;
+            let metadata = session.run(|profile, exchange| {
+                piv::metadata(
+                    profile,
+                    MetadataReference::Key(*slot),
+                    canokey::piv::Access::None,
+                    exchange,
+                )
+            })?;
             if metadata.fields().touch_policy
                 == Some(piv::KnownOrUnknown::Known(TouchPolicy::Always))
                 || metadata.fields().touch_policy
@@ -2231,9 +2425,7 @@ fn certificates(
             {
                 eprintln!("Touch your CanoKey...");
             }
-            if !subject.contains('=') {
-                return Err("subject must be an RFC 4514 string (e.g. \"CN=name\")".into());
-            }
+            validate_slot_public_key(&metadata, parsed.algorithm, &parsed.spki_der)?;
             let pin = session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?;
             let der = session.run(|profile, exchange| {
                 piv::generate_csr(
@@ -2243,14 +2435,18 @@ fn certificates(
                         algorithm: parsed.algorithm,
                         spki_der: &parsed.spki_der,
                         subject,
-                        hash: Some(hash_algorithm(*hash)),
+                        hash: certificate_hash(parsed.algorithm, *hash),
                         access: canokey::piv::Access::Pin(pin),
                     },
                     exchange,
                 )
             })?;
-            write_output(csr_output, &x509::pem_encode("CERTIFICATE REQUEST", &der))?;
-            println!("CSR for slot {} written to {csr_output}.", slot_name(*slot));
+            let data = x509::pem_encode("CERTIFICATE REQUEST", &der);
+            match output.as_mut() {
+                Some(output) => output.write(&data)?,
+                None => write_output(csr_output, &data)?,
+            }
+            eprintln!("CSR for slot {} written to {csr_output}.", slot_name(*slot));
             Ok(())
         }
         CertificatesCommand::Delete { slot, mgmt } => {
@@ -2319,7 +2515,7 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
             let data = session
                 .run(|profile, exchange| piv::read_object(profile, *object_id, access, exchange))?;
             write_output(output, data.as_bytes())?;
-            println!("Object written to {output}.");
+            eprintln!("Object written to {output}.");
             Ok(())
         }
         ObjectsCommand::Import {
@@ -2342,6 +2538,541 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
             })?;
             println!("Object written.");
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canokey::compatibility::{DeviceObservations, PivApplicationVersion};
+
+    #[test]
+    fn secret_destinations_are_checked_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let input = directory.0.join("input.bin");
+        std::fs::write(&input, [0; 65]).unwrap();
+        let input = input.to_str().unwrap();
+        let output = directory.0.to_str().unwrap();
+        let pin = PinArgs { pin: None };
+        let reader = Some("nonexistent-audit-reader");
+        let errors = [
+            decrypt(None, reader, Slot::KeyManagement, input, output, &pin).unwrap_err(),
+            derive(None, reader, Slot::KeyManagement, input, output, &pin).unwrap_err(),
+            decapsulate(None, reader, Slot::KeyManagement, input, output, &pin).unwrap_err(),
+            agree_sm2(
+                None,
+                reader,
+                Slot::KeyManagement,
+                input,
+                input,
+                output,
+                Sm2RoleArg::Initiator,
+                16,
+                None,
+                None,
+                &pin,
+            )
+            .unwrap_err(),
+            random(None, reader, 32, Some(output)).unwrap_err(),
+        ];
+        for error in errors {
+            assert!(error.to_string().contains("not a regular file"), "{error}");
+        }
+    }
+
+    #[test]
+    fn invalid_certificate_expiry_fails_before_device_access() {
+        for valid_days in [0, 365, u32::MAX] {
+            let command = CertificatesCommand::Generate {
+                slot: Slot::Authentication,
+                public_key: None,
+                subject: "CN=audit".to_string(),
+                valid_days,
+                hash: HashArg::Sha256,
+                mgmt: MgmtArgs {
+                    management_key: None,
+                },
+                pin: PinArgs { pin: None },
+            };
+            let error = certificates(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+            if valid_days == u32::MAX {
+                assert!(matches!(
+                    error.downcast_ref::<x509::X509Error>(),
+                    Some(x509::X509Error::TimeRange)
+                ));
+            } else {
+                assert!(error.to_string().contains("reader"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn certificate_signing_rejects_invalid_public_keys_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let path = directory.0.join("public.der");
+        let mut inputs = vec![b"invalid public key".to_vec()];
+        for (algorithm, width) in [(Algorithm::X25519, 32), (Algorithm::MlKem768, 1184)] {
+            inputs.push(
+                PublicKey::Raw {
+                    algorithm,
+                    bytes: vec![0x42; width],
+                }
+                .to_spki_der()
+                .unwrap(),
+            );
+        }
+        for input in inputs {
+            std::fs::write(&path, input).unwrap();
+            let commands = [
+                CertificatesCommand::Generate {
+                    slot: Slot::Authentication,
+                    public_key: Some(path.display().to_string()),
+                    subject: "CN=audit".to_string(),
+                    valid_days: 365,
+                    hash: HashArg::Sha256,
+                    mgmt: MgmtArgs {
+                        management_key: None,
+                    },
+                    pin: PinArgs { pin: None },
+                },
+                CertificatesCommand::Request {
+                    slot: Slot::Authentication,
+                    public_key: path.display().to_string(),
+                    csr_output: "-".to_string(),
+                    subject: "CN=audit".to_string(),
+                    hash: HashArg::Sha256,
+                    pin: PinArgs { pin: None },
+                },
+            ];
+            for command in commands {
+                let error =
+                    certificates(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+                assert!(!error.to_string().contains("reader"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn csr_output_is_prepared_before_device_access_and_preserved_on_failure() {
+        use p256::pkcs8::EncodePublicKey;
+        let directory = super::super::output::tests::TestDirectory::new();
+        let public_path = directory.0.join("public.der");
+        let public = p256::SecretKey::from_slice(&[1; 32])
+            .unwrap()
+            .public_key()
+            .to_public_key_der()
+            .unwrap();
+        std::fs::write(&public_path, public.as_bytes()).unwrap();
+        let command = |output: &std::path::Path| CertificatesCommand::Request {
+            slot: Slot::Authentication,
+            public_key: public_path.display().to_string(),
+            csr_output: output.display().to_string(),
+            subject: "CN=audit".to_string(),
+            hash: HashArg::Sha256,
+            pin: PinArgs { pin: None },
+        };
+        for invalid in [&directory.0, &directory.0.join("missing/csr.pem")] {
+            let error = certificates(None, Some("nonexistent-audit-reader"), &command(invalid))
+                .unwrap_err();
+            assert!(!error.to_string().contains("reader"), "{error}");
+        }
+        let existing = directory.0.join("existing.pem");
+        std::fs::write(&existing, b"previous CSR").unwrap();
+        for output in [&existing, &public_path] {
+            let error =
+                certificates(None, Some("nonexistent-audit-reader"), &command(output)).unwrap_err();
+            assert!(error.to_string().contains("reader"), "{error}");
+            assert_eq!(std::fs::read(&existing).unwrap(), b"previous CSR");
+            assert_eq!(std::fs::read(&public_path).unwrap(), public.as_bytes());
+            assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 2);
+        }
+    }
+
+    #[test]
+    fn rsa_export_verification_rejects_noncanonical_signatures() {
+        use rsa::pkcs8::DecodePublicKey;
+        use rsa::traits::PublicKeyParts;
+        let public =
+            include_bytes!("../../../ckman-core/tests/fixtures/rsa-export-verify-openssl-pub.der");
+        let signature =
+            include_bytes!("../../../ckman-core/tests/fixtures/rsa-export-verify-openssl.sig");
+        let message = b"ckman RSA export verification fixture\n";
+        let key = rsa::RsaPublicKey::from_public_key_der(public).unwrap();
+        assert!(rsa_pkcs1v15_verify(&key, message, signature).unwrap());
+        let mut overlong = vec![0];
+        overlong.extend(signature);
+        assert!(!rsa_pkcs1v15_verify(&key, message, &overlong).unwrap());
+        let out_of_range = rsa::BigUint::from_bytes_be(signature) + key.n();
+        let mut encoded = out_of_range.to_bytes_be();
+        assert!(encoded.len() <= key.size());
+        let mut padded = vec![0; key.size() - encoded.len()];
+        padded.append(&mut encoded);
+        assert!(!rsa_pkcs1v15_verify(&key, message, &padded).unwrap());
+        assert!(!rsa_pkcs1v15_verify(&key, message, &signature[1..]).unwrap());
+        assert!(!rsa_pkcs1v15_verify(&key, b"another message", signature).unwrap());
+    }
+
+    #[test]
+    fn unsupported_rsa_import_exponent_fails_before_device_access() {
+        use rsa::pkcs8::EncodePrivateKey;
+        let directory = super::super::output::tests::TestDirectory::new();
+        let private = rsa::RsaPrivateKey::new_with_exp(
+            &mut rsa::rand_core::OsRng,
+            1024,
+            &rsa::BigUint::from(3u8),
+        )
+        .unwrap();
+        let path = directory.0.join("rsa-e3.der");
+        std::fs::write(&path, private.to_pkcs8_der().unwrap().as_bytes()).unwrap();
+        let command = KeysCommand::Import {
+            slot: Slot::Authentication,
+            private_key: path.display().to_string(),
+            password: None,
+            pin_policy: None,
+            touch_policy: None,
+            mgmt: MgmtArgs {
+                management_key: None,
+            },
+        };
+        let error = keys(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("only RSA keys with public exponent 65537"));
+    }
+
+    #[test]
+    fn key_generation_rejects_invalid_output_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        for output in [
+            directory.0.clone(),
+            directory.0.join("missing").join("key.pem"),
+        ] {
+            let command = KeysCommand::Generate {
+                slot: Slot::Authentication,
+                public_key_output: output.display().to_string(),
+                algorithm: KeyAlgorithmArg::EccP256,
+                pin_policy: None,
+                touch_policy: None,
+                format: EncodingArg::Pem,
+                mgmt: MgmtArgs {
+                    management_key: None,
+                },
+            };
+            let error = keys(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+            assert!(!error.to_string().contains("reader"));
+        }
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn batch_generation_preflights_slots_and_files_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let make_command = |slots, output_dir| KeysCommand::GenerateBatch {
+            slots,
+            algorithm: KeyAlgorithmArg::EccP256,
+            output_dir,
+            pin_policy: None,
+            touch_policy: None,
+            format: EncodingArg::Pem,
+            mgmt: MgmtArgs {
+                management_key: None,
+            },
+        };
+        for slots in [vec![], vec![Slot::Authentication; 2]] {
+            let command = make_command(slots, directory.0.display().to_string());
+            let error = keys(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+            assert!(error.to_string().contains("no duplicate slots"));
+        }
+        let command = make_command(
+            vec![Slot::Authentication],
+            directory.0.join("missing-directory").display().to_string(),
+        );
+        let error = keys(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+        assert!(error.downcast_ref::<io::Error>().is_some());
+
+        let original = directory.0.join("9a.pem");
+        std::fs::write(&original, b"original public key").unwrap();
+        std::fs::create_dir(directory.0.join("9c.pem")).unwrap();
+        let command = make_command(
+            vec![Slot::Authentication, Slot::Signature],
+            directory.0.display().to_string(),
+        );
+        let error = keys(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+        assert!(error.to_string().contains("output is not a regular file"));
+        assert_eq!(std::fs::read(original).unwrap(), b"original public key");
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn batch_outputs_reject_symlinks_to_the_same_destination() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let destination = directory.0.join("shared.pem");
+        std::fs::write(&destination, b"original public key").unwrap();
+        for file in ["9a.pem", "9c.pem"] {
+            std::os::unix::fs::symlink(&destination, directory.0.join(file)).unwrap();
+        }
+        let error = prepare_batch_outputs(
+            &[Slot::Authentication, Slot::Signature],
+            directory.0.to_str().unwrap(),
+            EncodingArg::Pem,
+        )
+        .err()
+        .expect("aliased output files must be rejected");
+        assert!(error.to_string().contains("resolve to the same file"));
+        assert_eq!(std::fs::read(destination).unwrap(), b"original public key");
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn invalid_certificate_subjects_fail_before_device_access() {
+        for subject in ["CN=#0c01ff", "CN=bad\\", "CN=good,OU"] {
+            let commands = [
+                CertificatesCommand::Generate {
+                    slot: Slot::Authentication,
+                    public_key: None,
+                    subject: subject.to_string(),
+                    valid_days: 365,
+                    hash: HashArg::Sha256,
+                    mgmt: MgmtArgs {
+                        management_key: None,
+                    },
+                    pin: PinArgs { pin: None },
+                },
+                CertificatesCommand::Request {
+                    slot: Slot::Authentication,
+                    public_key: "-".to_string(),
+                    csr_output: "-".to_string(),
+                    subject: subject.to_string(),
+                    hash: HashArg::Sha256,
+                    pin: PinArgs { pin: None },
+                },
+            ];
+            for command in commands {
+                let error =
+                    certificates(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+                // The request must not read stdin, connect or prompt for a PIN.
+                assert!(error.downcast_ref::<x509::X509Error>().is_some(), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn certificate_hash_matches_message_signing_algorithms() {
+        for algorithm in [Algorithm::Ed25519, Algorithm::Sm2, Algorithm::MlDsa65] {
+            for hash in [HashArg::Sha256, HashArg::Sha384, HashArg::Sha512] {
+                let selected = certificate_hash(algorithm, hash);
+                assert!(selected.is_none());
+                assert!(x509::signature_algorithm(algorithm, selected).is_ok());
+            }
+        }
+        for algorithm in [Algorithm::Rsa2048, Algorithm::EccP256, Algorithm::EccP384] {
+            let selected = certificate_hash(algorithm, HashArg::Sha256);
+            assert!(selected.is_some());
+            assert!(x509::signature_algorithm(algorithm, selected).is_ok());
+        }
+    }
+
+    fn metadata_for_p256(point: &[u8]) -> Metadata {
+        // 3.1.2 GET METADATA framing, based on ckman-core PIV transcripts.
+        let mut observations = DeviceObservations::new(b"3.1.2".to_vec());
+        observations.piv_version = Some(PivApplicationVersion([6, 0, 0]));
+        let profile = DeviceProfile::from_observations(observations).unwrap();
+        let mut response = vec![1, 1, 0x11, 4, 67, 0x86, 65];
+        response.extend(point);
+        response.extend([0x90, 0]);
+        let mut script = [
+            (vec![0, 0xa4, 4, 0, 5, 0xa0, 0, 0, 3, 8], vec![0x90, 0]),
+            (vec![0, 0xf7, 0, 0x9a, 0], response),
+        ]
+        .into_iter();
+        let metadata = piv::metadata(
+            &profile,
+            MetadataReference::Key(Slot::Authentication),
+            piv::Access::None,
+            &mut |command| {
+                let (expected, response) = script.next().expect("unexpected device operation");
+                assert_eq!(command, expected);
+                Ok::<_, io::Error>(response)
+            },
+        )
+        .unwrap();
+        assert!(script.next().is_none());
+        metadata
+    }
+
+    #[test]
+    fn certificate_and_csr_reject_another_public_key_in_the_same_algorithm() {
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        let secret = p256::SecretKey::from_slice(&[1; 32]).unwrap();
+        let point = secret.public_key().to_encoded_point(false);
+        let metadata = metadata_for_p256(point.as_bytes());
+        let public = metadata.fields().public_key.as_ref().unwrap();
+        let spki = public.to_spki_der().unwrap();
+        assert!(validate_slot_public_key(&metadata, Algorithm::EccP256, &spki).is_ok());
+        // A certificate/CSR may legally carry the same EC point compressed.
+        let key = p256::PublicKey::from_sec1_bytes(point.as_bytes()).unwrap();
+        let compressed = key.to_encoded_point(true);
+        // SPKI for P-256: named curve AlgorithmIdentifier, then the SEC1 point.
+        let mut compressed_spki = vec![
+            0x30, 0x39, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x22, 0,
+        ];
+        compressed_spki.extend_from_slice(compressed.as_bytes());
+        assert!(validate_slot_public_key(&metadata, Algorithm::EccP256, &compressed_spki).is_ok());
+        let other = p256::SecretKey::from_slice(&[2; 32]).unwrap();
+        let other = PublicKey::Ec {
+            algorithm: Algorithm::EccP256,
+            point: other
+                .public_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec(),
+        };
+        assert!(validate_slot_public_key(
+            &metadata,
+            Algorithm::EccP256,
+            &other.to_spki_der().unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn legacy_key_metadata_unavailability_is_not_an_empty_slot() {
+        let mut observations = DeviceObservations::new(b"1.6.2".to_vec());
+        observations.piv_version = Some(PivApplicationVersion([5, 7, 0]));
+        let legacy = DeviceProfile::from_observations(observations).unwrap();
+        let result = piv::metadata(
+            &legacy,
+            MetadataReference::Key(Slot::Authentication),
+            piv::Access::None,
+            &mut |_| -> io::Result<Vec<u8>> { panic!("legacy metadata must fail before any APDU") },
+        );
+        assert!(matches!(
+            &result,
+            Err(PivError::Drive(DriveError::Protocol(error)))
+                if error.kind == ErrorKind::UnsupportedFeature
+        ));
+        let metadata = optional_piv(result).unwrap();
+        assert_eq!(
+            slot_key_type(&legacy, metadata.as_ref()),
+            "unknown (key metadata unavailable)"
+        );
+
+        // Firmware 3.1.2 explicitly reporting 6A88 does establish absence.
+        let mut observations = DeviceObservations::new(b"3.1.2".to_vec());
+        observations.piv_version = Some(PivApplicationVersion([6, 0, 0]));
+        let modern = DeviceProfile::from_observations(observations).unwrap();
+        let mut script = [
+            (vec![0, 0xa4, 4, 0, 5, 0xa0, 0, 0, 3, 8], vec![0x90, 0]),
+            (vec![0, 0xf7, 0, 0x9a, 0], vec![0x6a, 0x88]),
+        ]
+        .into_iter();
+        let result = piv::metadata(
+            &modern,
+            MetadataReference::Key(Slot::Authentication),
+            piv::Access::None,
+            &mut |command| {
+                let (expected, response) = script.next().expect("unexpected APDU");
+                assert_eq!(command, expected);
+                Ok::<_, io::Error>(response)
+            },
+        );
+        assert!(script.next().is_none());
+        let metadata = optional_piv(result).unwrap();
+        assert_eq!(slot_key_type(&modern, metadata.as_ref()), "EMPTY");
+        // A failed SELECT cannot establish that a slot is empty.
+        for response in [vec![0x6a, 0x82], vec![0x6d, 0]] {
+            let result = piv::metadata(
+                &modern,
+                MetadataReference::Key(Slot::Authentication),
+                piv::Access::None,
+                &mut |command| {
+                    assert_eq!(command, &[0, 0xa4, 4, 0, 5, 0xa0, 0, 0, 3, 8]);
+                    Ok::<_, io::Error>(response.clone())
+                },
+            );
+            assert!(optional_piv(result).is_err());
+        }
+
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        let public = p256::SecretKey::from_slice(&[1; 32])
+            .unwrap()
+            .public_key()
+            .to_encoded_point(false);
+        let metadata = metadata_for_p256(public.as_bytes());
+        assert_eq!(slot_key_type(&modern, Some(&metadata)), "ECCP256");
+    }
+
+    #[test]
+    fn optional_records_preserve_real_failures() {
+        for kind in [ErrorKind::NotFound, ErrorKind::UnsupportedFeature] {
+            let result: Result<(), _> = Err(PivError::Drive(DriveError::Protocol(
+                canokey::Error::new(kind),
+            )));
+            assert!(optional_piv(result).unwrap().is_none());
+        }
+        for kind in [
+            ErrorKind::InvalidResponse,
+            ErrorKind::SecurityStatusNotSatisfied,
+            ErrorKind::CapabilityUnknown,
+        ] {
+            let result: Result<(), _> = Err(PivError::Drive(DriveError::Protocol(
+                canokey::Error::new(kind),
+            )));
+            assert!(optional_piv(result).is_err());
+        }
+        let result: Result<(), _> = Err(PivError::Drive(DriveError::Transport(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "disconnected",
+        ))));
+        assert!(optional_piv(result).is_err());
+    }
+
+    #[test]
+    fn pin_reset_rejects_derived_management_keys() {
+        assert!(validate_pin_reset(&piv::PivmanData::default()).is_ok());
+        let derived = piv::PivmanData {
+            salt: Some(vec![1; 16]),
+            ..Default::default()
+        };
+        assert!(validate_pin_reset(&derived).is_err());
+    }
+
+    #[test]
+    fn export_verification_is_honest_about_supported_algorithms() {
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+        let signing = p256::ecdsa::SigningKey::from_slice(&[1; 32]).unwrap();
+        let point = signing.verifying_key().to_encoded_point(false);
+        let public = PublicKey::Ec {
+            algorithm: Algorithm::EccP256,
+            point: point.as_bytes().to_vec(),
+        };
+        let digest = x509::HashAlgorithm::Sha256.hash(b"test");
+        let signature: p256::ecdsa::Signature = signing.sign_prehash(&digest).unwrap();
+        assert!(require_export_verification(public.algorithm()).is_ok());
+        assert!(verify_signature(
+            &public,
+            b"test",
+            signature.to_der().as_bytes()
+        ));
+        assert!(!verify_signature(
+            &public,
+            b"another message",
+            signature.to_der().as_bytes()
+        ));
+        for algorithm in [
+            Algorithm::Ed25519,
+            Algorithm::EccP521,
+            Algorithm::Secp256k1,
+            Algorithm::Sm2,
+            Algorithm::MlDsa65,
+        ] {
+            assert!(require_export_verification(algorithm)
+                .unwrap_err()
+                .to_string()
+                .contains("supported only"));
         }
     }
 }

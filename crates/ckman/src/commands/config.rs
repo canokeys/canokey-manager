@@ -115,8 +115,8 @@ pub enum PassCommand {
         #[arg(value_enum)]
         kind: PassKindArg,
         /// HMAC-SHA1 key as 40 hex characters (prompted when omitted).
-        #[arg(long)]
-        key: Option<String>,
+        #[arg(long, value_parser = super::secret_arg)]
+        key: Option<super::SecretString>,
         /// Append Return after typing (static passwords only).
         #[arg(long)]
         enter: bool,
@@ -460,7 +460,29 @@ fn pass_slot_state(state: &PassSlotState) -> String {
     }
 }
 
+fn pass_hmac_key(hex: &str) -> CliResult<Vec<u8>> {
+    if hex.len() != 40 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("the HMAC-SHA1 key must be 20 bytes (40 hex characters)".into());
+    }
+    // The ASCII/length check makes both slice boundaries valid.
+    (0..40)
+        .step_by(2)
+        .map(|index| {
+            u8::from_str_radix(&hex[index..index + 2], 16)
+                .map_err(|_| "the HMAC-SHA1 key must be hex-encoded".into())
+        })
+        .collect()
+}
+
 fn pass(device: Option<u32>, reader: Option<&str>, command: &PassCommand) -> CliResult<()> {
+    let supplied_hmac_key = match command {
+        PassCommand::Set {
+            kind: PassKindArg::Hmac,
+            key: Some(key),
+            ..
+        } => Some(zeroize::Zeroizing::new(pass_hmac_key(key)?)),
+        _ => None,
+    };
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
     match command {
@@ -477,9 +499,9 @@ fn pass(device: Option<u32>, reader: Option<&str>, command: &PassCommand) -> Cli
         PassCommand::Set {
             slot,
             kind,
-            key,
             enter,
             admin_pin,
+            ..
         } => {
             // Prompt for secrets once; the config is rebuilt per attempt
             // because the operation consumes it (it is not Clone).
@@ -490,23 +512,13 @@ fn pass(device: Option<u32>, reader: Option<&str>, command: &PassCommand) -> Cli
                         .as_bytes()
                         .to_vec(),
                 )),
-                PassKindArg::Hmac => {
-                    let hex = match key {
-                        Some(key) => key.clone(),
-                        None => {
-                            super::prompt_password("Enter the HMAC-SHA1 key (hex): ")?.to_string()
-                        }
-                    };
-                    let bytes = (0..hex.len())
-                        .step_by(2)
-                        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
-                        .collect::<Result<Vec<u8>, _>>()
-                        .map_err(|_| "the HMAC-SHA1 key must be hex-encoded")?;
-                    if bytes.len() != 20 {
-                        return Err("the HMAC-SHA1 key must be 20 bytes (40 hex characters)".into());
+                PassKindArg::Hmac => Some(match supplied_hmac_key {
+                    Some(key) => key,
+                    None => {
+                        let hex = super::prompt_password("Enter the HMAC-SHA1 key (hex): ")?;
+                        zeroize::Zeroizing::new(pass_hmac_key(&hex)?)
                     }
-                    Some(zeroize::Zeroizing::new(bytes))
-                }
+                }),
             };
             let build = |secret: &Option<zeroize::Zeroizing<Vec<u8>>>| match kind {
                 PassKindArg::Off => admin::PassSlotConfig::Off,
@@ -606,11 +618,11 @@ fn keyboard(device: Option<u32>, reader: Option<&str>, command: &KeyboardCommand
                 })
             })?;
             if output == "-" {
-                io::stdout().write_all(keymap.as_bytes())?;
+                super::output::write_stdout(keymap.as_bytes())?;
             } else {
                 std::fs::write(output, keymap.as_bytes())?;
             }
-            println!("Keymap written to {output}.");
+            eprintln!("Keymap written to {output}.");
             Ok(())
         }
         KeyboardCommand::WriteKeymap { layout, file } => {
@@ -703,4 +715,38 @@ fn sm2(device: Option<u32>, reader: Option<&str>, command: &Option<Sm2Command>) 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_pass_hmac_arguments_fail_before_device_access() {
+        for input in ["a".to_string(), "é".repeat(20), "g".repeat(40)] {
+            let command = PassCommand::Set {
+                slot: PassSlotArg::Short,
+                kind: PassKindArg::Hmac,
+                key: Some(super::super::SecretString::new(input)),
+                enter: false,
+                admin_pin: None,
+            };
+            let error = pass(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+            assert!(error.to_string().contains("40 hex characters"));
+        }
+    }
+
+    #[test]
+    fn malformed_pass_hmac_keys_return_errors_without_panicking() {
+        for input in [
+            "a".to_string(),
+            "a".repeat(39),
+            "a".repeat(41),
+            "é".repeat(20),
+            "g".repeat(40),
+        ] {
+            assert!(pass_hmac_key(&input).is_err());
+        }
+        assert_eq!(pass_hmac_key(&"AB".repeat(20)).unwrap(), vec![0xab; 20]);
+    }
 }

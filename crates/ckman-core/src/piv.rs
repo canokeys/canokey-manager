@@ -28,6 +28,20 @@ pub use canokey::piv::{
 };
 pub use canokey::piv::{BatchItem, BatchRequest, Sm2Agreement, Sm2AgreementInput, Sm2Role};
 
+/// Stage at which a management-key replacement failed. The key may already
+/// have changed, including when the replacement command lost its response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagementKeyUpdateStage {
+    /// Replacing the card's active management key.
+    ReplaceKey,
+    /// Updating ADMIN DATA after the replacement.
+    UpdateMetadata,
+    /// Updating the PIN-protected PRINTED object.
+    StoreProtectedKey,
+    /// Completing and verifying PUK blocking.
+    ProtectPuk,
+}
+
 /// Failure preparing or driving a PIV operation.
 #[derive(Debug, thiserror::Error)]
 pub enum PivError<E> {
@@ -37,6 +51,14 @@ pub enum PivError<E> {
     /// The host CSPRNG failed before any I/O; nothing was sent to the card.
     #[error("failed to generate randomness: {0}")]
     Random(#[from] getrandom::Error),
+    /// A replacement was attempted; callers must retain their recovery key.
+    #[error("management key replacement may have committed; failed at {stage:?}: {source}")]
+    ManagementKeyUpdate {
+        /// Last attempted stage; no rollback or retry was performed.
+        stage: ManagementKeyUpdateStage,
+        /// Underlying error, without key bytes.
+        source: DriveError<E>,
+    },
     /// Host-side X.509 building failed.
     #[error(transparent)]
     X509(#[from] crate::x509::X509Error),
@@ -527,7 +549,32 @@ pub fn random<E>(
     run(piv::random_selected(length, options()), exchange)
 }
 
-/// Generate one key pair per slot in a single batched operation: one SELECT,
+/// Failure during a batch of key generations or its progress callback.
+#[derive(Debug, thiserror::Error)]
+pub enum GenerateKeysError<E, C> {
+    /// Card, transport, or preflight failure. Completed callbacks stay committed.
+    #[error(transparent)]
+    Operation(#[from] PivError<E>),
+    /// The callback failed; no further card commands were sent.
+    #[error("key generation callback failed: {0}")]
+    Callback(C),
+}
+
+/// Validate that a generation batch targets at least one distinct slot.
+/// Duplicate targets would replace the same private key more than once.
+pub fn validate_generation_slots(slots: &[Slot]) -> Result<(), Error> {
+    if slots.is_empty()
+        || slots
+            .iter()
+            .enumerate()
+            .any(|(index, slot)| slots[..index].contains(slot))
+    {
+        return Err(Error::new(ErrorKind::InvalidArgument));
+    }
+    Ok(())
+}
+
+/// Generate one key pair per distinct slot in a single batched operation: one SELECT,
 /// one explicit management authentication, then one GENERATE per slot.
 /// `progress` is called with the number of completed keys after each one
 /// finishes. A failure stops the batch (no rollback); the error retains its
@@ -539,27 +586,74 @@ pub fn generate_keys<E>(
     exchange: &mut Exchange<'_, E>,
     progress: &mut dyn FnMut(usize),
 ) -> Result<Vec<PublicKey>, PivError<E>> {
+    match generate_keys_with_progress(profile, slots, management, exchange, &mut |done, _| {
+        progress(done);
+        Ok::<(), std::convert::Infallible>(())
+    }) {
+        Ok(keys) => Ok(keys),
+        Err(GenerateKeysError::Operation(error)) => Err(error),
+        Err(GenerateKeysError::Callback(never)) => match never {},
+    }
+}
+
+/// Generate distinct slot keys, calling `progress` with each public key before
+/// sending any command for the next slot. The count is one-based. A callback
+/// error aborts immediately; generated keys and completed callbacks are retained.
+/// This lets callers save public keys even if a later generation fails.
+pub fn generate_keys_with_progress<E, C>(
+    profile: &DeviceProfile,
+    slots: Vec<KeyParameters>,
+    management: ManagementAuthentication,
+    exchange: &mut Exchange<'_, E>,
+    progress: &mut dyn FnMut(usize, &PublicKey) -> Result<(), C>,
+) -> Result<Vec<PublicKey>, GenerateKeysError<E, C>> {
+    validate_generation_slots(
+        &slots
+            .iter()
+            .map(|parameters| parameters.slot)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(DriveError::from)
+    .map_err(PivError::from)?;
     let total = slots.len();
     let mut requests = Vec::with_capacity(total + 1);
     requests.push(BatchRequest::AuthenticateManagement(management));
     requests.extend(slots.into_iter().map(BatchRequest::GenerateKey));
-    let mut operation = piv::batch(profile, requests, options()).map_err(DriveError::from)?;
-    let mut step = operation.start().map_err(DriveError::from)?;
+    let mut operation = piv::batch(profile, requests, options())
+        .map_err(DriveError::from)
+        .map_err(PivError::from)?;
+    let mut step = operation
+        .start()
+        .map_err(DriveError::from)
+        .map_err(PivError::from)?;
     let mut reported = 0;
     while step == canokey::Step::Exchange {
-        let response = exchange(operation.command().map_err(DriveError::from)?.as_bytes())
-            .map_err(DriveError::Transport)?;
-        step = operation.advance(&response).map_err(DriveError::from)?;
+        let command = operation
+            .command()
+            .map_err(DriveError::from)
+            .map_err(PivError::from)?;
+        let response = exchange(command.as_bytes())
+            .map_err(DriveError::Transport)
+            .map_err(PivError::from)?;
+        step = operation
+            .advance(&response)
+            .map_err(DriveError::from)
+            .map_err(PivError::from)?;
         if let Some(done) = piv::batch_progress(&operation) {
             // The first item is the management authentication.
-            let completed = done.items().len().saturating_sub(1);
-            if completed > reported {
-                reported = completed;
-                progress(completed);
+            for item in done.items().iter().skip(reported + 1) {
+                let BatchItem::PublicKey(public) = item else {
+                    return Err(PivError::protocol(ErrorKind::InvalidResponse).into());
+                };
+                reported += 1;
+                progress(reported, public).map_err(GenerateKeysError::Callback)?;
             }
         }
     }
-    let results = operation.take_result().map_err(DriveError::from)?;
+    let results = operation
+        .take_result()
+        .map_err(DriveError::from)
+        .map_err(PivError::from)?;
     let keys: Vec<PublicKey> = results
         .into_items()
         .into_iter()
@@ -569,7 +663,7 @@ pub fn generate_keys<E>(
         })
         .collect();
     if keys.len() != total {
-        return Err(PivError::protocol(ErrorKind::InvalidResponse));
+        return Err(PivError::protocol(ErrorKind::InvalidResponse).into());
     }
     Ok(keys)
 }
@@ -961,7 +1055,6 @@ pub fn read_pivman_protected<E>(
 }
 
 /// A management-key replacement, keeping pivman metadata in sync.
-#[derive(Debug)]
 pub struct ManagementKeyUpdate {
     /// The new 24-byte management key.
     pub new_key_bytes: [u8; 24],
@@ -977,6 +1070,29 @@ pub struct ManagementKeyUpdate {
     pub access: piv::Access,
 }
 
+impl std::fmt::Debug for ManagementKeyUpdate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ManagementKeyUpdate")
+            .field("new_key_bytes", &"[REDACTED]")
+            .field("algorithm", &self.algorithm)
+            .field("touch", &self.touch)
+            .field("protect", &self.protect)
+            .field("pin", &self.pin)
+            .field("access", &self.access)
+            .finish()
+    }
+}
+
+fn management_update_error<E>(stage: ManagementKeyUpdateStage, error: PivError<E>) -> PivError<E> {
+    // These card-operation factories return drive failures; preparation
+    // errors occur before replacement and retain their original type.
+    match error {
+        PivError::Drive(source) => PivError::ManagementKeyUpdate { stage, source },
+        error => error,
+    }
+}
+
 /// Replace the management key while keeping pivman metadata in sync:
 /// clears the derivation salt, tracks
 /// the stored-key flag in ADMIN DATA, and stores/clears the key in PRINTED.
@@ -984,6 +1100,11 @@ pub struct ManagementKeyUpdate {
 /// connection. The PIN is verified adjacent to the protected-object writes.
 /// Protection also blocks the PUK and verifies its live retry count before
 /// returning, so PUK recovery cannot bypass the protected management key.
+///
+/// These card commands are not atomic. Before calling, durably retain the new
+/// key for recovery after a disconnect or process termination. Failures from
+/// the replacement attempt onward carry [`PivError::ManagementKeyUpdate`];
+/// callers must not assume the old key is still active or retry blindly.
 pub fn set_management_key_synced<E>(
     profile: &DeviceProfile,
     update: ManagementKeyUpdate,
@@ -997,7 +1118,8 @@ pub fn set_management_key_synced<E>(
         pin,
         access,
     } = update;
-    let new_key_bytes = &new_key_bytes;
+    let new_key_bytes = Zeroizing::new(new_key_bytes);
+    let new_key_bytes = &*new_key_bytes;
     let new_key = ManagementKey::from_bytes(algorithm, new_key_bytes).map_err(DriveError::from)?;
     let replacement = if protect {
         Some(random_puk_replacement()?)
@@ -1019,7 +1141,8 @@ pub fn set_management_key_synced<E>(
         None
     };
     let old_value = pivman.to_value();
-    set_management_key(profile, new_key.clone(), touch, access, exchange)?;
+    set_management_key(profile, new_key.clone(), touch, access, exchange)
+        .map_err(|error| management_update_error(ManagementKeyUpdateStage::ReplaceKey, error))?;
     let mut updated = pivman.clone();
     if updated.has_derived_key() {
         updated.salt = None;
@@ -1028,47 +1151,55 @@ pub fn set_management_key_synced<E>(
     if protect {
         updated.set_puk_blocked(true);
     }
+    // Store the recovery copy before publishing the stored-key flag. Do not
+    // overwrite the old copy before the active key has been replaced.
+    if let Some(mut protected) = protected {
+        let write_protected = if protect {
+            protected.key = Some(SecretBytes::new(new_key_bytes.to_vec()));
+            true
+        } else {
+            protected.key.take().is_some()
+        };
+        if write_protected {
+            let pin = pin.clone().expect("PIN presence checked above");
+            write_object(
+                profile,
+                pivman_protected_object_id(),
+                SecretBytes::new(protected.to_value()),
+                piv::Access::PinAndManagement {
+                    pin,
+                    management: external_auth(new_key.clone()),
+                },
+                exchange,
+            )
+            .map_err(|error| {
+                management_update_error(ManagementKeyUpdateStage::StoreProtectedKey, error)
+            })?;
+        }
+    }
     if updated.to_value() != old_value {
-        let auth = external_auth(new_key.clone());
         write_object(
             profile,
             pivman_object_id(),
             SecretBytes::new(updated.to_value()),
-            piv::Access::Management(auth),
+            piv::Access::Management(external_auth(new_key)),
             exchange,
-        )?;
+        )
+        .map_err(|error| {
+            management_update_error(ManagementKeyUpdateStage::UpdateMetadata, error)
+        })?;
     }
-    if let Some(mut protected) = protected {
-        if protect {
-            protected.key = Some(SecretBytes::new(new_key_bytes.to_vec()));
-        } else if protected.key.is_some() {
-            protected.key = None;
-        } else {
-            return Ok(());
-        }
-        let pin = pin.expect("PIN presence checked above");
-        let auth = external_auth(new_key);
-        write_object(
-            profile,
-            pivman_protected_object_id(),
-            SecretBytes::new(protected.to_value()),
-            piv::Access::PinAndManagement {
-                pin: pin.clone(),
-                management: auth,
-            },
+    if let Some(replacement) = replacement {
+        run(
+            piv::protection::pin_managed(
+                profile,
+                Some(replacement),
+                piv::Access::Pin(pin.expect("PIN presence checked above")),
+                options(),
+            ),
             exchange,
-        )?;
-        if let Some(replacement) = replacement {
-            run(
-                piv::protection::pin_managed(
-                    profile,
-                    Some(replacement),
-                    piv::Access::Pin(pin),
-                    options(),
-                ),
-                exchange,
-            )?;
-        }
+        )
+        .map_err(|error| management_update_error(ManagementKeyUpdateStage::ProtectPuk, error))?;
     }
     Ok(())
 }
@@ -1082,15 +1213,13 @@ pub fn change_pin_synced<E>(
     new_pin: &[u8],
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), PivError<E>> {
-    change_pin(
-        profile,
-        Pin::from_bytes(old_pin).map_err(DriveError::from)?,
-        Pin::from_bytes(new_pin).map_err(DriveError::from)?,
-        exchange,
-    )?;
+    let old = Pin::from_bytes(old_pin).map_err(DriveError::from)?;
+    let new = Pin::from_bytes(new_pin).map_err(DriveError::from)?;
+    // Read synchronization state before changing the PIN. A failed read must
+    // not leave a changed PIN paired with the old derived management key.
     let pivman = read_pivman_data(profile, exchange)?;
     if !pivman.has_derived_key() {
-        return Ok(());
+        return change_pin(profile, old, new, exchange);
     }
     let salt = pivman.salt.as_ref().expect("derived key has a salt");
     let old_key = ManagementKey::from_bytes(
@@ -1098,13 +1227,8 @@ pub fn change_pin_synced<E>(
         derive_management_key(old_pin, salt).as_slice(),
     )
     .map_err(DriveError::from)?;
-    // Prove the old key before rotating, then verify the new PIN.
+    // Authenticate and prepare randomness before committing any mutation.
     authenticate(profile, external_auth(old_key.clone()), exchange)?;
-    verify_pin(
-        profile,
-        Pin::from_bytes(new_pin).map_err(DriveError::from)?,
-        exchange,
-    )?;
     let mut new_salt = [0; 16];
     getrandom::fill(&mut new_salt)?;
     let new_key = ManagementKey::from_bytes(
@@ -1112,6 +1236,8 @@ pub fn change_pin_synced<E>(
         derive_management_key(new_pin, &new_salt).as_slice(),
     )
     .map_err(DriveError::from)?;
+    change_pin(profile, old, new.clone(), exchange)?;
+    verify_pin(profile, new, exchange)?;
     set_management_key(
         profile,
         new_key.clone(),
@@ -1137,6 +1263,28 @@ mod tests {
     use canokey::compatibility::{AlgorithmConfig, DeviceObservations, PivApplicationVersion};
     use std::collections::VecDeque;
     use std::io;
+
+    #[test]
+    fn invalid_certificate_validity_never_reaches_the_device() {
+        let request = SignRequest {
+            slot: Slot::Authentication,
+            algorithm: Algorithm::Rsa2048,
+            spki_der: include_bytes!("../tests/fixtures/rsa-export-verify-openssl-pub.der"),
+            subject: "CN=audit",
+            hash: Some(HashAlgorithm::Sha256),
+            access: Access::None,
+        };
+        for (start, end) in [(2, 1), (-1, 0), (0, 253_402_300_800)] {
+            let result = generate_self_signed_certificate::<io::Error>(
+                &profile("3.1.0"),
+                &request,
+                start,
+                end,
+                &mut |_| panic!("invalid validity must fail before SELECT or PIN verification"),
+            );
+            assert!(matches!(result, Err(PivError::X509(_))));
+        }
+    }
 
     /// Transcript-driven exchange, mirroring the probe tests in `lib.rs`.
     struct Script {
@@ -1583,6 +1731,31 @@ mod tests {
     }
 
     #[test]
+    fn change_pin_synced_reads_configuration_before_mutation() {
+        const GET_ADMIN: &[u8] = &[0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xff, 0, 0];
+        // 3.1.0, missing ADMIN DATA means an independent management key.
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (GET_ADMIN, &[0x6a, 0x82]),
+            (SELECT, OK),
+            (b"\0\x24\0\x80\x10123456\xff\xff654321\xff\xff", OK),
+        ]);
+        change_pin_synced(&profile("3.1.0"), b"123456", b"654321", &mut |c| {
+            script.exchange(c)
+        })
+        .unwrap();
+        assert!(script.transcript.is_empty());
+        // A real read failure must terminate before sending CHANGE REFERENCE DATA.
+        let mut script = Script::new(&[(SELECT, OK), (GET_ADMIN, &[0x65, 0x81])]);
+        assert!(
+            change_pin_synced(&profile("3.1.0"), b"123456", b"654321", &mut |c| script
+                .exchange(c))
+            .is_err()
+        );
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
     fn derive_management_key_known_answer() {
         // PBKDF2-HMAC-SHA1(pin="123456", salt=0^16, 10000 rounds, 24 bytes),
         // a known-answer vector cross-checked against an independent tool.
@@ -1593,13 +1766,12 @@ mod tests {
         );
     }
 
-    #[test]
     #[allow(clippy::vec_init_then_push)]
-    fn set_management_key_synced_protect_full_transcript() {
+    fn management_key_protection_transcript() -> Vec<(Vec<u8>, Vec<u8>)> {
         // Blank device (both pivman objects missing), protect=true:
         // read ADMIN (6A82), read PRINTED with PIN (6A82), replace the key
-        // (external AES auth with key 00..17), write ADMIN DATA flags and
-        // PRINTED with the new key (external auth; witness 0^16 → the
+        // (external AES auth with key 00..17), write PRINTED with the new
+        // key before publishing ADMIN DATA flags (external auth; witness 0^16 → the
         // OpenSSL-computed AES-192 ciphertext 5e9c...).
         let new_key = [0x42; 24];
         let new_auth: &[(&[u8], &[u8])] = &[
@@ -1631,17 +1803,17 @@ mod tests {
         let mut set_key = hex("00ffffff1b0a9b18");
         set_key.extend(new_key);
         transcript.push((set_key, OK.to_vec()));
-        // 4. write ADMIN DATA (flags: stored key and PUK blocking).
-        transcript.push((SELECT.to_vec(), OK.to_vec()));
-        transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
-        transcript.push((hex("00db3fff0c5c035fff0053058003810103"), OK.to_vec()));
-        // 5. write PRINTED under the new key, PIN verified adjacent.
+        // 4. write PRINTED under the new key, PIN verified adjacent.
         transcript.push((SELECT.to_vec(), OK.to_vec()));
         transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
         transcript.push((VERIFY_123456.to_vec(), OK.to_vec()));
         let mut printed = hex("00db3fff235c035fc109531c881a8918");
         printed.extend(new_key);
         transcript.push((printed, OK.to_vec()));
+        // 5. write ADMIN DATA (flags: stored key and PUK blocking).
+        transcript.push((SELECT.to_vec(), OK.to_vec()));
+        transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
+        transcript.push((hex("00db3fff0c5c035fff0053058003810103"), OK.to_vec()));
         // 6. Authenticate the stored key and confirm an already blocked PUK.
         transcript.push((SELECT.to_vec(), OK.to_vec()));
         transcript.push((VERIFY_123456.to_vec(), OK.to_vec()));
@@ -1653,6 +1825,13 @@ mod tests {
         transcript.push((hex("00cb3fff055c035fc10900"), stored));
         transcript.push((hex("00f7009b00"), hex("01010a9000")));
         transcript.extend(new_auth.iter().map(|(c, r)| (c.to_vec(), r.to_vec())));
+        transcript
+    }
+
+    #[test]
+    fn set_management_key_synced_protect_full_transcript() {
+        let new_key = [0x42; 24];
+        let transcript = management_key_protection_transcript();
         let mut script = Script {
             transcript: transcript.into(),
         };
@@ -1663,6 +1842,86 @@ mod tests {
                 algorithm: ManagementKeyAlgorithm::Aes192,
                 touch: ManagementTouchPolicy::Never,
                 protect: true,
+                pin: Some(Pin::from_bytes(b"123456").unwrap()),
+                access: aes_access(),
+            },
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn management_key_rotation_preserves_failure_stage_at_every_exchange() {
+        let transcript = management_key_protection_transcript();
+        assert_eq!(transcript[8].0[..8], hex("00ffffff1b0a9b18"));
+        assert!(transcript[13].0.starts_with(&hex("00db3fff235c035fc109")));
+        assert!(transcript[17].0.starts_with(&hex("00db3fff0c5c035fff00")));
+        for fail_at in 0..transcript.len() {
+            let mut calls = 0;
+            let update = ManagementKeyUpdate {
+                new_key_bytes: [0x42; 24],
+                algorithm: ManagementKeyAlgorithm::Aes192,
+                touch: ManagementTouchPolicy::Never,
+                protect: true,
+                pin: Some(Pin::from_bytes(b"123456").unwrap()),
+                access: aes_access(),
+            };
+            assert!(!format!("{update:?}").contains("66, 66"));
+            let error = set_management_key_synced(&profile("3.1.0"), update, &mut |command| {
+                let index = calls;
+                calls += 1;
+                assert_eq!(command, transcript[index].0);
+                // Model a lost response too: the card may have already
+                // applied this command. Never issue a retry or rollback.
+                if index == fail_at {
+                    Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "response lost",
+                    ))
+                } else {
+                    Ok(transcript[index].1.clone())
+                }
+            })
+            .unwrap_err();
+            assert_eq!(calls, fail_at + 1);
+            let expected_stage = match fail_at {
+                0..=4 => None,
+                5..=8 => Some(ManagementKeyUpdateStage::ReplaceKey),
+                9..=13 => Some(ManagementKeyUpdateStage::StoreProtectedKey),
+                14..=17 => Some(ManagementKeyUpdateStage::UpdateMetadata),
+                _ => Some(ManagementKeyUpdateStage::ProtectPuk),
+            };
+            match (error, expected_stage) {
+                (PivError::Drive(DriveError::Transport(_)), None) => {}
+                (PivError::ManagementKeyUpdate { stage, source }, Some(expected)) => {
+                    assert_eq!(stage, expected);
+                    assert!(matches!(source, DriveError::Transport(_)));
+                }
+                (error, expected) => panic!("exchange {fail_at}: {error}; expected {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn removing_protection_clears_flags_even_when_stored_record_is_missing() {
+        let transcript = management_key_protection_transcript();
+        let mut steps = transcript[..9].to_vec();
+        // Existing stored-key flag, but no PRINTED record: a caller with
+        // an explicit old key can still replace it and clear the flag.
+        steps[1].1 = hex("530580038101039000");
+        steps.extend_from_slice(&transcript[14..18]);
+        steps.last_mut().unwrap().0 = hex("00db3fff0c5c035fff0053058003810101");
+        let mut script = Script {
+            transcript: steps.into(),
+        };
+        set_management_key_synced(
+            &profile("3.1.0"),
+            ManagementKeyUpdate {
+                new_key_bytes: [0x42; 24],
+                algorithm: ManagementKeyAlgorithm::Aes192,
+                touch: ManagementTouchPolicy::Never,
+                protect: false,
                 pin: Some(Pin::from_bytes(b"123456").unwrap()),
                 access: aes_access(),
             },
@@ -1947,8 +2206,7 @@ mod tests {
         assert!(script.transcript.is_empty());
     }
 
-    #[test]
-    fn batch_generate_reports_progress_per_key() {
+    fn batch_generation_fixture() -> (Script, ManagementAuthentication) {
         // Fixture mirrored from canokey-piv's batch.rs: one AES-192 external
         // authentication, then one GENERATE per slot.
         let mut public = hex("7f49438641");
@@ -1969,6 +2227,12 @@ mod tests {
             )
             .unwrap(),
         );
+        (script, auth)
+    }
+
+    #[test]
+    fn batch_generate_reports_progress_per_key() {
+        let (mut script, auth) = batch_generation_fixture();
         let mut progress = Vec::new();
         let keys = generate_keys(
             &profile("3.1.0"),
@@ -1985,6 +2249,83 @@ mod tests {
         assert!(matches!(keys[0], PublicKey::Ec { .. }));
         assert_eq!(progress, [1, 2]);
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn batch_generation_rejects_empty_and_duplicate_slots_before_io() {
+        for slots in [vec![], vec![Slot::Authentication; 2]] {
+            let error = generate_keys(
+                &profile("3.1.0"),
+                slots
+                    .into_iter()
+                    .map(|slot| KeyParameters::new(slot, Algorithm::EccP256))
+                    .collect(),
+                batch_generation_fixture().1,
+                &mut |_| -> io::Result<Vec<u8>> { panic!("invalid batch caused I/O") },
+                &mut |_| panic!("invalid batch reported progress"),
+            )
+            .unwrap_err();
+            assert!(matches!(error, PivError::Drive(DriveError::Protocol(error))
+                if error.kind == ErrorKind::InvalidArgument));
+        }
+    }
+
+    #[test]
+    fn batch_generation_delivers_public_key_before_a_later_failure() {
+        let (mut script, auth) = batch_generation_fixture();
+        script.transcript.back_mut().unwrap().1 = vec![0x69, 0x85];
+        let saved = std::cell::Cell::new(0);
+        let error = generate_keys_with_progress(
+            &profile("3.1.0"),
+            vec![
+                KeyParameters::new(Slot::Authentication, Algorithm::EccP256),
+                KeyParameters::new(Slot::Signature, Algorithm::EccP256),
+            ],
+            auth,
+            &mut |command| {
+                if command == hex("0047009c05ac03800111") {
+                    assert_eq!(saved.get(), 1, "save first public key before next GENERATE");
+                }
+                script.exchange(command)
+            },
+            &mut |done, public| {
+                assert!(public.to_spki_der().is_ok());
+                saved.set(done);
+                Ok::<_, io::Error>(())
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, GenerateKeysError::Operation(PivError::Drive(DriveError::Protocol(error)))
+            if error.kind == ErrorKind::ConditionsNotSatisfied)
+        );
+        assert_eq!(saved.get(), 1);
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn batch_generation_stops_before_next_slot_when_saving_fails() {
+        let (mut script, auth) = batch_generation_fixture();
+        let error = generate_keys_with_progress(
+            &profile("3.1.0"),
+            vec![
+                KeyParameters::new(Slot::Authentication, Algorithm::EccP256),
+                KeyParameters::new(Slot::Signature, Algorithm::EccP256),
+            ],
+            auth,
+            &mut |command| script.exchange(command),
+            &mut |done, _| {
+                assert_eq!(done, 1);
+                Err::<(), _>("disk full")
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, GenerateKeysError::Callback("disk full")));
+        assert_eq!(
+            script.transcript.len(),
+            1,
+            "second key must not be replaced"
+        );
     }
 }
 
@@ -2182,7 +2523,7 @@ mod extended_algorithm_tests {
                 .unwrap()
                 .oid
                 .to_string(),
-            "2.16.840.1.101.3.4.18"
+            "2.16.840.1.101.3.4.3.18"
         );
     }
 }

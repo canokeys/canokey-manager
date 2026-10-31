@@ -5,7 +5,8 @@ use canokey::oath::{Algorithm, Kind};
 use zeroize::Zeroizing;
 
 /// Credential data parsed from an `otpauth://` URI.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Debug output redacts the credential secret.
+#[derive(Clone, PartialEq, Eq)]
 pub struct OtpAuth {
     /// Counter-based or time-based credential.
     pub kind: Kind,
@@ -25,6 +26,21 @@ pub struct OtpAuth {
     pub counter: u32,
 }
 
+impl std::fmt::Debug for OtpAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OtpAuth")
+            .field("kind", &self.kind)
+            .field("issuer", &self.issuer)
+            .field("account", &self.account)
+            .field("secret", &"[REDACTED]")
+            .field("algorithm", &self.algorithm)
+            .field("digits", &self.digits)
+            .field("period", &self.period)
+            .field("counter", &self.counter)
+            .finish()
+    }
+}
+
 /// URI parsing failure.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum UriError {
@@ -37,8 +53,8 @@ pub enum UriError {
     /// The label carries no account name.
     #[error("missing account name in the URI label")]
     MissingName,
-    /// The mandatory `secret` parameter is absent.
-    #[error("missing secret parameter")]
+    /// The mandatory `secret` parameter is absent or empty.
+    #[error("missing or empty secret parameter")]
     MissingSecret,
     /// The `secret` parameter is not valid base32.
     #[error("invalid base32 secret: {0}")]
@@ -55,22 +71,26 @@ pub enum UriError {
     /// Malformed `period` parameter.
     #[error("invalid period parameter")]
     Period,
-    /// Malformed `counter` parameter.
-    #[error("invalid counter parameter")]
+    /// A recognized query parameter occurs more than once after decoding.
+    #[error("duplicate {0} parameter")]
+    DuplicateParameter(&'static str),
+    /// Malformed `counter` parameter, or missing for HOTP.
+    #[error("missing or invalid counter parameter")]
     Counter,
 }
 
 /// Base32 decoding failure.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("invalid base32 character")]
+#[error("invalid base32 encoding")]
 pub struct Base32Error;
 
 /// Decode RFC 4648 base32, accepting lowercase and ignoring spaces and `=`
 /// padding (the leniency OATH secrets are conventionally shared with).
+/// Incomplete final groups and nonzero unused padding bits are rejected.
 pub fn base32_decode(input: &str) -> Result<Vec<u8>, Base32Error> {
     let mut accumulator = 0u32;
     let mut bits = 0u32;
-    let mut output = Vec::with_capacity(input.len() * 5 / 8);
+    let mut output = Zeroizing::new(Vec::with_capacity(input.len() * 5 / 8));
     for byte in input.bytes() {
         let value = match byte {
             b'A'..=b'Z' => byte - b'A',
@@ -86,7 +106,12 @@ pub fn base32_decode(input: &str) -> Result<Vec<u8>, Base32Error> {
             output.push((accumulator >> bits) as u8);
         }
     }
-    Ok(output)
+    // Valid unpadded lengths leave fewer than five bits, all zero padding.
+    // Otherwise a truncated/mistyped secret would silently lose data.
+    if bits >= 5 || accumulator & ((1 << bits) - 1) != 0 {
+        return Err(Base32Error);
+    }
+    Ok(std::mem::take(&mut *output))
 }
 
 /// Encode as RFC 4648 base32 without padding.
@@ -99,6 +124,7 @@ pub fn base32_encode(data: &[u8]) -> String {
             accumulator = (accumulator << 8) | u64::from(byte);
         }
         let digits = (chunk.len() * 8).div_ceil(5);
+        accumulator <<= digits * 5 - chunk.len() * 8;
         for index in (0..digits).rev() {
             output.push(ALPHABET[(accumulator >> (index * 5)) as usize & 31] as char);
         }
@@ -116,7 +142,7 @@ fn percent_decode(input: &str) -> Result<String, UriError> {
         }
     }
     let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
+    let mut output = Zeroizing::new(Vec::with_capacity(bytes.len()));
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
@@ -130,12 +156,15 @@ fn percent_decode(input: &str) -> Result<String, UriError> {
             index += 1;
         }
     }
-    String::from_utf8(output).map_err(|_| UriError::PercentEncoding)
+    std::str::from_utf8(&output)
+        .map(str::to_owned)
+        .map_err(|_| UriError::PercentEncoding)
 }
 
 /// Parse an `otpauth://totp/...` or `otpauth://hotp/...` URI: the label is
 /// `[issuer:]account`, and the `issuer` query parameter overrides the label
-/// prefix.
+/// prefix. Query parameter names and values are percent-decoded; repeated
+/// recognized parameters are rejected rather than silently choosing a value.
 pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
     let rest = uri
         .trim()
@@ -161,16 +190,34 @@ pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
     let mut algorithm = Algorithm::Sha1;
     let mut digits = 6;
     let mut period = 30;
-    let mut counter = 0;
+    let mut counter = None;
+    const PARAMETERS: [&str; 6] = [
+        "secret",
+        "issuer",
+        "algorithm",
+        "digits",
+        "period",
+        "counter",
+    ];
+    let mut seen = [false; 6];
     for pair in query.split('&') {
         if pair.is_empty() {
             continue;
         }
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = percent_decode(value)?;
-        match key {
-            "secret" => secret = Some(base32_decode(&value)?),
-            "issuer" => issuer = Some(value),
+        let key = Zeroizing::new(percent_decode(key)?);
+        let value = Zeroizing::new(percent_decode(value)?);
+        if let Some(index) = PARAMETERS
+            .iter()
+            .position(|parameter| *parameter == key.as_str())
+        {
+            if std::mem::replace(&mut seen[index], true) {
+                return Err(UriError::DuplicateParameter(PARAMETERS[index]));
+            }
+        }
+        match key.as_str() {
+            "secret" => secret = Some(Zeroizing::new(base32_decode(&value)?)),
+            "issuer" => issuer = Some(value.to_string()),
             "algorithm" => {
                 algorithm = match value.to_ascii_uppercase().as_str() {
                     "SHA1" => Algorithm::Sha1,
@@ -179,9 +226,19 @@ pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
                     _ => return Err(UriError::Algorithm),
                 }
             }
-            "digits" => digits = value.parse().map_err(|_| UriError::Digits)?,
-            "period" => period = value.parse().map_err(|_| UriError::Period)?,
-            "counter" => counter = value.parse().map_err(|_| UriError::Counter)?,
+            "digits" => {
+                digits = value.parse().map_err(|_| UriError::Digits)?;
+                if !(4..=8).contains(&digits) {
+                    return Err(UriError::Digits);
+                }
+            }
+            "period" => {
+                period = value.parse().map_err(|_| UriError::Period)?;
+                if period == 0 {
+                    return Err(UriError::Period);
+                }
+            }
+            "counter" => counter = Some(value.parse().map_err(|_| UriError::Counter)?),
             _ => {}
         }
     }
@@ -189,17 +246,81 @@ pub fn parse(uri: &str) -> Result<OtpAuth, UriError> {
         kind,
         issuer,
         account,
-        secret: Zeroizing::new(secret.ok_or(UriError::MissingSecret)?),
+        secret: secret
+            .filter(|bytes| !bytes.is_empty())
+            .ok_or(UriError::MissingSecret)?,
         algorithm,
         digits,
         period,
-        counter,
+        counter: match counter {
+            Some(value) => value,
+            None if kind == Kind::Hotp => return Err(UriError::Counter),
+            None => 0,
+        },
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_parameter_names_are_percent_decoded() {
+        // RFC 3986 section 6.2.2.2: percent-encoded unreserved characters
+        // are equivalent to their literal form. Cross-checked with Python
+        // urllib.parse.parse_qsl; '+' is deliberately not form-decoded.
+        let plain = "otpauth://hotp/Issuer:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example&algorithm=SHA256&digits=8&period=45&counter=17";
+        let encoded = "otpauth://hotp/Issuer:alice?%73ecret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&%69ssuer=Example&%61lgorithm=SHA256&%64igits=8&%70eriod=45&%63ounter=17";
+        assert_eq!(parse(encoded).unwrap(), parse(plain).unwrap());
+        for key in ["%", "%7", "%ZZ", "%ff"] {
+            assert_eq!(
+                parse(&format!("otpauth://totp/alice?secret=MFRGGZDF&{key}=x")),
+                Err(UriError::PercentEncoding)
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_recognized_parameters_are_rejected_after_decoding() {
+        for (key, value) in [
+            ("secret", "MFRGGZDF"),
+            ("issuer", "Example"),
+            ("algorithm", "SHA1"),
+            ("digits", "6"),
+            ("period", "30"),
+            ("counter", "1"),
+        ] {
+            let first = if key == "secret" {
+                format!("secret={value}&")
+            } else {
+                format!("secret=MFRGGZDF&{key}={value}&")
+            };
+            for repeated in [
+                key.to_string(),
+                format!("%{:02x}{}", key.as_bytes()[0], &key[1..]),
+            ] {
+                let uri = format!("otpauth://totp/alice?{first}{repeated}={value}");
+                assert_eq!(parse(&uri), Err(UriError::DuplicateParameter(key)));
+            }
+        }
+        // Unrecognized extensions may repeat without changing a credential.
+        assert!(parse("otpauth://totp/alice?secret=MFRGGZDF&x=1&x=2").is_ok());
+    }
+
+    #[test]
+    fn credential_debug_redacts_secret() {
+        let parsed = parse("otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP").unwrap();
+        let decimal_secret = format!("{:?}", parsed.secret.as_slice());
+        for debug in [format!("{parsed:?}"), format!("{parsed:#?}")] {
+            assert!(
+                debug.contains("REDACTED"),
+                "credential secret must be redacted"
+            );
+            assert!(!debug.contains(&decimal_secret));
+            assert!(debug.contains("alice"));
+            assert!(debug.contains("Example"));
+        }
+    }
 
     #[test]
     fn parses_totp_uri_with_label_issuer() {
@@ -236,6 +357,44 @@ mod tests {
     }
 
     #[test]
+    fn base32_rejects_incomplete_groups_and_nonzero_padding_bits() {
+        for bad in ["M", "MZX", "MZXW6Y", "MZ", "MZXR", "MZXW7", "MZXW6YR"] {
+            assert!(base32_decode(bad).is_err(), "{bad}");
+        }
+        for len in 0..80 {
+            let bytes: Vec<u8> = (0..len).map(|index| (index * 37) as u8).collect();
+            assert_eq!(base32_decode(&base32_encode(&bytes)).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn uri_requires_a_hotp_counter_and_valid_credential_fields() {
+        assert_eq!(
+            parse("otpauth://hotp/x?secret=MY").unwrap_err(),
+            UriError::Counter
+        );
+        // Zero is a valid URI value; hardware representability is a CLI check.
+        assert_eq!(
+            parse("otpauth://hotp/x?secret=MY&counter=0")
+                .unwrap()
+                .counter,
+            0
+        );
+        for digits in [0, 3, 9, 255] {
+            assert_eq!(
+                parse(&format!("otpauth://totp/x?secret=MY&digits={digits}")).unwrap_err(),
+                UriError::Digits
+            );
+        }
+        for secret in ["", "==", "   "] {
+            assert_eq!(
+                parse(&format!("otpauth://totp/x?secret={secret}")).unwrap_err(),
+                UriError::MissingSecret
+            );
+        }
+    }
+
+    #[test]
     fn base32_vectors_and_leniency() {
         assert_eq!(base32_decode("MY").unwrap(), b"f");
         assert_eq!(base32_decode("MZXW6===").unwrap(), b"foo");
@@ -246,7 +405,28 @@ mod tests {
     }
 
     #[test]
+    fn base32_rfc4648_vectors_cover_partial_groups() {
+        for (raw, encoded) in [
+            ("", ""),
+            ("f", "MY"),
+            ("fo", "MZXQ"),
+            ("foo", "MZXW6"),
+            ("foob", "MZXW6YQ"),
+            ("fooba", "MZXW6YTB"),
+            ("foobar", "MZXW6YTBOI"),
+        ] {
+            assert_eq!(base32_encode(raw.as_bytes()), encoded);
+            assert_eq!(base32_decode(encoded).unwrap(), raw.as_bytes());
+        }
+    }
+
+    #[test]
     fn rejects_malformed_uris() {
+        assert_eq!(
+            parse("otpauth://totp/x?secret=MY&period=0").unwrap_err(),
+            UriError::Period
+        );
+
         assert_eq!(
             parse("https://totp/x?secret=MY").unwrap_err(),
             UriError::Scheme

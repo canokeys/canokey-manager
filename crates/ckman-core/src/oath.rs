@@ -18,8 +18,11 @@
 //! Touch is signalled in-band: `CalculateAll` returns [`Code::TouchRequired`]
 //! or [`Code::Hotp`] markers for credentials it did not calculate; the
 //! individual [`calculate`] then blocks in the transport until the user
-//! touches the key or the card times out (6985, surfaced as
-//! `ConditionsNotSatisfied`). No polling loop is needed.
+//! touches the key or the card times out. Status depends on firmware: 6982
+//! (`SecurityStatusNotSatisfied`) also covers outdated increasing-TOTP
+//! challenges, while 6985 (`ConditionsNotSatisfied`) can also report an
+//! exhausted HOTP counter. A status alone cannot establish a touch timeout.
+//! No polling loop is needed.
 //!
 //! Legacy (1.3-era) dialects are libcanokey's job: the wrappers pass the
 //! profile through and never special-case firmware.
@@ -231,6 +234,12 @@ pub fn calculate<E>(
 /// Calculate all eligible TOTP entries at the given time step. HOTP and
 /// touch-protected entries come back as [`Code::Hotp`]/[`Code::TouchRequired`]
 /// markers; calculate those individually with [`calculate`].
+///
+/// Every eligible credential receives the same challenge, including accounts
+/// with different periods and accounts a caller might otherwise filter out.
+/// Increasing-TOTP credentials may persist that challenge, so callers must
+/// ensure it is appropriate for every eligible credential. For mixed periods
+/// or filtered queries, calculate individual credentials instead.
 pub fn calculate_all<E>(
     profile: &DeviceProfile,
     access: Option<Access>,
@@ -410,7 +419,7 @@ pub fn steam_code(calculation: &Calculation) -> Option<String> {
 
 /// Display form of a credential name following the shared
 /// `[period/][issuer:]account` convention, where the `period/` prefix appears
-/// only on TOTP credentials with a non-default period.
+/// on TOTP credentials with a non-default period or an otherwise ambiguous name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedName {
     /// Issuer prefix, when present.
@@ -456,15 +465,19 @@ pub fn parse_name(raw: &[u8], kind: Kind) -> ParsedName {
 /// Format the on-device credential name for the shared convention.
 pub fn format_id(issuer: Option<&str>, account: &str, kind: Kind, period: u32) -> String {
     let mut id = String::new();
-    if kind == Kind::Totp && period != DEFAULT_PERIOD {
-        id.push_str(&period.to_string());
-        id.push('/');
-    }
-    if let Some(issuer) = issuer {
+    if let Some(issuer) = issuer.filter(|issuer| !issuer.is_empty()) {
         id.push_str(issuer);
         id.push(':');
     }
     id.push_str(account);
+    // A numeric prefix can belong to the issuer/account itself. Explicitly
+    // encode even the default period so reading the name cannot change it.
+    let ambiguous = id.split_once('/').is_some_and(|(head, _)| {
+        !head.is_empty() && head.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    if kind == Kind::Totp && (period != DEFAULT_PERIOD || ambiguous) {
+        id.insert_str(0, &format!("{period}/"));
+    }
     id
 }
 
@@ -776,6 +789,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!(step, 2);
+    }
+
+    #[test]
+    fn numeric_name_prefixes_do_not_override_the_totp_period() {
+        for (issuer, account) in [
+            (None, "60/alice"),
+            (None, "0/alice"),
+            (Some("60/Example"), "alice"),
+            (Some("00030/Example"), "alice"),
+        ] {
+            for period in [30, 60] {
+                let id = format_id(issuer, account, Kind::Totp, period);
+                let parsed = parse_name(id.as_bytes(), Kind::Totp);
+                assert_eq!(parsed.period, period, "{id}");
+                assert_eq!(parsed.issuer.as_deref(), issuer);
+                assert_eq!(parsed.account, account);
+            }
+        }
+        assert_eq!(format_id(None, "60/alice", Kind::Totp, 30), "30/60/alice");
+        assert_eq!(format_id(None, "60/alice", Kind::Hotp, 0), "60/alice");
+        assert_eq!(format_id(Some(""), "alice", Kind::Totp, 30), "alice");
     }
 
     #[test]

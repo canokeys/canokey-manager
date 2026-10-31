@@ -13,9 +13,10 @@ use canokey::ctap::pin::{self, Permissions, PinRetries, PinSession, PinToken};
 use canokey::ctap::UserEntity;
 use canokey::ctap::{self, AuthenticatorInfo, PinUvAuthProtocol, PublicKeyCredentialDescriptor};
 use canokey::{Error, ErrorKind, Operation, OperationOptions};
-use ckman_transport::ctaphid::{Command, CtapHidChannel, Keepalive, ReportIo};
+use ckman_transport::ctaphid::{Command, CtapHidChannel, Keepalive, ReportIo, MAX_MESSAGE_LEN};
 use std::io;
 use std::time::Duration;
+use unicode_normalization::UnicodeNormalization;
 
 /// Failure preparing or driving a FIDO operation. CTAP-level failures carry
 /// their raw status byte in `Error::application_status` of the Drive variant.
@@ -27,6 +28,20 @@ pub enum FidoError<E> {
     /// The host CSPRNG failed before any I/O; nothing was sent.
     #[error("failed to generate randomness: {0}")]
     Random(#[from] getrandom::Error),
+    /// Invalid serialized largeBlobs input, rejected before any I/O.
+    #[error(transparent)]
+    LargeBlobArray(#[from] LargeBlobArrayError),
+}
+
+/// Invalid serialized largeBlobs input.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum LargeBlobArrayError {
+    /// The serialized array is outside CanoKey's storage bounds.
+    #[error("largeBlobs array must contain between 17 and 4096 bytes")]
+    Length,
+    /// The final 16 bytes do not match the truncated SHA-256 of the contents.
+    #[error("largeBlobs integrity trailer does not match its contents")]
+    Integrity,
 }
 
 fn run<T, E>(
@@ -102,9 +117,19 @@ impl<T: ReportIo> CtapHidAdapter<T> {
     }
 
     /// One logical APDU of the envelope in, one full response out; satisfies
-    /// the [`crate::Exchange`] contract.
+    /// the [`crate::Exchange`] contract. SELECT and failed exchanges discard
+    /// incomplete command chains; buffered data cannot exceed the HID limit.
     pub fn exchange(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
+        let result = self.exchange_inner(command);
+        if result.is_err() {
+            self.pending.clear();
+        }
+        result
+    }
+
+    fn exchange_inner(&mut self, command: &[u8]) -> io::Result<Vec<u8>> {
         if command == FIDO2_USB_SELECT || command == FIDO2_STANDARD_SELECT {
+            self.pending.clear();
             return Ok(vec![0x90, 0x00]);
         }
         if command.len() < 5 {
@@ -131,6 +156,12 @@ impl<T: ReportIo> CtapHidAdapter<T> {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Lc does not match the APDU length",
+            ));
+        }
+        if data.len() > MAX_MESSAGE_LEN - self.pending.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "command chain exceeds the CTAPHID message limit",
             ));
         }
         self.pending.extend_from_slice(data);
@@ -186,6 +217,22 @@ pub fn pin_retries<E>(
     run(pin::get_pin_retries(protocol, options()), exchange)
 }
 
+/// Read PIN retries when getInfo advertises ClientPIN support. Both true
+/// (PIN set) and false (PIN unset) support the read; an absent option means
+/// no query is sent. Transport and protocol failures remain errors.
+pub fn pin_retries_if_supported<E>(
+    info: &AuthenticatorInfo,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<Option<PinRetries>, FidoError<E>> {
+    if !info
+        .options()
+        .is_some_and(|options| options.iter().any(|(name, _)| name == "clientPin"))
+    {
+        return Ok(None);
+    }
+    pin_retries(preferred_protocol(info), exchange).map(Some)
+}
+
 /// ClientPIN key agreement with a fresh ephemeral P-256 scalar (regenerated
 /// in the astronomically unlikely case the CSPRNG yields an invalid scalar).
 pub fn key_agreement<E>(
@@ -216,15 +263,44 @@ fn fresh_iv(protocol: PinUvAuthProtocol) -> Result<Option<[u8; 16]>, getrandom::
     }
 }
 
+/// Normalize a FIDO PIN to Unicode NFC, then enforce at least four Unicode
+/// characters, at most 63 UTF-8 bytes, and no NUL bytes. CTAP platforms must
+/// use the normalized bytes for both setting and authenticating a PIN.
+pub fn normalize_pin(pin: &[u8]) -> Result<zeroize::Zeroizing<String>, Error> {
+    let text = std::str::from_utf8(pin).map_err(|_| Error::new(ErrorKind::InvalidPin))?;
+    // Reserve the entire permitted output so appending secret characters
+    // cannot reallocate and leave an unprotected old allocation behind.
+    let mut normalized = zeroize::Zeroizing::new(String::with_capacity(63));
+    for character in text.nfc() {
+        if character == '\0' || normalized.len() + character.len_utf8() > 63 {
+            return Err(Error::new(ErrorKind::InvalidPin));
+        }
+        normalized.push(character);
+    }
+    if normalized.chars().count() < 4 {
+        return Err(Error::new(ErrorKind::InvalidPin));
+    }
+    Ok(normalized)
+}
+
+/// Validate a FIDO PIN after NFC normalization: at least four Unicode
+/// characters, at most 63 UTF-8 bytes, and no NUL bytes.
+/// NUL cannot be distinguished from the zero padding
+/// of an encrypted new PIN. A device may require a higher character minimum.
+pub fn validate_pin(pin: &[u8]) -> Result<(), Error> {
+    normalize_pin(pin).map(|_| ())
+}
+
 /// Set the initial FIDO2 PIN (the authenticator must have none set).
 pub fn set_pin<E>(
     session: &PinSession,
     new_pin: &[u8],
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), FidoError<E>> {
+    let new_pin = normalize_pin(new_pin).map_err(DriveError::from)?;
     let iv = fresh_iv(session.protocol())?;
     run(
-        pin::set_pin(session, new_pin, iv.as_ref(), options()),
+        pin::set_pin(session, new_pin.as_bytes(), iv.as_ref(), options()),
         exchange,
     )
 }
@@ -236,9 +312,17 @@ pub fn change_pin<E>(
     new_pin: &[u8],
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), FidoError<E>> {
+    let old_pin = normalize_pin(old_pin).map_err(DriveError::from)?;
+    let new_pin = normalize_pin(new_pin).map_err(DriveError::from)?;
     let iv = fresh_iv(session.protocol())?;
     run(
-        pin::change_pin(session, old_pin, new_pin, iv.as_ref(), options()),
+        pin::change_pin(
+            session,
+            old_pin.as_bytes(),
+            new_pin.as_bytes(),
+            iv.as_ref(),
+            options(),
+        ),
         exchange,
     )
 }
@@ -251,11 +335,12 @@ pub fn pin_token<E>(
     rp_id: Option<&str>,
     exchange: &mut Exchange<'_, E>,
 ) -> Result<PinToken, FidoError<E>> {
+    let pin = normalize_pin(pin).map_err(DriveError::from)?;
     let iv = fresh_iv(session.protocol())?;
     run(
         pin::get_pin_token_with_permissions(
             session,
-            pin,
+            pin.as_bytes(),
             permissions,
             rp_id,
             iv.as_ref(),
@@ -361,8 +446,8 @@ pub fn enable_long_touch_for_reset<E>(
     )
 }
 
-/// Read the whole CTAP largeBlobs array (16-byte truncated SHA-256 prefix
-/// plus the CBOR array), fragmenting at the channel's capacity.
+/// Read the whole CTAP largeBlobs array (CBOR array followed by a 16-byte
+/// truncated SHA-256 integrity trailer), fragmenting at the channel's capacity.
 pub fn large_blobs_read<E>(exchange: &mut Exchange<'_, E>) -> Result<Vec<u8>, FidoError<E>> {
     run(ctap::largeblob::read_array(large_blob_options()), exchange)
 }
@@ -376,14 +461,30 @@ fn large_blob_options() -> OperationOptions {
     options
 }
 
+/// Check the size and integrity trailer of a serialized largeBlobs array.
+/// Contents are preserved verbatim; this does not decrypt individual blobs.
+pub fn validate_large_blob_array(data: &[u8]) -> Result<(), LargeBlobArrayError> {
+    use canokey::ctap::largeblob::{MAX_LARGE_BLOB_ARRAY_BYTES, MIN_LARGE_BLOB_ARRAY_BYTES};
+    use sha2::{Digest, Sha256};
+    if !(MIN_LARGE_BLOB_ARRAY_BYTES..=MAX_LARGE_BLOB_ARRAY_BYTES).contains(&data.len()) {
+        return Err(LargeBlobArrayError::Length);
+    }
+    let (contents, trailer) = data.split_at(data.len() - 16);
+    if &Sha256::digest(contents)[..16] != trailer {
+        return Err(LargeBlobArrayError::Integrity);
+    }
+    Ok(())
+}
+
 /// Replace the whole CTAP largeBlobs array. `token` is required when the
 /// authenticator has a PIN set (largeBlobWrite permission); the write is
-/// length-checked before any I/O (17..=4096 bytes on CanoKey).
+/// length- and integrity-checked before any I/O (17..=4096 bytes on CanoKey).
 pub fn large_blobs_write<E>(
     data: &[u8],
     token: Option<(&PinToken, PinUvAuthProtocol)>,
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), FidoError<E>> {
+    validate_large_blob_array(data)?;
     run(
         ctap::largeblob::write_array(data, token, large_blob_options()),
         exchange,
@@ -509,9 +610,13 @@ mod tests {
 
     #[test]
     fn large_blobs_write_array_without_pin_transcript() {
-        // 17 bytes (16-byte prefix + empty CBOR array 0x80), no PIN set:
+        // Empty CBOR array with its SHA-256 integrity trailer, no PIN set.
+        // Digest cross-checked with Python hashlib; this checks framing:
         // {2: h'..', 3: 0, 4: 17} and no pinUvAuthParam.
-        let data: Vec<u8> = (0..16).chain([0x80]).collect();
+        let data = [
+            0x80, 0x76, 0xbe, 0x8b, 0x52, 0x8d, 0x00, 0x75, 0xf7, 0xaa, 0xe9, 0x8d, 0x6f, 0xa5,
+            0x7a, 0x6d, 0x3c,
+        ];
         let mut message = vec![0x0c, 0xa3, 0x02, 0x51];
         message.extend(&data);
         message.extend([0x03, 0x00, 0x04, 0x11]);
@@ -521,6 +626,24 @@ mod tests {
         script.transcript[1].0 = command;
         large_blobs_write(&data, None, &mut |c| script.exchange(c)).unwrap();
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn invalid_large_blob_arrays_fail_before_any_io() {
+        for (data, expected) in [
+            (vec![], LargeBlobArrayError::Length),
+            (vec![0x80; 16], LargeBlobArrayError::Length),
+            (vec![0; 4097], LargeBlobArrayError::Length),
+            (vec![0; 17], LargeBlobArrayError::Integrity),
+        ] {
+            assert_eq!(validate_large_blob_array(&data), Err(expected));
+            assert!(matches!(
+                large_blobs_write::<io::Error>(&data, None, &mut |_| {
+                    panic!("invalid array must not send any APDU")
+                }),
+                Err(FidoError::LargeBlobArray(_))
+            ));
+        }
     }
 
     /// Fixed ClientPIN V1 fixture (platform scalar 0x01..=0x20, PIN "1234",
@@ -534,6 +657,184 @@ mod tests {
     ];
     const PEER_KEY_AGREEMENT_PAYLOAD: &str = "a101a5010203381820012158200d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d22582019b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba";
     const TOKEN_CT_V1: &str = "b98cc635132fa3ea8c191b7a4aa3e093ce926c35488221b4684fce766f3b14b0";
+
+    #[test]
+    fn invalid_pins_fail_before_authentication_or_writes() {
+        // Establish only the public key agreement, using the fixed V1 fixture.
+        // Invalid inputs must never send a PIN guess or a mutation afterward.
+        let mut reply = vec![0];
+        reply.extend(hex(PEER_KEY_AGREEMENT_PAYLOAD));
+        reply.extend([0x90, 0]);
+        let mut exchange = |command: &[u8]| -> io::Result<Vec<u8>> {
+            if command == FIDO2_USB_SELECT {
+                Ok(vec![0x90, 0])
+            } else {
+                Ok(reply.clone())
+            }
+        };
+        let session = execute(
+            pin::get_key_agreement(PinUvAuthProtocol::V1, &EPHEMERAL_SCALAR, options()).unwrap(),
+            &mut exchange,
+        )
+        .unwrap();
+        let mut no_io = |_: &[u8]| -> io::Result<Vec<u8>> { panic!("invalid PIN caused I/O") };
+        for invalid in [
+            b"1234\0".as_slice(),
+            b"12\x0034",
+            b"\0abcd",
+            b"abc",
+            &[0xff; 4],
+            &[b'x'; 64],
+            "e\u{301}ab".as_bytes(), // Four raw code points, three after NFC.
+        ] {
+            for result in [
+                set_pin(&session, invalid, &mut no_io),
+                change_pin(&session, b"1234", invalid, &mut no_io),
+                change_pin(&session, invalid, b"1234", &mut no_io),
+                pin_token(
+                    &session,
+                    invalid,
+                    Permissions::GET_ASSERTION,
+                    Some("example.com"),
+                    &mut no_io,
+                )
+                .map(|_| ()),
+            ] {
+                let FidoError::Drive(DriveError::Protocol(error)) = result.unwrap_err() else {
+                    panic!("expected invalid PIN error");
+                };
+                assert_eq!(error.kind, ErrorKind::InvalidPin);
+            }
+        }
+        assert!(validate_pin("你好世界".as_bytes()).is_ok());
+        assert!(validate_pin(&[b'x'; 63]).is_ok());
+    }
+
+    #[test]
+    fn pin_limits_apply_after_canonical_normalization() {
+        for (input, expected) in [
+            ("e\u{301}abc".to_string(), "éabc".to_string()),
+            ("e\u{301}".repeat(31), "é".repeat(31)),
+            ("\u{1100}\u{1161}\u{11a8}".repeat(21), "각".repeat(21)),
+        ] {
+            let normalized = normalize_pin(input.as_bytes()).unwrap();
+            assert_eq!(*normalized, expected);
+            assert!(normalized.len() <= 63);
+        }
+        for invalid in [
+            "e\u{301}ab".to_string(),
+            "e\u{301}".repeat(32),
+            "\u{344}".repeat(16), // NFC expands each mark to two code points.
+            "abc\0d".to_string(),
+        ] {
+            assert!(normalize_pin(invalid.as_bytes()).is_err());
+        }
+        // NFC is canonical, not compatibility normalization: fullwidth
+        // characters must not silently become different ASCII PINs.
+        assert_eq!(&**normalize_pin("ＡＢＣＤ".as_bytes()).unwrap(), "ＡＢＣＤ");
+    }
+
+    #[test]
+    fn all_clientpin_operations_send_normalized_pin_bytes() {
+        // Fixed V1 peer/scalar from canokey-ctap's ClientPIN fixtures. V1 has
+        // no random IV, so complete APDUs can be compared byte for byte.
+        let mut peer_reply = vec![0];
+        peer_reply.extend(hex(PEER_KEY_AGREEMENT_PAYLOAD));
+        peer_reply.extend([0x90, 0]);
+        let session = execute(
+            pin::get_key_agreement(PinUvAuthProtocol::V1, &EPHEMERAL_SCALAR, options()).unwrap(),
+            &mut |command: &[u8]| -> io::Result<Vec<u8>> {
+                Ok(if command == FIDO2_USB_SELECT {
+                    vec![0x90, 0]
+                } else {
+                    peer_reply.clone()
+                })
+            },
+        )
+        .unwrap();
+
+        for mode in 0..3 {
+            let capture = |use_wrapper: bool| {
+                let mut commands = Vec::new();
+                let mut exchange = |command: &[u8]| -> io::Result<Vec<u8>> {
+                    commands.push(command.to_vec());
+                    if command == FIDO2_USB_SELECT {
+                        return Ok(vec![0x90, 0]);
+                    }
+                    let mut response = if mode == 2 {
+                        let mut response = vec![0, 0xa1, 2, 0x58, 0x20];
+                        response.extend(hex(TOKEN_CT_V1));
+                        response
+                    } else {
+                        vec![0]
+                    };
+                    response.extend([0x90, 0]);
+                    Ok(response)
+                };
+                if use_wrapper {
+                    match mode {
+                        0 => set_pin(&session, "A\u{30a}xyz".as_bytes(), &mut exchange).unwrap(),
+                        1 => change_pin(
+                            &session,
+                            "e\u{301}abc".as_bytes(),
+                            "A\u{30a}xyz".as_bytes(),
+                            &mut exchange,
+                        )
+                        .unwrap(),
+                        _ => {
+                            pin_token(
+                                &session,
+                                "e\u{301}abc".as_bytes(),
+                                Permissions::GET_ASSERTION,
+                                Some("example.com"),
+                                &mut exchange,
+                            )
+                            .unwrap();
+                        }
+                    }
+                } else {
+                    match mode {
+                        0 => {
+                            run(
+                                pin::set_pin(&session, "Åxyz".as_bytes(), None, options()),
+                                &mut exchange,
+                            )
+                            .unwrap();
+                        }
+                        1 => {
+                            run(
+                                pin::change_pin(
+                                    &session,
+                                    "éabc".as_bytes(),
+                                    "Åxyz".as_bytes(),
+                                    None,
+                                    options(),
+                                ),
+                                &mut exchange,
+                            )
+                            .unwrap();
+                        }
+                        _ => {
+                            run(
+                                pin::get_pin_token_with_permissions(
+                                    &session,
+                                    "éabc".as_bytes(),
+                                    Permissions::GET_ASSERTION,
+                                    Some("example.com"),
+                                    None,
+                                    options(),
+                                ),
+                                &mut exchange,
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+                commands
+            };
+            assert_eq!(capture(true), capture(false), "ClientPIN operation {mode}");
+        }
+    }
 
     fn hex(s: &str) -> Vec<u8> {
         let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
@@ -596,6 +897,68 @@ mod tests {
         assert_eq!(device.cbor_payloads()[3], hex(MSG_UPDATE));
     }
 
+    #[test]
+    fn info_pin_retries_preserve_failures_and_skip_unsupported_authenticators() {
+        use ctap::cbor::{self, Value};
+        for client_pin in [None, Some(false), Some(true)] {
+            // Mutate only the ClientPIN support flag of the existing 3.1.0
+            // getInfo transcript; keep the advertised V1/V2 protocols.
+            let payload = get_info_payload();
+            let Value::Map(mut fields) = cbor::parse(&payload[1..]).unwrap() else {
+                unreachable!()
+            };
+            let (_, Value::Map(options)) = fields
+                .iter_mut()
+                .find(|(key, _)| key.as_uint() == Some(4))
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            options.retain(|(key, _)| key.as_text() != Some("clientPin"));
+            if let Some(value) = client_pin {
+                options.push((Value::Text("clientPin".into()), Value::Bool(value)));
+            }
+            let mut response = vec![0];
+            response.extend(cbor::encode(&Value::Map(fields)).unwrap());
+            response.extend([0x90, 0]);
+            let mut script = Script::new(&[SELECT_OK, (&[0x80, 0x10, 0, 0, 1, 4], &response)]);
+            let info = get_info(&mut |command| script.exchange(command)).unwrap();
+            assert!(script.transcript.is_empty());
+            if client_pin.is_none() {
+                assert!(pin_retries_if_supported::<io::Error>(&info, &mut |_| {
+                    panic!("no ClientPIN support: no retry query may be sent")
+                })
+                .unwrap()
+                .is_none());
+                continue;
+            }
+            let request = &[0x80, 0x10, 0, 0, 6, 6, 0xa2, 1, 2, 2, 1];
+            for reply in [
+                &[0, 0xa1, 3, 8, 0x90, 0][..],
+                &[1, 0x90, 0][..],       // CTAP1_ERR_INVALID_COMMAND
+                &[0, 0xa0, 0x90, 0][..], // malformed success: retries missing
+            ] {
+                let mut script = Script::new(&[SELECT_OK, (request, reply)]);
+                let result =
+                    pin_retries_if_supported(&info, &mut |command| script.exchange(command));
+                assert!(script.transcript.is_empty());
+                if reply.len() == 6 {
+                    assert_eq!(result.unwrap().unwrap().pin_retries, 8);
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(FidoError::Drive(DriveError::Protocol(_)))
+                    ));
+                }
+            }
+            let error = pin_retries_if_supported(&info, &mut |_| -> io::Result<Vec<u8>> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "disconnected"))
+            })
+            .unwrap_err();
+            assert!(matches!(error, FidoError::Drive(DriveError::Transport(_))));
+        }
+    }
+
     /// CanoKey 3.1.0-shaped getInfo response payload, mirrored in full from
     /// the canokey-ctap ctap2_commands fixture (17 map entries).
     fn get_info_payload() -> Vec<u8> {
@@ -642,6 +1005,78 @@ mod tests {
         payload.extend(hex("14 1864"));
         payload.extend(hex("15 81 1840"));
         payload
+    }
+
+    #[test]
+    fn hid_adapter_discards_aborted_command_chains() {
+        // Each new operation SELECTs before sending its command. A cancelled
+        // chain, including one rejected for malformed framing, must not be
+        // prepended to that operation's getInfo request.
+        for abort in [
+            FIDO2_USB_SELECT,
+            FIDO2_STANDARD_SELECT,
+            &[0x80][..],
+            &[0x80, 0x11, 0, 0, 1, 0x04],
+            &[0x80, 0x10, 0, 0, 0],
+            &[0x80, 0x10, 0, 0, 2, 0x04],
+        ] {
+            let channel = CtapHidChannel::allocate(
+                loopback::Loopback::new(loopback::CborBehavior::Respond(get_info_payload())),
+                *b"nonce123",
+                Duration::from_secs(1),
+            )
+            .unwrap()
+            .0;
+            let mut adapter = CtapHidAdapter::new(channel, Duration::from_secs(1), |_| {});
+            adapter.exchange(&[0x90, 0x10, 0, 0, 1, 0x06]).unwrap();
+            let _ = adapter.exchange(abort);
+            adapter.exchange(&[0x80, 0x10, 0, 0, 1, 0x04]).unwrap();
+            let device = adapter.into_inner().into_inner();
+            assert_eq!(device.cbor_payloads(), &[vec![0x04]]);
+        }
+    }
+
+    #[test]
+    fn hid_adapter_accepts_chain_at_hid_limit() {
+        let channel = CtapHidChannel::allocate(
+            loopback::Loopback::new(loopback::CborBehavior::Respond(vec![0])),
+            *b"nonce123",
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .0;
+        let mut adapter = CtapHidAdapter::new(channel, Duration::from_secs(1), |_| {});
+        let message = vec![0x04; MAX_MESSAGE_LEN];
+        let mut chunks = message.chunks(255).peekable();
+        while let Some(chunk) = chunks.next() {
+            let cla = if chunks.peek().is_some() { 0x90 } else { 0x80 };
+            let mut command = vec![cla, 0x10, 0, 0, chunk.len() as u8];
+            command.extend(chunk);
+            adapter.exchange(&command).unwrap();
+        }
+        let device = adapter.into_inner().into_inner();
+        assert_eq!(device.cbor_payloads(), &[message]);
+    }
+
+    #[test]
+    fn hid_adapter_rejects_oversized_chains_before_sending() {
+        let channel = CtapHidChannel::allocate(
+            loopback::Loopback::new(loopback::CborBehavior::Respond(get_info_payload())),
+            *b"nonce123",
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .0;
+        let mut adapter = CtapHidAdapter::new(channel, Duration::from_secs(1), |_| {});
+        let mut fragment = vec![0x90, 0x10, 0, 0, 255];
+        fragment.extend([0; 255]);
+        for _ in 0..29 {
+            adapter.exchange(&fragment).unwrap();
+        }
+        assert!(adapter.exchange(&fragment).is_err()); // 7650 > 7609
+        adapter.exchange(&[0x80, 0x10, 0, 0, 1, 0x04]).unwrap();
+        let device = adapter.into_inner().into_inner();
+        assert_eq!(device.cbor_payloads(), &[vec![0x04]]);
     }
 
     #[test]

@@ -6,7 +6,9 @@ ckman\-oath\-accounts\-uri \- Add a new account from an otpauth:// URI (prompted
 .SH SYNOPSIS
 \fBckman\-oath\-accounts\-uri\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-f\fR|\fB\-\-force\fR] [\fB\-p\fR|\fB\-\-password\fR] [\fB\-\-remember\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURI\fR] 
 .SH DESCRIPTION
-Add a new account from an otpauth:// URI (prompted when omitted)
+Add a new account from an otpauth:// URI (prompted when omitted).
+.PP
+HOTP counter specifies the next code\*(Aqs counter. CanoKey cannot start at counter zero; such URIs are rejected. Query parameter names and values accept percent\-encoding; repeated recognized parameters are rejected before connecting to the key.
 .SH OPTIONS
 .TP
 \fB\-t\fR, \fB\-\-touch\fR
@@ -22,7 +24,7 @@ The password to unlock the OATH application
 Remember the password on this machine (long\-only: the global \-r/\-\-reader owns the short flag)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIURI\fR]
 The otpauth:// URI

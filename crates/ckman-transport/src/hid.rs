@@ -87,14 +87,22 @@ impl ReportIo for HidReportIo {
     fn read_report(&mut self, timeout: Duration) -> io::Result<Option<[u8; REPORT_LEN]>> {
         let mut buf = [0u8; REPORT_LEN];
         let millis = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-        match self
+        let received = self
             .device
             .read_timeout(&mut buf, millis)
-            .map_err(hid_err)?
-        {
-            0 => Ok(None),
-            _ => Ok(Some(buf)),
-        }
+            .map_err(hid_err)?;
+        complete_report(buf, received)
+    }
+}
+
+fn complete_report(buf: [u8; REPORT_LEN], received: usize) -> io::Result<Option<[u8; REPORT_LEN]>> {
+    match received {
+        0 => Ok(None),
+        REPORT_LEN => Ok(Some(buf)),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "short HID report read",
+        )),
     }
 }
 
@@ -112,6 +120,19 @@ pub fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_reports_are_not_zero_padded() {
+        let report = [0; REPORT_LEN];
+        assert!(complete_report(report, 0).unwrap().is_none());
+        assert_eq!(complete_report(report, REPORT_LEN).unwrap(), Some(report));
+        for len in 1..REPORT_LEN {
+            assert_eq!(
+                complete_report(report, len).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
 
     #[test]
     fn matching_requires_fido_usage_and_canokey_identity() {

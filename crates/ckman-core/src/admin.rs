@@ -279,7 +279,8 @@ pub fn set_keyboard_return<E>(
 /// Read the vendor-specific chip identifier bytes (possibly empty).
 ///
 /// The command is not capability-gated: firmware that lacks it answers with a
-/// protocol error, which read-only callers may catch and treat as absent.
+/// command-level unsupported/not-found status, which read-only callers may
+/// treat as absent. Transport, selection, and parsing failures remain errors.
 pub fn chip_id<E>(
     profile: &DeviceProfile,
     exchange: &mut Exchange<'_, E>,

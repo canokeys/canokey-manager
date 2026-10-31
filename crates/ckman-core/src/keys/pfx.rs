@@ -11,7 +11,7 @@ use der::{Decode, Encode, Sequence};
 use hmac::{Hmac, Mac};
 use zeroize::Zeroizing;
 
-use super::{from_pkcs8, ImportedKey, KeyError};
+use super::{check_encryption_scheme, from_pkcs8, ImportedKey, KeyError};
 
 const OID_DATA: &str = "1.2.840.113549.1.7.1";
 const OID_ENCRYPTED_DATA: &str = "1.2.840.113549.1.7.6";
@@ -155,7 +155,14 @@ impl MacDigest {
 
     /// The RFC 7292 B.2 password-based KDF over an already-BMPString'd
     /// password: diversifier `id`, blockwise I update after each round.
-    fn kdf(self, id: u8, bmp: &[u8], salt: &[u8], iterations: u32, out_len: usize) -> Vec<u8> {
+    fn kdf(
+        self,
+        id: u8,
+        bmp: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        out_len: usize,
+    ) -> Zeroizing<Vec<u8>> {
         let v = self.block_len();
         // Repeat material to a multiple of v; empty material stays empty.
         let fill = |material: &[u8]| -> Vec<u8> {
@@ -171,17 +178,20 @@ impl MacDigest {
         };
         let d = vec![id; v];
         let s = fill(salt);
-        let p = fill(bmp);
-        let mut i = [s, p].concat();
-        let mut out = Vec::new();
+        let p = Zeroizing::new(fill(bmp));
+        let mut i = Zeroizing::new([s.as_slice(), p.as_slice()].concat());
+        let mut out = Zeroizing::new(Vec::with_capacity(
+            out_len.div_ceil(self.out_len()) * self.out_len(),
+        ));
         while out.len() < out_len {
-            let mut a = self.digest(&[d.as_slice(), i.as_slice()].concat());
+            let input = Zeroizing::new([d.as_slice(), i.as_slice()].concat());
+            let mut a = Zeroizing::new(self.digest(&input));
             for _ in 1..iterations {
-                a = self.digest(&a);
+                a = Zeroizing::new(self.digest(&a));
             }
             out.extend_from_slice(&a);
             // I_j = (I_j + B + 1) mod 2^(8v) with B = A repeated to v.
-            let b: Vec<u8> = a.iter().copied().cycle().take(v).collect();
+            let b = Zeroizing::new(a.iter().copied().cycle().take(v).collect::<Vec<_>>());
             for block in i.chunks_mut(v) {
                 let mut carry = 1u16;
                 for (byte, add) in block.iter_mut().rev().zip(b.iter().rev()) {
@@ -207,19 +217,20 @@ fn verify_mac(
         return Err(KeyError::Encoding);
     }
     let password_bytes = password.unwrap_or(b"");
-    let mut bmp = Zeroizing::new(Vec::new());
-    for unit in String::from_utf8_lossy(password_bytes).encode_utf16() {
+    let password_text = Zeroizing::new(String::from_utf8_lossy(password_bytes).into_owned());
+    let mut bmp = Zeroizing::new(Vec::with_capacity((password_text.len() + 1) * 2));
+    for unit in password_text.encode_utf16() {
         bmp.extend_from_slice(&unit.to_be_bytes());
     }
     bmp.extend_from_slice(&[0, 0]);
     let verifies = |material: &[u8]| {
-        let key = Zeroizing::new(digest.kdf(
+        let key = digest.kdf(
             3,
             material,
             mac_data.mac_salt.as_bytes(),
             iterations,
             digest.out_len(),
-        ));
+        );
         digest.hmac_verify(&key, auth_safe_der, mac_data.mac.digest.as_bytes())
     };
     if verifies(&bmp) {
@@ -266,6 +277,7 @@ fn safe_contents(
             // pkcs5 handles PBES2; legacy PKCS#12 PBE schemes fail here.
             let scheme = pkcs5::EncryptionScheme::try_from(data.content.encryption)
                 .map_err(|_| KeyError::Unsupported)?;
+            check_encryption_scheme(&scheme)?;
             let ciphertext = data.content.encrypted_content.ok_or(KeyError::Encoding)?;
             let plaintext = scheme
                 .decrypt(password, ciphertext.as_bytes())
@@ -286,7 +298,7 @@ fn collect_bags(
         let _ = bag.attributes;
         match bag.bag_id.to_string().as_str() {
             OID_KEY_BAG if data.key.is_none() => {
-                let der = bag.bag_value.to_der().map_err(|_| KeyError::Encoding)?;
+                let der = Zeroizing::new(bag.bag_value.to_der().map_err(|_| KeyError::Encoding)?);
                 data.key = Some(from_pkcs8(&der)?);
             }
             OID_SHROUDED_KEY_BAG if data.key.is_none() => {
@@ -295,6 +307,7 @@ fn collect_bags(
                     .bag_value
                     .decode_as::<pkcs8::EncryptedPrivateKeyInfo<'_>>()
                     .map_err(|_| KeyError::Encoding)?;
+                check_encryption_scheme(&encrypted.encryption_algorithm)?;
                 let decrypted = encrypted
                     .decrypt(password.unwrap_or(b""))
                     .map_err(|_| KeyError::Password)?;
@@ -401,5 +414,179 @@ pub fn leaf_certificate(certificates: &[Vec<u8>]) -> Result<usize, KeyError> {
     match (leafs.next(), leafs.next()) {
         (Some(leaf), None) => Ok(leaf),
         _ => Err(KeyError::AmbiguousCertificates),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundle(info: ContentInfo<'_>) -> Vec<u8> {
+        let infos = vec![info].to_der().unwrap();
+        let octets = OctetStringRef::new(&infos).unwrap().to_der().unwrap();
+        Pfx {
+            version: 3,
+            auth_safe: ContentInfo {
+                content_type: OID_DATA.parse().unwrap(),
+                content: der::AnyRef::from_der(&octets).unwrap(),
+            },
+            mac_data: None,
+        }
+        .to_der()
+        .unwrap()
+    }
+
+    #[test]
+    fn pbes1_is_not_reported_as_a_password_error() {
+        let scheme = pkcs5::EncryptionScheme::from(pkcs5::pbes1::Algorithm {
+            encryption: pkcs5::pbes1::EncryptionScheme::PbeWithMd5AndDesCbc,
+            parameters: pkcs5::pbes1::Parameters {
+                salt: [1; 8],
+                iteration_count: 2048,
+            },
+        });
+        for password in [None, Some(b"pw".as_slice())] {
+            for input in encrypted_inputs(scheme.clone()) {
+                assert!(matches!(
+                    super::super::parse_private_key(&input, password),
+                    Err(KeyError::UnsupportedEncryption)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn zero_pbkdf2_iterations_are_rejected_in_all_encrypted_containers() {
+        let scheme =
+            pkcs5::pbes2::Parameters::pbkdf2_sha256_aes256cbc(0, &[2; 16], &[3; 16]).unwrap();
+        for password in [None, Some(b"pw".as_slice())] {
+            for input in encrypted_inputs(scheme.clone().into()) {
+                assert!(matches!(
+                    super::super::parse_private_key(&input, password),
+                    Err(KeyError::Encoding)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_scrypt_parameters_fail_before_password_or_decryption() {
+        for (n, r, p) in [
+            (0, 1, 1),
+            (1, 1, 1),
+            (3, 1, 1),
+            (16, 0, 1),
+            (16, 1, 0),
+            (1 << 63, 8, 1),
+            (16, u16::MAX, u16::MAX),
+        ] {
+            let scheme = pkcs5::pbes2::Parameters {
+                kdf: pkcs5::pbes2::ScryptParams {
+                    salt: &[2; 16],
+                    cost_parameter: n,
+                    block_size: r,
+                    parallelization: p,
+                    key_length: None,
+                }
+                .into(),
+                encryption: pkcs5::pbes2::EncryptionScheme::Aes256Cbc { iv: &[3; 16] },
+            };
+            for password in [None, Some(b"pw".as_slice())] {
+                for input in encrypted_inputs(scheme.clone().into()) {
+                    assert!(matches!(
+                        super::super::parse_private_key(&input, password),
+                        Err(KeyError::Encoding)
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn declared_kdf_key_length_must_match_the_cipher() {
+        use pkcs5::pbes2::{EncryptionScheme, Kdf, Parameters, Pbkdf2Params, ScryptParams};
+        let private = p256::SecretKey::from_slice(&[1; 32]).unwrap();
+        let private = p256::pkcs8::EncodePrivateKey::to_pkcs8_der(&private).unwrap();
+        for encryption in [
+            EncryptionScheme::Aes128Cbc { iv: &[3; 16] },
+            EncryptionScheme::Aes192Cbc { iv: &[3; 16] },
+            EncryptionScheme::Aes256Cbc { iv: &[3; 16] },
+        ] {
+            for kdf in [
+                Kdf::Pbkdf2(Pbkdf2Params::hmac_with_sha256(1, &[2; 16]).unwrap()),
+                Kdf::Scrypt(ScryptParams {
+                    salt: &[2; 16],
+                    cost_parameter: 16,
+                    block_size: 1,
+                    parallelization: 1,
+                    key_length: None,
+                }),
+            ] {
+                for length in [0, 1, 16, 24, 32] {
+                    let mut kdf = kdf.clone();
+                    match &mut kdf {
+                        Kdf::Pbkdf2(params) => params.key_length = Some(length),
+                        Kdf::Scrypt(params) => params.key_length = Some(length),
+                        _ => unreachable!(),
+                    }
+                    let scheme = pkcs5::EncryptionScheme::from(Parameters { kdf, encryption });
+                    if usize::from(length) == encryption.key_size() {
+                        let ciphertext = scheme.encrypt(b"pw", private.as_bytes()).unwrap();
+                        let encoded = pkcs8::EncryptedPrivateKeyInfo {
+                            encryption_algorithm: scheme,
+                            encrypted_data: &ciphertext,
+                        }
+                        .to_der()
+                        .unwrap();
+                        assert!(super::super::parse_private_key(&encoded, Some(b"pw")).is_ok());
+                    } else {
+                        for password in [None, Some(b"pw".as_slice())] {
+                            for input in encrypted_inputs(scheme.clone()) {
+                                assert!(matches!(
+                                    super::super::parse_private_key(&input, password),
+                                    Err(KeyError::Encoding)
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn encrypted_inputs(scheme: pkcs5::EncryptionScheme<'_>) -> [Vec<u8>; 3] {
+        let encrypted = pkcs8::EncryptedPrivateKeyInfo {
+            encryption_algorithm: scheme.clone(),
+            encrypted_data: &[0; 16],
+        }
+        .to_der()
+        .unwrap();
+        let bag = SafeBag {
+            bag_id: OID_SHROUDED_KEY_BAG.parse().unwrap(),
+            bag_value: der::AnyRef::from_der(&encrypted).unwrap(),
+            attributes: None,
+        };
+        let bags = vec![bag].to_der().unwrap();
+        let octets = OctetStringRef::new(&bags).unwrap().to_der().unwrap();
+        let shrouded = bundle(ContentInfo {
+            content_type: OID_DATA.parse().unwrap(),
+            content: der::AnyRef::from_der(&octets).unwrap(),
+        });
+        let algorithm = scheme.to_der().unwrap();
+        let encrypted_data = EncryptedData {
+            version: 0,
+            content: EncryptedContentInfo {
+                content_type: OID_DATA.parse().unwrap(),
+                encryption: spki::AlgorithmIdentifierRef::from_der(&algorithm).unwrap(),
+                encrypted_content: Some(OctetStringRef::new(&[0; 16]).unwrap()),
+            },
+        }
+        .to_der()
+        .unwrap();
+        let safe = bundle(ContentInfo {
+            content_type: OID_ENCRYPTED_DATA.parse().unwrap(),
+            content: der::AnyRef::from_der(&encrypted_data).unwrap(),
+        });
+        [encrypted, shrouded, safe]
     }
 }

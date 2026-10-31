@@ -1,7 +1,7 @@
 use super::{confirm, single_target, CliResult};
 use ckman_core::fido::{self, FidoError};
 use ckman_core::{DriveError, Exchange};
-use ckman_transport::ctaphid::Keepalive;
+use ckman_transport::ctaphid::{CtapHidChannel, Keepalive};
 use ckman_transport::hid::{self, HidReportIo};
 use ckman_transport::pcsc::Pcsc;
 
@@ -9,7 +9,8 @@ use canokey::ctap::pin::Permissions;
 use canokey::ctap::{PinUvAuthProtocol, PublicKeyCredentialDescriptor, UserEntity};
 use canokey::ErrorKind;
 use clap::{ArgGroup, Subcommand};
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read as _};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
 use std::time::Duration;
 
 #[derive(Subcommand)]
@@ -25,7 +26,7 @@ pub enum FidoCommand {
         #[arg(long)]
         force: bool,
     },
-    /// Manage the FIDO2 PIN.
+    /// Manage the FIDO2 PIN. PINs use Unicode NFC normalization.
     Access {
         #[command(subcommand)]
         command: AccessCommand,
@@ -68,11 +69,14 @@ pub enum AccessCommand {
         new_pin: Option<crate::commands::SecretString>,
     },
     /// Set the minimum PIN length (persistent authenticator configuration).
+    ///
+    /// The minimum can only increase. Raising it above the current PIN's
+    /// length requires a PIN change.
     SetMinLength {
         /// Minimum PIN length (4-63).
         #[arg(value_parser = clap::value_parser!(u8).range(4..=63))]
         length: u8,
-        /// Restrict the policy to these relying parties.
+        /// Allow these relying parties to read the minimum PIN length.
         #[arg(short = 'R', long = "rp-id")]
         rp_ids: Vec<String>,
         /// Force the user to change the PIN on next use.
@@ -127,7 +131,8 @@ pub enum BlobsCommand {
     },
     /// Replace the whole largeBlobs array from a file ('-' for stdin); the
     /// file must contain a complete serialized array, e.g. as produced by
-    /// "blobs read".
+    /// "blobs read". Its length and SHA-256 integrity trailer are checked
+    /// before connecting or requesting a PIN.
     Write {
         /// File containing the array ('-' for stdin).
         file: String,
@@ -231,11 +236,11 @@ fn blobs(device: Option<u32>, reader: Option<&str>, command: &BlobsCommand) -> C
             check_large_blobs(&info)?;
             let array = link.run(|exchange| fido::large_blobs_read(exchange))?;
             if output == "-" {
-                io::stdout().write_all(&array)?;
+                super::output::write_stdout(&array)?;
             } else {
                 std::fs::write(output, &array)?;
             }
-            println!(
+            eprintln!(
                 "largeBlobs array written to {output} ({} byte(s)).",
                 array.len()
             );
@@ -249,6 +254,7 @@ fn blobs(device: Option<u32>, reader: Option<&str>, command: &BlobsCommand) -> C
             } else {
                 std::fs::read(file)?
             };
+            fido::validate_large_blob_array(&data)?;
             let mut link = FidoLink::connect(device, reader)?;
             let info = link.run(|exchange| fido::get_info(exchange))?;
             check_large_blobs(&info)?;
@@ -285,6 +291,7 @@ fn blobs(device: Option<u32>, reader: Option<&str>, command: &BlobsCommand) -> C
 fn describe(error: &FidoError<io::Error>) -> String {
     match error {
         FidoError::Random(error) => format!("failed to generate randomness: {error}"),
+        FidoError::LargeBlobArray(error) => error.to_string(),
         FidoError::Drive(DriveError::Transport(error)) => {
             format!("transport exchange failed: {error}")
         }
@@ -295,10 +302,11 @@ fn describe(error: &FidoError<io::Error>) -> String {
                 "PIN authentication is currently blocked; remove and re-insert the CanoKey"
                     .to_string()
             }
-            Some(0x36) => "the new PIN does not meet the device's requirements".to_string(),
-            Some(0x30) => "operation not allowed (a FIDO reset must be confirmed within a few \
-                               seconds of inserting the key)"
-                .to_string(),
+            Some(0x33) => "PIN/UV authentication is invalid".to_string(),
+            Some(0x35) => "no FIDO2 PIN is set".to_string(),
+            Some(0x36) => "PIN/UV authorization is required".to_string(),
+            Some(0x37) => "the new PIN does not meet the device's requirements".to_string(),
+            Some(0x30) => "operation not allowed".to_string(),
             Some(0x2f) => "timed out waiting for user presence".to_string(),
             Some(0x2e) => "no credentials".to_string(),
             Some(status) => format!("CTAP error 0x{status:02x}"),
@@ -312,13 +320,16 @@ fn describe(error: &FidoError<io::Error>) -> String {
 
 /// A connected FIDO link: USB HID (native CTAPHID) or FIDO-over-CCID.
 enum FidoLink {
-    Hid(fido::CtapHidAdapter<HidReportIo>),
+    Hid {
+        adapter: fido::CtapHidAdapter<HidReportIo>,
+        touch_prompted: Arc<AtomicBool>,
+    },
     Pcsc(super::Target),
 }
 
 impl FidoLink {
     /// HID is preferred (native FIDO transport); PC/SC is used when --reader
-    /// or --device is given or no HID interface exists. FIDO over CCID
+    /// is given or no matching HID interface exists. FIDO over CCID
     /// requires firmware 1.5.2+; older known firmware is rejected with a
     /// clear message.
     fn connect(device: Option<u32>, reader: Option<&str>) -> CliResult<Self> {
@@ -348,18 +359,13 @@ impl FidoLink {
                     if !capabilities.cbor {
                         return Err("the HID interface does not speak CTAP2 (CBOR)".into());
                     }
-                    return Ok(FidoLink::Hid(fido::CtapHidAdapter::new(
-                        channel,
-                        Duration::from_secs(60),
-                        |_| {},
-                    )));
+                    return Ok(Self::hid(channel));
                 }
             }
             let pcsc = Pcsc::establish()?;
-            let target = single_target(&pcsc, Some(serial), reader).map_err(|_| {
+            let target = single_target(&pcsc, Some(serial), reader).map_err(|error| {
                 format!(
-                    "cannot resolve --device {serial}: no CanoKey with that serial over PC/SC, \
-                     and no HID interface carries the matching serial"
+                    "cannot resolve --device {serial}: {error}; no unique matching HID interface"
                 )
             })?;
             return Self::pcsc(target);
@@ -387,21 +393,7 @@ impl FidoLink {
                     getrandom::fill(&mut nonce)?;
                     match hid::connect(&api, &interface, nonce, Duration::from_secs(5)) {
                         Ok((channel, capabilities)) if capabilities.cbor => {
-                            let mut prompted = false;
-                            let adapter = fido::CtapHidAdapter::new(
-                                channel,
-                                Duration::from_secs(60),
-                                move |keepalive| {
-                                    if keepalive == Keepalive::UserPresenceNeeded && !prompted {
-                                        eprintln!("Touch your CanoKey...");
-                                        prompted = true;
-                                    }
-                                    if keepalive == Keepalive::Processing {
-                                        prompted = false;
-                                    }
-                                },
-                            );
-                            return Ok(FidoLink::Hid(adapter));
+                            return Ok(Self::hid(channel));
                         }
                         Ok(_) => eprintln!("note: the HID interface does not speak CTAP2 (CBOR); falling back to PC/SC"),
                         Err(error) => {
@@ -417,12 +409,28 @@ impl FidoLink {
         Self::pcsc(target)
     }
 
-    fn pcsc(target: super::Target) -> CliResult<Self> {
-        if let Some(firmware) = target.profile.info().firmware() {
-            if (firmware.major, firmware.minor) < (1, 5) {
-                return Err("FIDO over CCID requires firmware 1.5.2 or newer".into());
-            }
+    fn hid(channel: CtapHidChannel<HidReportIo>) -> Self {
+        let touch_prompted = Arc::new(AtomicBool::new(false));
+        let prompted = touch_prompted.clone();
+        let adapter =
+            fido::CtapHidAdapter::new(channel, Duration::from_secs(60), move |keepalive| {
+                if keepalive == Keepalive::UserPresenceNeeded
+                    && !prompted.swap(true, Ordering::Relaxed)
+                {
+                    eprintln!("Touch your CanoKey...");
+                }
+                if keepalive == Keepalive::Processing {
+                    prompted.store(false, Ordering::Relaxed);
+                }
+            });
+        Self::Hid {
+            adapter,
+            touch_prompted,
         }
+    }
+
+    fn pcsc(target: super::Target) -> CliResult<Self> {
+        check_ccid_firmware(&target.profile)?;
         Ok(FidoLink::Pcsc(target))
     }
 
@@ -431,11 +439,26 @@ impl FidoLink {
         operation: impl FnOnce(&mut Exchange<'_, io::Error>) -> Result<T, FidoError<io::Error>>,
     ) -> CliResult<T> {
         match self {
-            FidoLink::Hid(adapter) => operation(&mut |command| adapter.exchange(command)),
+            FidoLink::Hid {
+                adapter,
+                touch_prompted,
+            } => {
+                touch_prompted.store(false, Ordering::Relaxed);
+                operation(&mut |command| adapter.exchange(command))
+            }
             FidoLink::Pcsc(target) => operation(&mut |command| target.connection.exchange(command)),
         }
         .map_err(|error| describe(&error).into())
     }
+}
+
+fn check_ccid_firmware(profile: &canokey::DeviceProfile) -> CliResult<()> {
+    if let Some(firmware) = profile.info().firmware() {
+        if (firmware.major, firmware.minor, firmware.patch) < (1, 5, 2) {
+            return Err("FIDO over CCID requires firmware 1.5.2 or newer".into());
+        }
+    }
+    Ok(())
 }
 
 fn read_line() -> CliResult<String> {
@@ -444,13 +467,34 @@ fn read_line() -> CliResult<String> {
     Ok(line.trim().to_string())
 }
 
+fn validate_new_pin(pin: &str, minimum: u64) -> CliResult<()> {
+    if !fido::normalize_pin(pin.as_bytes())
+        .is_ok_and(|normalized| normalized.chars().count() as u64 >= minimum)
+    {
+        return Err(format!(
+            "after Unicode NFC normalization, the PIN must contain at least {} characters, at most 63 UTF-8 bytes, and no NUL bytes",
+            minimum.max(4)
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn pins_match(first: &str, second: &str) -> bool {
+    match (
+        fido::normalize_pin(first.as_bytes()),
+        fido::normalize_pin(second.as_bytes()),
+    ) {
+        (Ok(first), Ok(second)) => first == second,
+        _ => false,
+    }
+}
+
 fn prompt_new_pin(minimum: u64) -> CliResult<super::SecretString> {
     let pin = super::prompt_password("Enter the new PIN: ")?;
-    if (pin.len() as u64) < minimum || pin.len() > 63 {
-        return Err(format!("the PIN must be {minimum}-63 characters").into());
-    }
+    validate_new_pin(&pin, minimum)?;
     let repeated = super::prompt_password("Repeat the new PIN: ")?;
-    if pin.as_str() != repeated.as_str() {
+    if !pins_match(&pin, &repeated) {
         return Err("the PINs do not match".into());
     }
     Ok(pin)
@@ -493,8 +537,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     if let Some(remaining) = info.remaining_discoverable_credentials() {
         println!("Remaining discoverable credentials: {remaining}");
     }
-    let protocol = fido::preferred_protocol(&info);
-    if let Ok(retries) = link.run(|exchange| fido::pin_retries(protocol, exchange)) {
+    if let Some(retries) = link.run(|exchange| fido::pin_retries_if_supported(&info, exchange))? {
         println!("PIN retries:            {}", retries.pin_retries);
     }
     Ok(())
@@ -536,6 +579,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 Some(pin) => pin.clone(),
                 None => prompt_new_pin(minimum)?,
             };
+            validate_new_pin(&new_pin, minimum)?;
             let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
             link.run(|exchange| fido::set_pin(&session, new_pin.as_bytes(), exchange))?;
             println!("FIDO2 PIN set.");
@@ -553,6 +597,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 Some(pin) => pin.clone(),
                 None => prompt_new_pin(minimum)?,
             };
+            validate_new_pin(&new_pin, minimum)?;
             let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
             link.run(|exchange| {
                 fido::change_pin(&session, pin.as_bytes(), new_pin.as_bytes(), exchange)
@@ -588,10 +633,9 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 return Err("this CanoKey does not have a FIDO2 PIN set".into());
             }
             let pin = match pin {
-                Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+                Some(pin) => super::SecretString::new(pin.to_string()),
                 None => super::prompt_password("Enter the FIDO2 PIN: ")?,
             };
-            // A pinUvAuthToken request with an RP binding verifies the PIN,
             // A pinUvAuthToken request with an RP binding verifies the PIN.
             let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
             link.run(|exchange| {
@@ -690,7 +734,7 @@ fn config_token(
     pin: Option<&str>,
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
-        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+        Some(pin) => super::SecretString::new(pin.to_string()),
         None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
@@ -711,7 +755,7 @@ fn credman_token(
     pin: Option<&str>,
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
-        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+        Some(pin) => super::SecretString::new(pin.to_string()),
         None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
@@ -732,7 +776,7 @@ fn blob_token(
     pin: Option<&str>,
 ) -> CliResult<canokey::ctap::pin::PinToken> {
     let pin = match pin {
-        Some(pin) => zeroize::Zeroizing::new(pin.to_string()),
+        Some(pin) => super::SecretString::new(pin.to_string()),
         None => super::prompt_password("Enter the FIDO2 PIN: ")?,
     };
     let session = link.run(|exchange| fido::key_agreement(protocol, exchange))?;
@@ -799,6 +843,24 @@ fn enumerate(
     Ok(rows)
 }
 
+fn credential_query(input: &str) -> CliResult<String> {
+    let query = input.strip_suffix("...").unwrap_or(input);
+    if query.is_empty() || !query.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "credential ID must be a nonempty hexadecimal prefix (optionally ending in ...)".into(),
+        );
+    }
+    Ok(query.to_ascii_lowercase())
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\r', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
 fn credentials(
     device: Option<u32>,
     reader: Option<&str>,
@@ -819,9 +881,9 @@ fn credentials(
                     println!(
                         "{},{},{},{},{}",
                         hex_encode(&row.credential_id),
-                        row.rp_id,
-                        row.user_name,
-                        row.display_name,
+                        csv_field(&row.rp_id),
+                        csv_field(&row.user_name),
+                        csv_field(&row.display_name),
                         hex_encode(&row.user_id)
                     );
                 }
@@ -859,7 +921,7 @@ fn credentials(
             pin,
             force,
         } => {
-            let query = credential_id.trim_end_matches('.').to_lowercase();
+            let query = credential_query(credential_id)?;
             let mut link = FidoLink::connect(device, reader)?;
             let protocol = {
                 let info = link.run(|exchange| fido::get_info(exchange))?;
@@ -900,7 +962,7 @@ fn credentials(
             pin,
             force,
         } => {
-            let query = credential_id.trim_end_matches('.').to_lowercase();
+            let query = credential_query(credential_id)?;
             let mut link = FidoLink::connect(device, reader)?;
             let protocol = {
                 let info = link.run(|exchange| fido::get_info(exchange))?;
@@ -948,5 +1010,112 @@ fn credentials(
             println!("Credential user updated.");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_large_blob_files_fail_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let path = directory.0.join("array.bin");
+        for (data, expected) in [
+            (vec![0x80], "between 17 and 4096"),
+            (vec![0; 4097], "between 17 and 4096"),
+            (vec![0; 17], "integrity trailer"),
+        ] {
+            std::fs::write(&path, data).unwrap();
+            let command = BlobsCommand::Write {
+                file: path.to_str().unwrap().into(),
+                pin: None,
+                force: true,
+            };
+            let error = blobs(None, Some("nonexistent-audit-reader"), &command).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn ccid_support_starts_at_patch_version_152() {
+        use canokey::{compatibility::DeviceObservations, DeviceProfile};
+        for (version, supported) in [
+            ("1.5.0", false),
+            ("1.5.1", false),
+            ("1.5.2", true),
+            ("3.1.2", true),
+        ] {
+            let profile = DeviceProfile::from_observations(DeviceObservations::new(
+                version.as_bytes().to_vec(),
+            ))
+            .unwrap();
+            assert_eq!(check_ccid_firmware(&profile).is_ok(), supported);
+        }
+    }
+
+    #[test]
+    fn credential_queries_require_an_explicit_hexadecimal_prefix() {
+        for query in ["", ".", "...", "a..", "gg", " 12", "12\n"] {
+            assert!(credential_query(query).is_err(), "{query:?}");
+        }
+        assert_eq!(credential_query("AB12...").unwrap(), "ab12");
+        assert_eq!(credential_query("a").unwrap(), "a");
+    }
+
+    #[test]
+    fn csv_fields_preserve_commas_quotes_and_newlines() {
+        assert_eq!(csv_field("example.com"), "example.com");
+        assert_eq!(csv_field("alice,bob"), "\"alice,bob\"");
+        assert_eq!(csv_field("Alice \"A\""), "\"Alice \"\"A\"\"\"");
+        assert_eq!(csv_field("line1\r\nline2"), "\"line1\r\nline2\"");
+    }
+
+    #[test]
+    fn ctap_pin_errors_distinguish_authorization_from_policy() {
+        // CTAP2 status assignments, also recorded in firmware ctap-errors.h.
+        for (status, expected) in [
+            (0x31, "wrong PIN"),
+            (0x32, "the FIDO2 PIN is blocked"),
+            (0x33, "PIN/UV authentication is invalid"),
+            (0x35, "no FIDO2 PIN is set"),
+            (0x36, "PIN/UV authorization is required"),
+            (0x37, "the new PIN does not meet the device's requirements"),
+            (0x30, "operation not allowed"),
+            (0xff, "CTAP error 0xff"),
+        ] {
+            let mut error = canokey::Error::new(ErrorKind::UnexpectedStatusWord);
+            error.application_status = Some(status);
+            assert_eq!(
+                describe(&FidoError::Drive(DriveError::Protocol(error))),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn new_pins_obey_unicode_minimum_and_utf8_byte_limit() {
+        assert!(validate_new_pin("abcd", 4).is_ok());
+        assert!(validate_new_pin("abcd", 6).is_err());
+        assert!(validate_new_pin("你好", 4).is_err());
+        assert!(validate_new_pin("你好世界", 4).is_ok());
+        assert!(validate_new_pin(&"界".repeat(22), 4).is_err());
+        assert!(validate_new_pin(&"x".repeat(63), 4).is_ok());
+        assert!(validate_new_pin("abcd\0", 4).is_err());
+        assert!(validate_new_pin("ab\0cd", 4).is_err());
+        assert!(validate_new_pin("a", 0).is_err());
+        assert!(validate_new_pin("e\u{301}ab", 4).is_err());
+        assert!(validate_new_pin("e\u{301}abc", 4).is_ok());
+        assert!(validate_new_pin("e\u{301}abc", 5).is_err());
+        assert!(validate_new_pin(&"e\u{301}".repeat(31), 31).is_ok());
+    }
+
+    #[test]
+    fn pin_confirmation_compares_normalized_unicode() {
+        assert!(pins_match("e\u{301}abc", "éabc"));
+        assert!(pins_match("A\u{30a}xyz", "Åxyz"));
+        assert!(!pins_match("éabc", "éabd"));
+        assert!(!pins_match("ＡＢＣＤ", "ABCD"));
+        assert!(!pins_match("e\u{301}ab", "éab"));
     }
 }

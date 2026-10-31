@@ -6,11 +6,13 @@ ckman\-piv\-keys\-generate\-batch \- Generate the same algorithm into several sl
 .SH SYNOPSIS
 \fBckman\-piv\-keys\-generate\-batch\fR <\fB\-\-slots\fR> [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-\-output\-dir\fR] [\fB\-\-pin\-policy\fR] [\fB\-\-touch\-policy\fR] [\fB\-\-format\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Generate the same algorithm into several slots in one batch (one management authentication, progress per slot)
+Generate the same algorithm into several slots in one batch (one management authentication, progress per slot).
+.PP
+Save each public key before generating the next slot. On failure, completed keys and their files remain; no rollback is attempted.
 .SH OPTIONS
 .TP
 \fB\-\-slots\fR \fI<SLOTS>\fR
-Comma\-separated PIV slots (e.g. 9a,9c,9d,9e)
+Distinct comma\-separated PIV slots (e.g. 9a,9c,9d,9e)
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: rsa2048]
 Algorithm to use in key generation
@@ -97,4 +99,4 @@ der
 Current management key as 48 hex characters (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)

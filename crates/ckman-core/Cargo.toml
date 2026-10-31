@@ -10,22 +10,29 @@ description = "Session layer over libcanokey: profiles, credentials, crypto form
 base64ct.workspace = true
 canokey.workspace = true
 ckman-transport = { path = "../ckman-transport", version = "0.1.4" }
+curve25519-dalek.workspace = true
 der.workspace = true
+fips203.workspace = true
+fips204.workspace = true
 hmac.workspace = true
+k256.workspace = true
 p256.workspace = true
 p384.workspace = true
+p521.workspace = true
 pkcs1.workspace = true
 pkcs5.workspace = true
 pkcs8.workspace = true
 rsa.workspace = true
 sha2.workspace = true
 spki.workspace = true
+sm2.workspace = true
 x509-cert.workspace = true
 getrandom.workspace = true
 pbkdf2.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+unicode-normalization.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

@@ -135,6 +135,13 @@ pub enum CtapHidError {
     WrongChannel,
 }
 
+fn device_error(body: &[u8]) -> Result<CtapHidError, CtapHidError> {
+    let [code] = body else {
+        return Err(CtapHidError::Malformed("ERROR must contain one byte"));
+    };
+    Ok(CtapHidError::Device(DeviceError::from_byte(*code)))
+}
+
 /// Raw HID report access. Implementations must deliver exactly one 64-byte
 /// report per call and must not retry or reorder reports themselves.
 pub trait ReportIo {
@@ -205,6 +212,7 @@ impl MessageDecoder {
         let tag = report[4];
         if tag & 0x80 != 0 {
             // Initialization packet: aborts any partial message.
+            self.active = None;
             let expected = u16::from_be_bytes([report[5], report[6]]) as usize;
             let cmd =
                 Command::from_byte(tag).ok_or(CtapHidError::Malformed("unknown command byte"))?;
@@ -293,15 +301,24 @@ impl<T: ReportIo> CtapHidChannel<T> {
                 continue; // stale traffic on another channel
             }
             if let Some((cmd, payload)) = decoder.push(&report)? {
+                if cmd == Command::Error {
+                    return Err(device_error(&payload)?);
+                }
                 if cmd != Command::Init {
                     continue;
                 }
-                if payload.len() < 17 || payload[..8] != nonce {
-                    return Err(CtapHidError::Malformed(
-                        "INIT response does not match nonce",
-                    ));
+                if payload.len() < 17 {
+                    return Err(CtapHidError::Malformed("short INIT response"));
+                }
+                if payload[..8] != nonce {
+                    // Broadcast replies can belong to another application
+                    // allocating a channel. Keep waiting for our nonce.
+                    continue;
                 }
                 let cid = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+                if cid == 0 || cid == BROADCAST_CID {
+                    return Err(CtapHidError::Malformed("INIT assigned a reserved channel"));
+                }
                 let caps = payload[16];
                 let capabilities = Capabilities {
                     wink: caps & 0x01 != 0,
@@ -347,12 +364,13 @@ impl<T: ReportIo> CtapHidChannel<T> {
             match decoder.push(&report)? {
                 None => continue,
                 Some((Command::Keepalive, body)) => {
-                    let status = body.first().copied().unwrap_or(0);
-                    on_keepalive(Keepalive::from_byte(status));
+                    let [status] = body.as_slice() else {
+                        return Err(CtapHidError::Malformed("KEEPALIVE must contain one byte"));
+                    };
+                    on_keepalive(Keepalive::from_byte(*status));
                 }
                 Some((Command::Error, body)) => {
-                    let code = body.first().copied().unwrap_or(0x7f);
-                    return Err(CtapHidError::Device(DeviceError::from_byte(code)));
+                    return Err(device_error(&body)?);
                 }
                 Some((response, body)) if response == cmd => return Ok(body),
                 Some((_, _)) => {
@@ -539,6 +557,66 @@ mod tests {
     }
 
     #[test]
+    fn unknown_command_discards_partial_message() {
+        let packets = frame_message(CID, Command::Cbor, &[7; 100]).unwrap();
+        let mut decoder = MessageDecoder::new();
+        assert!(decoder.push(&packets[0]).unwrap().is_none());
+        let mut unknown = packets[0];
+        unknown[4] = 0xff;
+        assert!(matches!(
+            decoder.push(&unknown),
+            Err(CtapHidError::Malformed(_))
+        ));
+        assert!(matches!(
+            decoder.push(&packets[1]),
+            Err(CtapHidError::Malformed(_))
+        ));
+        assert_eq!(decode_all(&packets), (Command::Cbor, vec![7; 100]));
+    }
+
+    #[test]
+    fn allocation_rejects_reserved_channels_and_propagates_errors() {
+        for cid in [0u32, BROADCAST_CID] {
+            let mut device = Loopback::new(CborBehavior::Respond(vec![]));
+            let mut response = b"nonce123".to_vec();
+            response.extend_from_slice(&cid.to_be_bytes());
+            response.extend_from_slice(&[2, 1, 0, 0, 0x04]);
+            device
+                .outbox
+                .extend(frame_message(BROADCAST_CID, Command::Init, &response).unwrap());
+            assert!(matches!(
+                CtapHidChannel::allocate(device, *b"nonce123", Duration::from_secs(1)),
+                Err(CtapHidError::Malformed(_))
+            ));
+        }
+        let mut device = Loopback::new(CborBehavior::Respond(vec![]));
+        device
+            .outbox
+            .extend(frame_message(BROADCAST_CID, Command::Error, &[0x06]).unwrap());
+        assert!(matches!(
+            CtapHidChannel::allocate(device, *b"nonce123", Duration::from_secs(1)),
+            Err(CtapHidError::Device(DeviceError::ChannelBusy))
+        ));
+    }
+
+    #[test]
+    fn control_responses_require_exactly_one_byte() {
+        for cmd in [Command::Error, Command::Keepalive] {
+            for payload in [vec![], vec![1, 2]] {
+                let mut channel = channel(CborBehavior::Respond(vec![0]));
+                let reports = frame_message(channel.cid, cmd, &payload).unwrap();
+                channel.io.outbox.extend(reports);
+                assert!(matches!(
+                    channel.request(Command::Cbor, &[], Duration::from_secs(1), &mut |_| panic!(
+                        "malformed keepalive"
+                    )),
+                    Err(CtapHidError::Malformed(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn frame_roundtrip_boundaries() {
         for len in [0, 1, 57, 58, 57 + 59, 116, 117, MAX_MESSAGE_LEN] {
             let payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
@@ -598,17 +676,57 @@ mod tests {
     }
 
     #[test]
-    fn allocate_rejects_wrong_nonce() {
+    fn allocate_ignores_other_applications_nonce() {
         let mut device = Loopback::new(CborBehavior::Respond(vec![]));
-        // Preload a response to a different nonce.
+        // CTAP 2.1 section 11.2.9.1.3: broadcast replies are matched by
+        // nonce. A foreign allocation must not break our subsequent match.
         let mut response = Vec::new();
         response.extend_from_slice(b"nonceXXX");
-        response.extend_from_slice(&1u32.to_be_bytes());
+        response.extend_from_slice(&42u32.to_be_bytes());
         response.extend_from_slice(&[2, 1, 0, 0, 0x04]);
         let packets = frame_message(BROADCAST_CID, Command::Init, &response).unwrap();
         device.outbox.extend(packets);
-        let result = CtapHidChannel::allocate(device, *b"nonce123", Duration::from_secs(1));
-        assert!(matches!(result, Err(CtapHidError::Malformed(_))));
+        let (channel, _) =
+            CtapHidChannel::allocate(device, *b"nonce123", Duration::from_secs(1)).unwrap();
+        assert_eq!(channel.cid(), 1, "must use our own allocation, not CID 42");
+    }
+
+    #[test]
+    fn allocation_requires_a_complete_matching_reply() {
+        struct RepliesOnly(std::collections::VecDeque<[u8; REPORT_LEN]>);
+        impl ReportIo for RepliesOnly {
+            fn write_report(&mut self, _: &[u8; REPORT_LEN]) -> io::Result<()> {
+                Ok(())
+            }
+            fn read_report(&mut self, _: Duration) -> io::Result<Option<[u8; REPORT_LEN]>> {
+                Ok(self.0.pop_front())
+            }
+        }
+        let mut foreign = b"nonceXXX".to_vec();
+        foreign.extend_from_slice(&42u32.to_be_bytes());
+        foreign.extend_from_slice(&[2, 1, 0, 0, 0x04]);
+        let reports = frame_message(BROADCAST_CID, Command::Init, &foreign).unwrap();
+        assert!(matches!(
+            CtapHidChannel::allocate(
+                RepliesOnly(reports.into()),
+                *b"nonce123",
+                Duration::from_secs(1)
+            ),
+            Err(CtapHidError::Timeout)
+        ));
+        for len in 0..17 {
+            let mut short = b"nonce123".to_vec();
+            short.resize(len, 0);
+            let reports = frame_message(BROADCAST_CID, Command::Init, &short).unwrap();
+            assert!(matches!(
+                CtapHidChannel::allocate(
+                    RepliesOnly(reports.into()),
+                    *b"nonce123",
+                    Duration::from_secs(1)
+                ),
+                Err(CtapHidError::Malformed(_))
+            ));
+        }
     }
 
     #[test]

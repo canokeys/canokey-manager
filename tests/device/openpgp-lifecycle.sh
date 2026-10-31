@@ -33,6 +33,14 @@ section "ckman openpgp keys generate"
   --algorithm ed25519 \
   --admin-pin "$OPENPGP_ADMIN_PIN"
 
+section "ckman openpgp key metadata"
+key_info="$("${CKMAN[@]}" openpgp keys info sig)"
+printf '%s\n' "$key_info"
+grep -Eq '^Origin:[[:space:]]+generated on device$' <<<"$key_info"
+# Generating a raw key does not populate its OpenPGP fingerprint. The slot
+# must still appear in the summary based on DE's key status.
+"${CKMAN[@]}" openpgp info | grep -Fq 'Signature key:'
+
 section "ckman openpgp cardholder"
 "${CKMAN[@]}" openpgp cardholder set-name "Alice Example" --admin-pin "$OPENPGP_ADMIN_PIN"
 "${CKMAN[@]}" openpgp cardholder set-login "alice" --admin-pin "$OPENPGP_ADMIN_PIN"
@@ -56,6 +64,8 @@ section "ckman openpgp access set-touch-cache"
 # Card-wide UIF touch cache (1.5.2+; this script runs on 2.0+). Set, then
 # restore the factory zero.
 "${CKMAN[@]}" openpgp access set-touch-cache 15 --admin-pin "$OPENPGP_ADMIN_PIN"
+cache_info="$("${CKMAN[@]}" openpgp info)"
+grep -Eq '^Touch cache time:[[:space:]]+15 second\(s\)$' <<<"$cache_info"
 "${CKMAN[@]}" openpgp access set-touch-cache 0 --admin-pin "$OPENPGP_ADMIN_PIN"
 
 section "ckman openpgp keys export"
@@ -63,5 +73,12 @@ section "ckman openpgp keys export"
 grep -Fq "BEGIN PUBLIC KEY" "$CANOKEY_USBIP_WORK_DIR/openpgp-public.pem"
 openssl pkey -pubin -in "$CANOKEY_USBIP_WORK_DIR/openpgp-public.pem" \
   -noout -text >/dev/null
+
+# Stdout exports must contain only the key bytes, including binary DER.
+for format in pem der; do
+  "${CKMAN[@]}" openpgp keys export sig "$work_dir/public.$format" --format "$format"
+  "${CKMAN[@]}" openpgp keys export sig - --format "$format" >"$work_dir/stdout.$format"
+  cmp "$work_dir/public.$format" "$work_dir/stdout.$format"
+done
 
 echo "OpenPGP lifecycle passed."

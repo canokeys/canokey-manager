@@ -45,7 +45,9 @@ pub fn run() -> std::process::ExitCode {
     };
     let result = match command {
         Commands::Info => commands::info::run(cli.device, cli.reader.as_deref()),
-        Commands::List { serials } => commands::list::run(*serials, cli.reader.as_deref()),
+        Commands::List { serials } => {
+            commands::list::run(*serials, cli.device, cli.reader.as_deref())
+        }
         Commands::Config { command } => {
             commands::config::run(cli.device, cli.reader.as_deref(), command)
         }

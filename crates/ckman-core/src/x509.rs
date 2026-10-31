@@ -6,7 +6,7 @@
 //! built directly and signed exactly once).
 
 use canokey::piv::Algorithm;
-use der::asn1::{Any, BitString, ObjectIdentifier, SetOfVec, UtcTime};
+use der::asn1::{Any, BitString, GeneralizedTime, ObjectIdentifier, SetOfVec, UtcTime};
 use der::{Decode, Encode};
 use sha2::Digest as _;
 use spki::{AlgorithmIdentifierOwned as AlgorithmIdentifier, SubjectPublicKeyInfo};
@@ -33,9 +33,15 @@ pub enum X509Error {
     /// DER encoding/decoding failed.
     #[error("ASN.1 encoding failed: {0}")]
     Der(String),
-    /// A timestamp does not fit UTCTime (1950-2049).
-    #[error("timestamp out of UTCTime range")]
+    /// A timestamp is outside the supported ASN.1 time range (1970-9999).
+    #[error("timestamp out of ASN.1 time range")]
     TimeRange,
+    /// The certificate expires before it becomes valid.
+    #[error("certificate validity ends before it starts")]
+    InvalidValidity,
+    /// The certificate's inner and outer signature identifiers differ.
+    #[error("certificate signature algorithm does not match its TBS identifier")]
+    SignatureAlgorithmMismatch,
     /// The Ed25519 message exceeds the firmware's classic scratch buffer.
     #[error("Ed25519 message too large")]
     MessageTooLarge,
@@ -118,7 +124,7 @@ pub fn signature_algorithm(
         // SM2 signs SM3(ZA || M); no hash parameter.
         (Algorithm::Sm2, None) => "1.2.156.10197.1.501",
         // ML-DSA-65, empty context; parameters are absent by definition.
-        (Algorithm::MlDsa65, None) => "2.16.840.1.101.3.4.18",
+        (Algorithm::MlDsa65, None) => "2.16.840.1.101.3.4.3.18",
         (Algorithm::X25519 | Algorithm::MlKem768, _) => {
             return Err(X509Error::NotSigning(if key == Algorithm::X25519 {
                 "X25519"
@@ -164,7 +170,7 @@ pub fn signature_algorithm(
     })
 }
 
-const NAME_ATTRIBUTES: [(&str, &str); 9] = [
+const NAME_ATTRIBUTES: [(&str, &str); 11] = [
     ("CN", "2.5.4.3"),
     ("L", "2.5.4.7"),
     ("ST", "2.5.4.8"),
@@ -174,90 +180,179 @@ const NAME_ATTRIBUTES: [(&str, &str); 9] = [
     ("STREET", "2.5.4.9"),
     ("DC", "0.9.2342.19200300.100.1.25"),
     ("UID", "0.9.2342.19200300.100.1.1"),
+    ("serialNumber", "2.5.4.5"),
+    ("emailAddress", "1.2.840.113549.1.9.1"),
 ];
 
 /// Parse an RFC 4514 string into an X.501 Name: `,` separates RDNs, `+`
-/// separates multi-valued RDN attributes, `\` escapes the special characters
-/// `"+"',<> #=` and introduces `\XX` UTF-8 hex bytes. RDNs are reversed into
-/// DER order.
+/// separates multi-valued RDN attributes, and `\` escapes special characters
+/// or introduces `\XX` UTF-8 bytes. A leading unescaped `#` carries a complete
+/// DER attribute value in hexadecimal. RDNs are reversed into DER order.
 pub fn parse_rfc4514(value: &str) -> Result<Name, X509Error> {
     let invalid = |msg: &str| X509Error::Rfc4514(msg.to_string());
-    // Split into RDNs of attributes, handling escapes.
-    let mut name: Vec<Vec<String>> = Vec::new();
-    let mut entry: Vec<String> = Vec::new();
-    let mut buf = String::new();
-    let mut hexbuf: Vec<u8> = Vec::new();
-    let mut chars = value.chars();
-    while let Some(mut c) = chars.next() {
-        if c == '\\' {
-            let c1 = chars.next().ok_or_else(|| invalid("trailing backslash"))?;
-            if "\\\"+,'<> #=".contains(c1) {
-                c = c1;
-            } else {
-                let c2 = chars
-                    .next()
-                    .ok_or_else(|| invalid("truncated hex escape"))?;
-                hexbuf.push(
-                    u8::from_str_radix(&format!("{c1}{c2}"), 16)
-                        .map_err(|_| invalid("invalid hex escape"))?,
-                );
-                if let Ok(text) = std::str::from_utf8(&hexbuf) {
-                    buf.push_str(text);
-                    hexbuf.clear();
-                }
-                continue; // Possibly multi-byte; expect more hex.
-            }
-        } else if c == ',' || c == '+' {
-            entry.push(std::mem::take(&mut buf));
-            if c == ',' {
-                name.push(std::mem::take(&mut entry));
-            }
-            continue;
-        }
-        if !hexbuf.is_empty() {
-            return Err(invalid("invalid UTF-8 data"));
-        }
-        buf.push(c);
-    }
-    if !hexbuf.is_empty() {
-        return Err(invalid("invalid UTF-8 data"));
-    }
-    entry.push(buf);
-    name.push(entry);
     let mut rdns = Vec::new();
-    for entry in name {
-        let mut attributes = SetOfVec::new();
-        for part in entry {
-            let (key, value) = part
-                .split_once('=')
-                .ok_or_else(|| invalid("missing '=' in attribute"))?;
-            let dotted = key.chars().all(|c| c.is_ascii_digit() || c == '.')
-                && key.split('.').all(|n| !n.is_empty())
-                && key.contains('.');
-            let oid = NAME_ATTRIBUTES
-                .iter()
-                .find(|(name, _)| *name == key)
-                .map(|(_, oid)| *oid)
-                .or(if dotted { Some(key) } else { None })
-                .ok_or_else(|| invalid("unsupported attribute"))?;
-            let oid = ObjectIdentifier::new(oid).map_err(der)?;
-            let value = Any::encode_from(&der::asn1::Utf8StringRef::new(value).map_err(der)?)
-                .map_err(der)?;
-            attributes
-                .insert(AttributeTypeAndValue { oid, value })
-                .map_err(der)?;
+    let mut attributes = SetOfVec::new();
+    let mut start = 0;
+    let mut escaped = false;
+    // Keep escapes intact until the attribute type and value are separated.
+    // Tracking every backslash also handles any number of consecutive escapes.
+    for (index, c) in value.char_indices().chain([(value.len(), ',')]) {
+        if escaped {
+            escaped = false;
+            if index != value.len() {
+                continue;
+            }
+            return Err(invalid("trailing backslash"));
         }
-        rdns.insert(0, RelativeDistinguishedName(attributes));
+        match c {
+            '\\' => escaped = true,
+            ',' | '+' => {
+                let part = &value[start..index];
+                let (key, value) = part
+                    .split_once('=')
+                    .ok_or_else(|| invalid("missing '=' in attribute"))?;
+                let oid = NAME_ATTRIBUTES
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(key))
+                    .map(|(_, oid)| *oid)
+                    .unwrap_or(key);
+                let oid =
+                    ObjectIdentifier::new(oid).map_err(|_| invalid("unsupported attribute"))?;
+                let value = subject_value(oid, value)?;
+                attributes
+                    .insert(AttributeTypeAndValue { oid, value })
+                    .map_err(der)?;
+                start = index + 1;
+                if c == ',' {
+                    rdns.push(RelativeDistinguishedName(std::mem::take(&mut attributes)));
+                }
+            }
+            _ => {}
+        }
     }
+    rdns.reverse();
     Ok(Name::from(RdnSequence::from(rdns)))
+}
+
+fn subject_value(oid: ObjectIdentifier, value: &str) -> Result<Any, X509Error> {
+    use der::asn1::{Ia5StringRef, PrintableStringRef, Utf8StringRef};
+    let invalid = |msg: &str| X509Error::Rfc4514(msg.to_string());
+    let encoded = if let Some(hex) = value.strip_prefix('#') {
+        if hex.is_empty() || hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid("invalid hexadecimal DER attribute value"));
+        }
+        let bytes = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("hex is ASCII"), 16)
+                    .expect("hex digits checked")
+            })
+            .collect::<Vec<_>>();
+        Any::from_der(&bytes).map_err(|_| invalid("invalid DER attribute value"))?
+    } else {
+        let bytes = value.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if byte == b'\\' {
+                index += 1;
+                let escaped = *bytes
+                    .get(index)
+                    .ok_or_else(|| invalid("trailing backslash"))?;
+                if b"\\\"#+,;<> =".contains(&escaped) {
+                    decoded.push(escaped);
+                } else {
+                    let pair = bytes
+                        .get(index..index + 2)
+                        .ok_or_else(|| invalid("truncated hex escape"))?;
+                    if !pair.iter().all(u8::is_ascii_hexdigit) {
+                        return Err(invalid("invalid hex escape"));
+                    }
+                    decoded.push(
+                        u8::from_str_radix(std::str::from_utf8(pair).expect("hex is ASCII"), 16)
+                            .expect("hex digits checked"),
+                    );
+                    index += 1;
+                }
+            } else {
+                if b"\";<>\0".contains(&byte)
+                    || (byte == b' ' && (index == 0 || index + 1 == bytes.len()))
+                {
+                    return Err(invalid("special or boundary character must be escaped"));
+                }
+                decoded.push(byte);
+            }
+            index += 1;
+        }
+        let text = std::str::from_utf8(&decoded).map_err(|_| invalid("invalid UTF-8 data"))?;
+        match oid.to_string().as_str() {
+            "2.5.4.6" | "2.5.4.5" => Any::encode_from(&PrintableStringRef::new(text).map_err(der)?),
+            "0.9.2342.19200300.100.1.25" | "1.2.840.113549.1.9.1" => {
+                Any::encode_from(&Ia5StringRef::new(text).map_err(der)?)
+            }
+            _ => Any::encode_from(&Utf8StringRef::new(text).map_err(der)?),
+        }
+        .map_err(der)?
+    };
+    // ANY preserves the tag; validate the contents of supported string types.
+    use der::Tagged;
+    match encoded.tag() {
+        der::Tag::Utf8String => {
+            encoded.decode_as::<Utf8StringRef>().map_err(der)?;
+        }
+        der::Tag::PrintableString => {
+            encoded.decode_as::<PrintableStringRef>().map_err(der)?;
+        }
+        der::Tag::Ia5String => {
+            encoded.decode_as::<Ia5StringRef>().map_err(der)?;
+        }
+        _ => {}
+    }
+    // Hexadecimal input must obey the same fixed attribute types as text.
+    match oid.to_string().as_str() {
+        "2.5.4.6" => {
+            let country = encoded.decode_as::<PrintableStringRef>().map_err(der)?;
+            if country.as_str().len() != 2 {
+                return Err(invalid("country must contain two characters"));
+            }
+        }
+        "2.5.4.5" => {
+            encoded.decode_as::<PrintableStringRef>().map_err(der)?;
+        }
+        "0.9.2342.19200300.100.1.25" | "1.2.840.113549.1.9.1" => {
+            encoded.decode_as::<Ia5StringRef>().map_err(der)?;
+        }
+        _ => {}
+    }
+    Ok(encoded)
 }
 
 fn time(unix_seconds: i64) -> Result<Time, X509Error> {
     let duration =
         Duration::from_secs(u64::try_from(unix_seconds).map_err(|_| X509Error::TimeRange)?);
-    Ok(Time::UtcTime(
-        UtcTime::from_unix_duration(duration).map_err(|_| X509Error::TimeRange)?,
-    ))
+    let generalized =
+        GeneralizedTime::from_unix_duration(duration).map_err(|_| X509Error::TimeRange)?;
+    if generalized.to_date_time().year() < 2050 {
+        Ok(Time::UtcTime(
+            UtcTime::from_unix_duration(duration).map_err(|_| X509Error::TimeRange)?,
+        ))
+    } else {
+        Ok(Time::GeneralTime(generalized))
+    }
+}
+
+/// Validate and encode a certificate validity interval, in Unix seconds.
+/// Both endpoints must be in 1970-9999 and the end must not precede the start.
+pub fn validity(not_before: i64, not_after: i64) -> Result<Validity, X509Error> {
+    if not_after < not_before {
+        return Err(X509Error::InvalidValidity);
+    }
+    Ok(Validity {
+        not_before: time(not_before)?,
+        not_after: time(not_after)?,
+    })
 }
 
 fn spki(
@@ -282,10 +377,7 @@ pub fn tbs_self_signed(
         serial_number: SerialNumber::new(serial).map_err(der)?,
         signature: signature.clone(),
         issuer: subject.clone(),
-        validity: Validity {
-            not_before: time(not_before)?,
-            not_after: time(not_after)?,
-        },
+        validity: validity(not_before, not_after)?,
         subject: subject.clone(),
         subject_public_key_info: spki(spki_der)?,
         issuer_unique_id: None,
@@ -301,8 +393,12 @@ pub fn assemble_certificate(
     signature_algorithm: AlgorithmIdentifier,
     signature: &[u8],
 ) -> Result<Vec<u8>, X509Error> {
+    let tbs_certificate = TbsCertificate::from_der(tbs_der).map_err(der)?;
+    if tbs_certificate.signature != signature_algorithm {
+        return Err(X509Error::SignatureAlgorithmMismatch);
+    }
     let certificate = Certificate {
-        tbs_certificate: TbsCertificate::from_der(tbs_der).map_err(der)?,
+        tbs_certificate,
         signature_algorithm,
         signature: BitString::new(0, signature).map_err(der)?,
     };
@@ -350,6 +446,7 @@ pub fn pem_encode(label: &str, der_bytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use der::Tagged;
 
     fn rfc4514_text(name: &Name) -> String {
         // Render back in RFC 4514 order for comparison.
@@ -363,12 +460,125 @@ mod tests {
                     .find(|(_, o)| *o == oid)
                     .map(|(l, _)| *l)
                     .unwrap_or(&oid);
-                let value = attr.value.decode_as::<der::asn1::Utf8StringRef>().unwrap();
+                let value = std::str::from_utf8(attr.value.value()).unwrap();
                 attrs.push(format!("{label}={value}"));
             }
             parts.push(attrs.join("+"));
         }
         parts.join(",")
+    }
+
+    #[test]
+    fn validity_accepts_inclusive_endpoints_and_enforces_time_range() {
+        assert!(validity(0, 0).is_ok());
+        assert!(validity(0, 253_402_300_799).is_ok()); // 9999-12-31 23:59:59 UTC
+        assert!(matches!(validity(-1, 0), Err(X509Error::TimeRange)));
+        assert!(matches!(
+            validity(0, 253_402_300_800),
+            Err(X509Error::TimeRange)
+        ));
+        assert!(matches!(validity(1, 0), Err(X509Error::InvalidValidity)));
+    }
+
+    #[test]
+    fn certificate_time_switches_encoding_at_2050() {
+        let last_utc = time(2_524_607_999).unwrap(); // 2049-12-31 23:59:59 UTC
+        let first_general = time(2_524_608_000).unwrap();
+        assert!(matches!(last_utc, Time::UtcTime(_)));
+        assert!(matches!(first_general, Time::GeneralTime(_)));
+        assert_eq!(last_utc.to_der().unwrap()[0], 0x17);
+        assert_eq!(first_general.to_der().unwrap()[0], 0x18);
+        assert_eq!(
+            Time::from_der(&first_general.to_der().unwrap()).unwrap(),
+            first_general
+        );
+        assert!(time(-1).is_err());
+        assert!(time(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn subject_attributes_use_their_asn1_types() {
+        for (subject, tag) in [
+            ("c=SG", der::Tag::PrintableString),
+            ("2.5.4.6=US", der::Tag::PrintableString),
+            ("dc=example", der::Tag::Ia5String),
+            ("cn=示例", der::Tag::Utf8String),
+        ] {
+            let name = parse_rfc4514(subject).unwrap();
+            let attr = name.0[0].0.iter().next().unwrap();
+            assert_eq!(attr.value.tag(), tag, "{subject}");
+        }
+        for bad in ["C=Singapore", "C=é", "DC=示例"] {
+            assert!(parse_rfc4514(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn subject_encoding_matches_openssl() {
+        // Independent OpenSSL 3.5.9 subject with mixed ASN.1 string types,
+        // a multi-valued RDN, and escaped punctuation/backslashes.
+        let text = include_str!("../tests/fixtures/subject-openssl.txt").trim_end();
+        let expected = include_bytes!("../tests/fixtures/subject-openssl.der");
+        assert_eq!(parse_rfc4514(text).unwrap().to_der().unwrap(), expected);
+    }
+
+    #[test]
+    fn rfc4514_hex_values_preserve_their_der_meaning() {
+        let decoded = parse_rfc4514("CN=#0c03666f6f,O=Example,C=#13025347").unwrap();
+        assert_eq!(decoded, parse_rfc4514("CN=foo,O=Example,C=SG").unwrap());
+        assert_eq!(
+            rfc4514_text(&parse_rfc4514(r"CN=\#0c03666f6f").unwrap()),
+            "CN=#0c03666f6f"
+        );
+        let name = parse_rfc4514("1.2.3.4=#0403ff0001").unwrap();
+        assert_eq!(
+            name.0[0].0.iter().next().unwrap().value.to_der().unwrap(),
+            [0x04, 0x03, 0xff, 0, 1]
+        );
+        for bad in [
+            "CN=#",
+            "CN=#0",
+            "CN=#zz",
+            "CN=#0c0366",
+            "CN=#0c016100",
+            "CN=#0c01ff",
+            "C=#0c025347",
+        ] {
+            assert!(parse_rfc4514(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn rfc4514_escapes_are_decoded_after_splitting() {
+        for (encoded, text) in [
+            (r"CN=a\;b", "CN=a;b"),
+            (r"CN=a\=b", "CN=a=b"),
+            (r"CN=\ leading\ ", "CN= leading "),
+            (r"CN=\20leading\20", "CN= leading "),
+            (r"CN=a\\\,b,O=Example", "CN=a\\,b,O=Example"),
+            (r"CN=a\\,O=Example", "CN=a\\,O=Example"),
+            (r"CN=\c3\a5\e4\b8\ad", "CN=å中"),
+        ] {
+            assert_eq!(
+                rfc4514_text(&parse_rfc4514(encoded).unwrap()),
+                text,
+                "{encoded}"
+            );
+        }
+        for bad in [
+            r"CN=a\",
+            r"CN=\c3,OU=\a5",
+            r"CN=\ff",
+            r"CN=\0",
+            r"CN=\qz",
+            "CN= leading",
+            "CN=trailing ",
+            "CN=a;b",
+            "CN=a\0b",
+            r"CN=a\'b",
+        ] {
+            assert!(parse_rfc4514(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
@@ -401,6 +611,44 @@ mod tests {
 mod signing_tests {
     use super::*;
     use der::Decode;
+
+    #[test]
+    fn certificate_builder_rejects_reversed_validity() {
+        let public = include_bytes!("../tests/fixtures/rsa-export-verify-openssl-pub.der");
+        let subject = parse_rfc4514("CN=audit").unwrap();
+        let algorithm =
+            signature_algorithm(Algorithm::Rsa2048, Some(HashAlgorithm::Sha256)).unwrap();
+        assert!(tbs_self_signed(
+            public,
+            &subject,
+            &[1],
+            1_800_000_000,
+            1_700_000_000,
+            algorithm
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn certificate_builder_rejects_inconsistent_signature_identifiers() {
+        let public = include_bytes!("../tests/fixtures/rsa-export-verify-openssl-pub.der");
+        let subject = parse_rfc4514("CN=audit").unwrap();
+        let inner = signature_algorithm(Algorithm::Rsa2048, Some(HashAlgorithm::Sha256)).unwrap();
+        let outer = signature_algorithm(Algorithm::Rsa2048, Some(HashAlgorithm::Sha384)).unwrap();
+        let tbs = tbs_self_signed(
+            public,
+            &subject,
+            &[1],
+            1_700_000_000,
+            1_800_000_000,
+            inner.clone(),
+        )
+        .unwrap();
+        assert!(assemble_certificate(&tbs, outer, &[0; 256]).is_err());
+        let mut different_parameters = inner;
+        different_parameters.parameters = None;
+        assert!(assemble_certificate(&tbs, different_parameters, &[0; 256]).is_err());
+    }
 
     /// Sign a TBS as the card would (RSA PKCS#1 v1.5 over SHA-256), then
     /// verify the assembled certificate end to end.

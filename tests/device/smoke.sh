@@ -53,6 +53,27 @@ reported_serial="$(sed -n 's/^Serial number:[[:space:]]*//p' <<<"$device_info")"
 serials_output="$("${CKMAN[@]}" list --serials)"
 grep -Fxq "$reported_serial" <<<"$serials_output"
 
+# Remove the common --reader NAME suffix to exercise each global selector.
+ckman_base=("${CKMAN[@]:0:$((${#CKMAN[@]} - 2))}")
+reader_upper="$(tr '[:lower:]' '[:upper:]' <<<"$CANOKEY_PCSC_READER")"
+for reader_filter in "$reader_upper" "${CANOKEY_PCSC_READER:1}"; do
+  filtered_serials="$("${ckman_base[@]}" --reader "$reader_filter" list --serials)"
+  grep -Fxq "$reported_serial" <<<"$filtered_serials"
+done
+filtered_serials="$("${ckman_base[@]}" --device "$reported_serial" list --serials)"
+grep -Fxq "$reported_serial" <<<"$filtered_serials"
+if grep -Fvxq "$reported_serial" <<<"$filtered_serials"; then
+  echo "ERROR: --device list included a different serial" >&2
+  exit 1
+fi
+all_serials="$("${ckman_base[@]}" list --serials)"
+missing_serial=0
+while grep -Fxq "$missing_serial" <<<"$all_serials"; do
+  missing_serial=$((missing_serial + 1))
+done
+[[ -z "$("${ckman_base[@]}" --device "$missing_serial" list --serials)" ]]
+[[ -z "$("${ckman_base[@]}" --reader nonexistent-ckman-audit-reader list --serials)" ]]
+
 section "ckman config info"
 "${CKMAN[@]}" config info
 

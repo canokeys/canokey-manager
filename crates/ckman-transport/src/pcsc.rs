@@ -17,6 +17,14 @@ pub enum PcscError {
     Pcsc(#[from] ::pcsc::Error),
 }
 
+impl PcscError {
+    /// Whether the reader was successfully identified as having no card.
+    /// Other connection failures leave the identity of its card uncertain.
+    pub fn is_no_smartcard(&self) -> bool {
+        matches!(self, Self::Pcsc(::pcsc::Error::NoSmartcard))
+    }
+}
+
 /// A PC/SC context. Keep it alive for as long as its cards are in use.
 pub struct Pcsc {
     context: ::pcsc::Context,
@@ -173,6 +181,18 @@ fn hex(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{contains, log_command, log_response};
+
+    #[test]
+    fn only_an_empty_reader_is_safe_to_skip_during_selection() {
+        assert!(super::PcscError::from(::pcsc::Error::NoSmartcard).is_no_smartcard());
+        for error in [
+            ::pcsc::Error::SharingViolation,
+            ::pcsc::Error::RemovedCard,
+            ::pcsc::Error::CommDataLost,
+        ] {
+            assert!(!super::PcscError::from(error).is_no_smartcard());
+        }
+    }
 
     /// A PIV VERIFY APDU carries the plaintext PIN 123456.
     const VERIFY_PIN_123456: &[u8] = b"\0\x20\0\x80\x08123456\xff\xff";

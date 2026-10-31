@@ -80,6 +80,13 @@ section "ckman piv certificates generate + export"
 "${CKMAN[@]}" piv certificates export 9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-cert.pem"
 openssl x509 -in "$CANOKEY_USBIP_WORK_DIR/piv-generated-cert.pem" -noout -text >/dev/null
 
+# Stdout exports must contain only certificate bytes, without a status suffix.
+for format in pem der; do
+  "${CKMAN[@]}" piv certificates export 9a "$CANOKEY_USBIP_WORK_DIR/cert.$format" --format "$format"
+  "${CKMAN[@]}" piv certificates export 9a - --format "$format" >"$CANOKEY_USBIP_WORK_DIR/stdout-cert.$format"
+  cmp "$CANOKEY_USBIP_WORK_DIR/cert.$format" "$CANOKEY_USBIP_WORK_DIR/stdout-cert.$format"
+done
+
 section "ckman piv keys import + certificates import"
 "${CKMAN[@]}" piv keys import 9c \
   --management-key "$PIV_MANAGEMENT_KEY" \

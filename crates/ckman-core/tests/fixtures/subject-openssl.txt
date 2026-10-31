@@ -1,0 +1,1 @@
+serialNumber=42,emailAddress=alice@example.com,CN=foo\;bar\,\\tail+OU=branch,O=Example,C=SG

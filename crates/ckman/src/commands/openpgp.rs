@@ -6,7 +6,7 @@ use ckman_transport::pcsc::Pcsc;
 
 use canokey::{DeviceProfile, ErrorKind, SecretBytes, SecretReference};
 use clap::{Subcommand, ValueEnum};
-use std::io::{self, Read, Write as _};
+use std::io;
 
 #[derive(Subcommand)]
 pub enum OpenPgpCommand {
@@ -234,7 +234,8 @@ pub enum KeysCommand {
         /// Key slot.
         #[arg(value_enum)]
         key: KeySlotArg,
-        /// Touch policy to set.
+        /// Touch policy to set. Caching is card-wide; configure it with
+        /// `openpgp access set-touch-cache`.
         #[arg(value_enum)]
         policy: TouchPolicyArg,
         /// Admin PIN (prompted when omitted).
@@ -306,8 +307,6 @@ pub enum TouchPolicyArg {
     Off,
     On,
     Fixed,
-    Cached,
-    CachedFixed,
 }
 
 #[derive(Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -441,7 +440,7 @@ impl OpenPgpSession {
         name: &str,
     ) -> CliResult<super::SecretString> {
         let value = match value {
-            Some(value) => zeroize::Zeroizing::new(value.to_string()),
+            Some(value) => super::SecretString::new(value.to_string()),
             None => super::prompt_password(&format!("{prompt}: "))?,
         };
         if value.len() < minimum || value.len() > 64 {
@@ -486,16 +485,30 @@ fn fingerprint_hex(fingerprint: Option<[u8; 20]>) -> Option<String> {
     }))
 }
 
-/// The UIF two-byte value rendered as policy names.
+/// UIF's first byte is policy; the second describes the input mechanism
+/// (0x20 means a button), not whether the card-wide cache is enabled.
 fn touch_policy_name(uif: Option<[u8; 2]>) -> &'static str {
-    match uif.map(|[policy, flags]| (policy, flags & 0x20 != 0)) {
-        Some((0, _)) => "off",
-        Some((1, false)) => "on",
-        Some((1, true)) => "cached",
-        Some((2, false)) => "fixed",
-        Some((2, true)) => "cached-fixed",
+    match uif.map(|[policy, _]| policy) {
+        Some(0) => "off",
+        Some(1) => "on",
+        Some(2) => "fixed",
         _ => "unknown",
     }
+}
+
+fn touch_cache_time(session: &mut OpenPgpSession) -> CliResult<Option<u8>> {
+    use canokey::compatibility::{Capability, Support};
+    if session.profile().capability(Capability::OpenPgpUif).support != Support::Supported {
+        return Ok(None);
+    }
+    session.run(openpgp::read_touch_cache_time).map(Some)
+}
+
+fn key_is_present(data: &openpgp::ApplicationData, slot: Slot) -> CliResult<bool> {
+    Ok(match openpgp::key_information(data, slot)? {
+        Some(status) => status != 0,
+        None => fingerprint_hex(data.fingerprint(slot)?).is_some(),
+    })
 }
 
 /// Algorithm attributes rendered as names (`RSA2048`, curve names).
@@ -533,13 +546,23 @@ fn super_hex(bytes: &[u8]) -> String {
     })
 }
 
-fn key_information(data: &openpgp::ApplicationData, slot: Slot) -> Option<u8> {
-    let field = data.discretionary.iter().find(|field| field.tag == 0xde)?;
-    let bytes = field.value.as_bytes();
-    if bytes.len() != 3 {
-        return None;
+// Optional data objects may be absent, but a failed read is not absence.
+fn optional_record<T, E>(result: Result<T, DriveError<E>>) -> Result<Option<T>, DriveError<E>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(DriveError::Protocol(error))
+            if matches!(
+                error.phase,
+                canokey::Phase::Construction | canokey::Phase::Command
+            ) && matches!(
+                error.kind,
+                ErrorKind::NotFound | ErrorKind::UnsupportedFeature
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
     }
-    Some(bytes[slot.occurrence() as usize])
 }
 
 fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
@@ -547,7 +570,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     let data =
         session.run(|profile, exchange| openpgp::read_application_data(profile, exchange))?;
     if let Some(aid) = data.aid()? {
-        println!("OpenPGP version:          {}.{}", aid[6], aid[7]);
+        println!("OpenPGP version:          {:x}.{:x}", aid[6], aid[7]);
     }
     println!(
         "Application version:      {}",
@@ -568,41 +591,44 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     }
     // The pinned firmware evidence has no KDF data object at all.
     println!("KDF enabled:              no");
-    // Cardholder data is best-effort: a card without it must not fail the
-    // whole status output.
-    if let Ok(cardholder) =
-        session.run(|profile, exchange| openpgp::read_cardholder_data(profile, exchange))
-    {
-        if let Ok(Some(name)) = cardholder.name() {
+    if let Some(cardholder) = session.run(|profile, exchange| {
+        optional_record(openpgp::read_cardholder_data(profile, exchange))
+    })? {
+        if let Some(name) = cardholder.name()? {
             println!(
                 "Cardholder name:          {}",
                 String::from_utf8_lossy(name)
             );
         }
-        if let Ok(Some(language)) = cardholder.language() {
+        if let Some(language) = cardholder.language()? {
             println!(
                 "Language preferences:     {}",
                 String::from_utf8_lossy(language)
             );
         }
-        if let Ok(Some(sex)) = cardholder.sex() {
+        if let Some(sex) = cardholder.sex()? {
             println!("Sex:                      {}", String::from_utf8_lossy(sex));
         }
     }
     // Login and URL are standalone data objects outside DO 65.
     for (tag, label) in [(0x5e, "Login:"), (0x5f50, "URL:")] {
-        if let Ok(bytes) =
-            session.run(|profile, exchange| openpgp::read_data(profile, tag, exchange))
+        if let Some(bytes) = session
+            .run(|profile, exchange| optional_record(openpgp::read_data(profile, tag, exchange)))?
         {
             if !bytes.as_bytes().is_empty() {
                 println!("{label:<26}{}", String::from_utf8_lossy(bytes.as_bytes()));
             }
         }
     }
+    if let Some(seconds) = touch_cache_time(&mut session)? {
+        println!("Touch cache time:         {seconds} second(s)");
+    }
     for slot in [Slot::Signature, Slot::Decryption, Slot::Authentication] {
-        let Some(fingerprint) = fingerprint_hex(data.fingerprint(slot)?) else {
+        if !key_is_present(&data, slot)? {
             continue;
-        };
+        }
+        let fingerprint =
+            fingerprint_hex(data.fingerprint(slot)?).unwrap_or_else(|| "not set".to_string());
         println!("{} key:", slot_name(slot));
         println!("  Fingerprint:   {fingerprint}");
         println!(
@@ -861,13 +887,13 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             let slot = slot_of(*key);
             let data = session
                 .run(|profile, exchange| openpgp::read_application_data(profile, exchange))?;
-            if key_information(&data, slot) == Some(0) {
+            if openpgp::key_information(&data, slot)? == Some(0) {
                 return Err(format!("no key stored in slot {:?}", slot_name(slot)).into());
             }
             println!("Key slot:      {}", slot_name(slot));
             println!(
                 "Fingerprint:   {}",
-                fingerprint_hex(data.fingerprint(slot)?).unwrap_or_default()
+                fingerprint_hex(data.fingerprint(slot)?).unwrap_or_else(|| "not set".to_string())
             );
             println!(
                 "Algorithm:     {}",
@@ -875,7 +901,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             );
             println!(
                 "Origin:        {}",
-                match key_information(&data, slot) {
+                match openpgp::key_information(&data, slot)? {
                     Some(1) => "generated on device",
                     Some(2) => "imported",
                     _ => "unknown",
@@ -890,6 +916,9 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 "Touch policy:  {}",
                 touch_policy_name(data.touch_policy(slot)?)
             );
+            if let Some(seconds) = touch_cache_time(&mut session)? {
+                println!("Touch cache:   {seconds} second(s) (card-wide)");
+            }
             Ok(())
         }
         KeysCommand::Generate {
@@ -899,6 +928,9 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
+            if let Some(algorithm) = algorithm {
+                validate_generation_algorithm(session.profile(), slot, algorithm_of(*algorithm))?;
+            }
             let admin =
                 OpenPgpSession::admin_string(super::secret_str(admin_pin), "Enter Admin PIN")?;
             if let Some(algorithm) = algorithm {
@@ -924,8 +956,10 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             password,
             admin_pin,
         } => {
-            let data = read_input(private_key)?;
+            let data = super::input::read_secret(private_key)?;
             let imported = super::parse_private_key_input(&data, password)?;
+            validate_import_algorithm(imported.algorithm, *algorithm, slot_of(*key))?;
+            let material = imported.openpgp_key().map_err(|error| format!("{error}"))?;
             let mut session = OpenPgpSession::connect(device, reader)?;
             let slot = slot_of(*key);
             let admin =
@@ -939,7 +973,6 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                     openpgp::set_algorithm(profile, slot, algorithm_of(*algorithm), pw3, exchange)
                 })?;
             }
-            let material = imported.openpgp_key().map_err(|error| format!("{error}"))?;
             let pw3 = Password::from_bytes(admin.as_bytes()).expect("length checked");
             session.run(|profile, exchange| {
                 openpgp::import_key(profile, slot, imported.algorithm, material, pw3, exchange)
@@ -964,11 +997,11 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 EncodingArg::Der => der,
             };
             if public_key_output == "-" {
-                io::stdout().write_all(&data)?;
+                super::output::write_stdout(&data)?;
             } else {
                 std::fs::write(public_key_output, data)?;
             }
-            println!("Public key written to {public_key_output}.");
+            eprintln!("Public key written to {public_key_output}.");
             Ok(())
         }
         KeysCommand::SetTouch {
@@ -985,7 +1018,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 "Set touch policy of {:?} key to {policy_name}?",
                 slot_name(slot)
             );
-            let fixed = matches!(policy, TouchPolicyArg::Fixed | TouchPolicyArg::CachedFixed);
+            let fixed = matches!(policy, TouchPolicyArg::Fixed);
             if fixed {
                 println!(
                     "WARNING: This touch policy cannot be changed without deleting the corresponding key slot!"
@@ -996,10 +1029,8 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             }
             let policy = match policy {
                 TouchPolicyArg::Off => openpgp::TouchPolicy::Off,
-                TouchPolicyArg::On | TouchPolicyArg::Cached => openpgp::TouchPolicy::On,
-                TouchPolicyArg::Fixed | TouchPolicyArg::CachedFixed => {
-                    openpgp::TouchPolicy::Permanent
-                }
+                TouchPolicyArg::On => openpgp::TouchPolicy::On,
+                TouchPolicyArg::Fixed => openpgp::TouchPolicy::Permanent,
             };
             session.run(|profile, exchange| {
                 openpgp::set_touch_policy(profile, slot, policy, admin, exchange)
@@ -1010,14 +1041,58 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
     }
 }
 
-fn read_input(path: &str) -> CliResult<Vec<u8>> {
-    if path == "-" {
-        let mut data = Vec::new();
-        io::stdin().read_to_end(&mut data)?;
-        Ok(data)
-    } else {
-        Ok(std::fs::read(path)?)
+// Import/use support is broader than generation support on pre-2.0 firmware.
+// Check this before changing attributes, which can delete the existing key.
+fn validate_generation_algorithm(
+    profile: &DeviceProfile,
+    slot: Slot,
+    algorithm: openpgp::Algorithm,
+) -> CliResult<()> {
+    validate_import_algorithm(algorithm, None, slot)?;
+    profile
+        .openpgp_algorithm_support(algorithm, true)
+        .require()?;
+    Ok(())
+}
+
+// Validate before any algorithm write: changing attributes may discard a key.
+fn validate_import_algorithm(
+    actual: openpgp::Algorithm,
+    requested: Option<KeyAlgorithmArg>,
+    slot: Slot,
+) -> CliResult<()> {
+    use openpgp::Algorithm;
+    if requested.is_some_and(|requested| algorithm_of(requested) != actual) {
+        return Err("--algorithm does not match the private key".into());
     }
+    let supported = matches!(
+        actual,
+        Algorithm::Rsa2048
+            | Algorithm::Rsa3072
+            | Algorithm::Rsa4096
+            | Algorithm::EccP256
+            | Algorithm::EccP384
+            | Algorithm::EccP521
+            | Algorithm::Secp256k1
+            | Algorithm::Ed25519
+            | Algorithm::X25519
+    );
+    if !supported
+        || (slot == Slot::Decryption && actual == Algorithm::Ed25519)
+        || (slot != Slot::Decryption && actual == Algorithm::X25519)
+    {
+        return Err("private key algorithm is not supported in this OpenPGP slot".into());
+    }
+    Ok(())
+}
+
+fn certificate_der(input: &[u8]) -> CliResult<Vec<u8>> {
+    let (_, decoded) = ckman_core::keys::pem_decode(input, &["CERTIFICATE"])
+        .map_err(|error| format!("invalid certificate: {error}"))?;
+    let decoded = zeroize::Zeroizing::new(decoded);
+    canokey::x509::parse_der(&decoded, Default::default())
+        .map(|certificate| certificate.der)
+        .map_err(|error| format!("invalid certificate: {error}").into())
 }
 
 fn certificates(
@@ -1031,16 +1106,8 @@ fn certificates(
             certificate,
             admin_pin,
         } => {
-            let data = read_input(certificate)?;
-            let der = if data.starts_with(b"-----BEGIN") {
-                canokey::x509::parse_pem(&data, Default::default())
-                    .map_err(|error| format!("invalid certificate: {error}"))?
-                    .der
-            } else {
-                canokey::x509::parse_der(&data, Default::default())
-                    .map_err(|error| format!("invalid certificate: {error}"))?
-                    .der
-            };
+            let data = super::input::read_secret(certificate)?;
+            let der = certificate_der(&data)?;
             let mut session = OpenPgpSession::connect(device, reader)?;
             let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
             session.run(|profile, exchange| {
@@ -1061,16 +1128,21 @@ fn certificates(
             let der = session.run(|profile, exchange| {
                 openpgp::read_certificate(profile, slot_of(*key), exchange)
             })?;
+            if der.is_empty() {
+                return Err(
+                    format!("no certificate stored in slot {}", slot_name(slot_of(*key))).into(),
+                );
+            }
             let data = match format {
                 EncodingArg::Pem => ckman_core::x509::pem_encode("CERTIFICATE", &der),
                 EncodingArg::Der => der,
             };
             if certificate == "-" {
-                io::stdout().write_all(&data)?;
+                super::output::write_stdout(&data)?;
             } else {
                 std::fs::write(certificate, data)?;
             }
-            println!("Certificate written to {certificate}.");
+            eprintln!("Certificate written to {certificate}.");
             Ok(())
         }
         CertificatesCommand::Delete { key, admin_pin } => {
@@ -1089,6 +1161,171 @@ fn certificates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_record_reads_3_1_2_transcripts() {
+        use canokey::compatibility::DeviceObservations;
+        let profile =
+            DeviceProfile::from_observations(DeviceObservations::new(b"3.1.2".to_vec())).unwrap();
+        let select: &[u8] = &[0, 0xa4, 4, 0, 6, 0xd2, 0x76, 0, 1, 0x24, 1];
+        // GET DATA commands observed on Canary 3.1.2; faults replace only
+        // their response, matching the real PC/SC fault-injection check.
+        for tag in [0x65u16, 0x5e, 0x5f50] {
+            for response in [
+                Some(&[0x6a, 0x88][..]),
+                Some(&[0x6d, 0x00][..]),
+                Some(&[0x69, 0x82][..]),
+                None,
+            ] {
+                let command = [0, 0xca, (tag >> 8) as u8, tag as u8, 0];
+                let mut calls = 0;
+                let mut exchange = |actual: &[u8]| -> Result<Vec<u8>, io::Error> {
+                    calls += 1;
+                    if calls == 1 {
+                        assert_eq!(actual, select);
+                        return Ok(vec![0x90, 0]);
+                    }
+                    assert_eq!(calls, 2);
+                    assert_eq!(actual, command);
+                    response
+                        .map(Vec::from)
+                        .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+                };
+                let result = if tag == 0x65 {
+                    optional_record(openpgp::read_cardholder_data(&profile, &mut exchange))
+                        .map(|v| v.is_some())
+                } else {
+                    optional_record(openpgp::read_data(&profile, tag, &mut exchange))
+                        .map(|v| v.is_some())
+                };
+                assert_eq!(calls, 2);
+                match response {
+                    Some([0x6a, 0x88] | [0x6d, 0x00]) => assert!(!result.unwrap()),
+                    Some(_) => assert!(
+                        matches!(result, Err(DriveError::Protocol(error)) if error.kind == ErrorKind::SecurityStatusNotSatisfied)
+                    ),
+                    None => assert!(
+                        matches!(result, Err(DriveError::Transport(error)) if error.kind() == io::ErrorKind::BrokenPipe)
+                    ),
+                }
+            }
+        }
+        // A SELECT rejection is a failed applet access, never an absent DO.
+        for response in [vec![0x6a, 0x82], vec![0x6d, 0]] {
+            let result = optional_record(openpgp::read_cardholder_data(&profile, &mut |actual| {
+                assert_eq!(actual, select);
+                Ok::<_, io::Error>(response.clone())
+            }));
+            assert!(
+                matches!(result, Err(DriveError::Protocol(error)) if error.phase == canokey::Phase::Select)
+            );
+        }
+        let mut calls = 0;
+        let result = optional_record(openpgp::read_cardholder_data(&profile, &mut |actual| {
+            calls += 1;
+            if calls == 1 {
+                assert_eq!(actual, select);
+                Ok::<_, io::Error>(vec![0x90, 0])
+            } else {
+                assert_eq!(actual, &[0, 0xca, 0, 0x65, 0]);
+                Ok(vec![0x65, 2, 0x5b, 0x90, 0])
+            }
+        }));
+        assert_eq!(calls, 2);
+        assert!(
+            matches!(result, Err(DriveError::Protocol(error)) if error.kind == ErrorKind::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn certificate_import_accepts_pem_preambles_and_der() {
+        let pfx = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../ckman-core/tests/fixtures/p12_nopw.p12"
+        ));
+        let certs = ckman_core::keys::certificates_from_pfx(pfx, None).unwrap();
+        let pem = ckman_core::x509::pem_encode("CERTIFICATE", &certs[0]);
+        assert_eq!(certificate_der(&certs[0]).unwrap(), certs[0]);
+        for prefix in [
+            "",
+            "\n \n",
+            "\u{feff}",
+            "Bag Attributes\n    friendlyName: audit\n",
+            "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n",
+        ] {
+            let mut input = prefix.as_bytes().to_vec();
+            input.extend(&pem);
+            assert_eq!(certificate_der(&input).unwrap(), certs[0], "{prefix:?}");
+        }
+        for invalid in [
+            b"".as_slice(),
+            b"\n-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----",
+            b"-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----",
+        ] {
+            assert!(certificate_der(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn key_presence_uses_status_before_fingerprint() {
+        // 3.1.2 GET DATA framing: generated/imported keys with no fingerprint,
+        // and an empty slot whose old fingerprint has not been cleared.
+        let app = openpgp::ApplicationData::parse(&[0x6e, 8, 0x73, 6, 0xde, 4, 1, 1, 2, 2], 4096)
+            .unwrap();
+        assert!(key_is_present(&app, Slot::Signature).unwrap());
+        assert!(key_is_present(&app, Slot::Decryption).unwrap());
+        assert!(!key_is_present(&app, Slot::Authentication).unwrap());
+        let mut bytes = vec![0x6e, 68, 0x73, 66, 0xde, 2, 1, 0, 0xc5, 60];
+        bytes.extend([0x11; 60]);
+        let app = openpgp::ApplicationData::parse(&bytes, 4096).unwrap();
+        assert!(!key_is_present(&app, Slot::Signature).unwrap());
+        // Older cards without DE still fall back to their fingerprint.
+        assert!(key_is_present(&app, Slot::Decryption).unwrap());
+    }
+
+    #[test]
+    fn generation_preflight_rejects_import_only_algorithms_on_old_firmware() {
+        use canokey::compatibility::DeviceObservations;
+        use openpgp::Algorithm;
+        let old =
+            DeviceProfile::from_observations(DeviceObservations::new(b"1.6.2".to_vec())).unwrap();
+        // Changing to RSA4096 is allowed for import on this profile, but doing
+        // so before a generation attempt would discard the current key.
+        assert!(old
+            .openpgp_algorithm_support(Algorithm::Rsa4096, false)
+            .require()
+            .is_ok());
+        assert!(validate_generation_algorithm(&old, Slot::Signature, Algorithm::Rsa4096).is_err());
+        assert!(validate_generation_algorithm(&old, Slot::Signature, Algorithm::Rsa2048).is_ok());
+        assert!(validate_generation_algorithm(&old, Slot::Decryption, Algorithm::Ed25519).is_err());
+        let modern =
+            DeviceProfile::from_observations(DeviceObservations::new(b"3.1.2".to_vec())).unwrap();
+        assert!(
+            validate_generation_algorithm(&modern, Slot::Signature, Algorithm::Rsa4096).is_ok()
+        );
+    }
+
+    #[test]
+    fn invalid_imports_fail_preflight_before_device_changes() {
+        use openpgp::Algorithm;
+        assert!(validate_import_algorithm(
+            Algorithm::Ed25519,
+            Some(KeyAlgorithmArg::EccP256),
+            Slot::Signature
+        )
+        .is_err());
+        assert!(validate_import_algorithm(Algorithm::Ed25519, None, Slot::Decryption).is_err());
+        assert!(validate_import_algorithm(Algorithm::X25519, None, Slot::Authentication).is_err());
+        assert!(validate_import_algorithm(Algorithm::Sm2, None, Slot::Signature).is_err());
+        assert!(validate_import_algorithm(Algorithm::Rsa1024, None, Slot::Signature).is_err());
+        assert!(validate_import_algorithm(
+            Algorithm::Ed25519,
+            Some(KeyAlgorithmArg::Ed25519),
+            Slot::Signature
+        )
+        .is_ok());
+        assert!(validate_import_algorithm(Algorithm::X25519, None, Slot::Decryption).is_ok());
+    }
 
     #[test]
     fn attributes_name_never_panics_on_device_bytes() {
@@ -1111,9 +1348,9 @@ mod tests {
         assert_eq!(touch_policy_name(None), "unknown");
         assert_eq!(touch_policy_name(Some([0, 0x20])), "off");
         assert_eq!(touch_policy_name(Some([1, 0])), "on");
-        assert_eq!(touch_policy_name(Some([1, 0x20])), "cached");
+        assert_eq!(touch_policy_name(Some([1, 0x20])), "on");
         assert_eq!(touch_policy_name(Some([2, 0])), "fixed");
-        assert_eq!(touch_policy_name(Some([2, 0x20])), "cached-fixed");
+        assert_eq!(touch_policy_name(Some([2, 0x20])), "fixed");
         assert_eq!(touch_policy_name(Some([3, 0])), "unknown");
     }
 }

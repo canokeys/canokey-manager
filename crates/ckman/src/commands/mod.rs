@@ -1,10 +1,13 @@
 pub mod config;
 pub mod fido;
 pub mod info;
+mod input;
 pub mod list;
 pub mod oath;
 pub mod openpgp;
+mod output;
 pub mod piv;
+mod piv_recovery;
 
 use ckman_core::admin::Pin;
 use ckman_core::{probe, DriveError};
@@ -34,15 +37,22 @@ impl Target {
     }
 }
 
-/// Connect to and probe one reader; returns `None` when the card is not a
-/// CanoKey or probing fails (foreign cards must not break listing).
-fn try_probe(pcsc: &Pcsc, reader: &Reader) -> Option<Target> {
-    let mut connection = pcsc.connect(reader).ok()?;
+/// Probe an explicitly selected reader without hiding connection failures.
+fn probe_reader(pcsc: &Pcsc, reader: &Reader) -> CliResult<Target> {
+    let mut connection = pcsc
+        .connect(reader)
+        .map_err(|error| format!("cannot connect to reader {}: {error}", reader.name()))?;
     if !connection.is_canokey() {
-        return None;
+        return Err(format!("no CanoKey found in reader {}", reader.name()).into());
     }
-    let profile = probe(&mut |command| connection.exchange(command)).ok()?;
-    Some(Target {
+    let profile = probe(&mut |command| connection.exchange(command)).map_err(|error| {
+        format!(
+            "cannot probe CanoKey in reader {}: {}",
+            reader.name(),
+            describe_drive_error(&error)
+        )
+    })?;
+    Ok(Target {
         connection,
         profile,
     })
@@ -50,9 +60,19 @@ fn try_probe(pcsc: &Pcsc, reader: &Reader) -> Option<Target> {
 
 /// All reachable CanoKeys, in reader order.
 pub fn all_targets(pcsc: &Pcsc) -> CliResult<Vec<Target>> {
+    targets_matching_reader(pcsc, None)
+}
+
+/// Probe only readers matching the optional case-insensitive substring.
+pub fn targets_matching_reader(pcsc: &Pcsc, reader_name: Option<&str>) -> CliResult<Vec<Target>> {
     let mut targets = Vec::new();
     for reader in pcsc.readers()? {
-        if let Some(target) = try_probe(pcsc, &reader) {
+        if reader_name.is_some_and(|name| !reader_matches(reader.name(), name)) {
+            continue;
+        }
+        // Enumeration reports reachable CanoKeys; an unrelated or unavailable
+        // card must not prevent listing the other readers.
+        if let Ok(target) = probe_reader(pcsc, &reader) {
             targets.push(target);
         }
     }
@@ -67,20 +87,47 @@ pub fn single_target(
     reader_name: Option<&str>,
 ) -> CliResult<Target> {
     if let Some(name) = reader_name {
-        let reader = pcsc
-            .readers()?
-            .into_iter()
-            .find(|reader| reader_matches(reader.name(), name))
-            .ok_or_else(|| format!("no such reader: {name}"))?;
-        return try_probe(pcsc, &reader)
-            .ok_or_else(|| format!("no CanoKey found in reader {name}").into());
+        let reader = only_match(
+            pcsc.readers()?
+                .into_iter()
+                .filter(|reader| reader_matches(reader.name(), name)),
+            &format!("no such reader: {name}"),
+            &format!("multiple readers match {name}; use a more specific --reader"),
+        )?;
+        return probe_reader(pcsc, &reader);
     }
-    let targets = all_targets(pcsc)?;
+    let targets = selection_targets(pcsc.readers()?, |reader| {
+        let mut connection = match pcsc.connect(&reader) {
+            Ok(connection) => connection,
+            Err(error) if error.is_no_smartcard() => return Ok(None),
+            Err(error) => return Err(format!(
+                "cannot determine whether reader {} contains another CanoKey: {error}; select a reader explicitly with --reader",
+                reader.name()
+            ).into()),
+        };
+        if !connection.is_canokey() {
+            return Ok(None);
+        }
+        let profile = probe(&mut |command| connection.exchange(command)).map_err(|error| {
+            format!(
+                "cannot probe CanoKey in reader {}: {}; select a reader explicitly with --reader",
+                reader.name(),
+                describe_drive_error(&error)
+            )
+        })?;
+        Ok(Some(Target {
+            connection,
+            profile,
+        }))
+    })?;
     if let Some(serial) = device {
-        return targets
-            .into_iter()
-            .find(|target| target.serial() == Some(serial))
-            .ok_or_else(|| format!("no CanoKey with serial number {serial} found").into());
+        return only_match(
+            targets
+                .into_iter()
+                .filter(|target| target.serial() == Some(serial)),
+            &format!("no CanoKey with serial number {serial} found"),
+            &format!("multiple CanoKeys have serial number {serial}; select one with --reader"),
+        );
     }
     match targets.len() {
         0 => Err("no CanoKey found".into()),
@@ -89,14 +136,68 @@ pub fn single_target(
     }
 }
 
-/// A secret string (PIN, password, key) that is zeroized on drop. Used for
+// Selection must account for every candidate, unlike best-effort listing.
+fn selection_targets<R, T>(
+    readers: impl IntoIterator<Item = R>,
+    mut probe: impl FnMut(R) -> CliResult<Option<T>>,
+) -> CliResult<Vec<T>> {
+    let mut targets = Vec::new();
+    for reader in readers {
+        if let Some(target) = probe(reader)? {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
+}
+
+fn only_match<T>(
+    mut matches: impl Iterator<Item = T>,
+    missing: &str,
+    ambiguous: &str,
+) -> CliResult<T> {
+    let first = matches.next().ok_or_else(|| missing.to_string())?;
+    if matches.next().is_some() {
+        return Err(ambiguous.to_string().into());
+    }
+    Ok(first)
+}
+
+/// A secret string (PIN, password, key) with redacted Debug output, zeroized
+/// on drop. Used for
 /// every prompted secret and for argv-supplied secrets (which additionally
 /// remain visible in shell history and `ps` — see README).
-pub type SecretString = Zeroizing<String>;
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(Zeroizing<String>);
+
+impl SecretString {
+    /// Take ownership of a secret, clearing it when dropped.
+    pub fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    /// Borrow the secret for an operation that needs its plaintext value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for SecretString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretString([REDACTED])")
+    }
+}
 
 /// clap value parser for `Option<SecretString>` arguments.
 pub fn secret_arg(value: &str) -> Result<SecretString, std::convert::Infallible> {
-    Ok(Zeroizing::new(value.to_string()))
+    Ok(SecretString::new(value.to_string()))
 }
 
 /// Borrow an optional secret argument as `&str`.
@@ -109,7 +210,7 @@ pub fn secret_str(value: &Option<SecretString>) -> Option<&str> {
 /// non-interactive runners). The returned secret is zeroized on drop.
 pub fn prompt_password(prompt: &str) -> CliResult<SecretString> {
     rpassword::prompt_password(prompt)
-        .map(Zeroizing::new)
+        .map(SecretString::new)
         .map_err(|error| {
             format!("cannot prompt for input ({prompt:?}): {error}; is a terminal attached?").into()
         })
@@ -142,10 +243,11 @@ pub fn parse_private_key_input(
 /// block; DER is a lone X.509 certificate or a PKCS#12 bundle (importing
 /// its leaf certificate, prompting for the bundle password when needed).
 pub fn parse_certificate_input(data: &[u8]) -> CliResult<canokey::x509::CertificateInfo> {
-    if data.starts_with(b"-----BEGIN") {
-        let (_, der) = ckman_core::keys::pem_decode(data, &["CERTIFICATE"])
-            .map_err(|error| format!("invalid certificate: {error}"))?;
-        return canokey::x509::parse_der(&der, Default::default())
+    let (label, decoded) = ckman_core::keys::pem_decode(data, &["CERTIFICATE"])
+        .map_err(|error| format!("invalid certificate: {error}"))?;
+    let decoded = Zeroizing::new(decoded);
+    if !label.is_empty() {
+        return canokey::x509::parse_der(&decoded, Default::default())
             .map_err(|error| format!("invalid certificate: {error}").into());
     }
     if let Ok(cert) = canokey::x509::parse_der(data, Default::default()) {
@@ -264,8 +366,108 @@ pub fn confirm(prompt: &str) -> CliResult<bool> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn selection_does_not_turn_failed_candidates_into_a_unique_device() {
+        for failed_reader in [0, 1] {
+            let mut visited = Vec::new();
+            let result = selection_targets([0, 1, 2], |reader| {
+                visited.push(reader);
+                if reader == failed_reader {
+                    Err("candidate is busy or its probe failed".into())
+                } else {
+                    Ok(Some(reader))
+                }
+            });
+            assert!(result.unwrap_err().to_string().contains("candidate"));
+            assert_eq!(visited, (0..=failed_reader).collect::<Vec<_>>());
+        }
+        assert_eq!(
+            selection_targets([0, 1, 2], |reader| Ok((reader == 1).then_some(reader))).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            selection_targets([0, 1], |reader| Ok(Some(reader))).unwrap(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn secret_arguments_are_redacted_without_changing_their_value() {
+        let secret = super::secret_arg("audit-only-secret-1234").unwrap();
+        assert_eq!(secret.as_str(), "audit-only-secret-1234");
+        assert_eq!(secret.clone().as_str(), secret.as_str());
+        assert!(format!("{secret:?}").contains("REDACTED"));
+        assert!(!format!("{secret:#?}").contains("audit-only-secret-1234"));
+    }
+
     use super::*;
     use std::io::BufReader;
+
+    #[test]
+    fn certificate_pem_accepts_preambles_and_bundles() {
+        let pfx = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../ckman-core/tests/fixtures/p12_nopw.p12"
+        ));
+        let certs = ckman_core::keys::certificates_from_pfx(pfx, None).unwrap();
+        let pem = ckman_core::x509::pem_encode("CERTIFICATE", &certs[0]);
+        for prefix in [
+            "",
+            "\n \n",
+            "\u{feff}",
+            "Bag Attributes\n    friendlyName: leaf\n",
+            "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n",
+        ] {
+            let mut input = prefix.as_bytes().to_vec();
+            input.extend(&pem);
+            let parsed = parse_certificate_input(&input).unwrap();
+            assert_eq!(parsed.der, certs[0], "{prefix:?}");
+        }
+        assert_eq!(parse_certificate_input(&certs[0]).unwrap().der, certs[0]);
+        assert_eq!(parse_certificate_input(pfx).unwrap().der, certs[0]);
+        assert!(parse_certificate_input(
+            b"\n-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn device_selection_rejects_ambiguous_readers_and_duplicate_serials() {
+        let readers = ["CanoKey A", "CanoKey B"];
+        assert!(only_match(
+            readers
+                .iter()
+                .filter(|name| reader_matches(name, "canokey")),
+            "missing",
+            "ambiguous"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("ambiguous"));
+        assert_eq!(
+            *only_match(
+                readers.iter().filter(|name| reader_matches(name, "key b")),
+                "missing",
+                "ambiguous"
+            )
+            .unwrap(),
+            "CanoKey B"
+        );
+        let serials = [u32::MAX, u32::MAX];
+        assert!(only_match(
+            serials.into_iter().filter(|serial| *serial == u32::MAX),
+            "missing",
+            "duplicate serial"
+        )
+        .is_err());
+        assert!(only_match(
+            serials.into_iter().filter(|serial| *serial == 1),
+            "missing",
+            "ambiguous"
+        )
+        .is_err());
+    }
 
     #[test]
     fn reader_matching_is_case_insensitive_substring() {

@@ -1,12 +1,14 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH ckman-piv-access-change-management-key 1  ckman 
+.TH ckman-piv-access-change-management-key 1  ckman
 .SH NAME
 ckman\-piv\-access\-change\-management\-key \- Change the management key
 .SH SYNOPSIS
-\fBckman\-piv\-access\-change\-management\-key\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-n\fR|\fB\-\-new\-management\-key\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-p\fR|\fB\-\-protect\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-\-force\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-piv\-access\-change\-management\-key\fR [\fB\-t\fR|\fB\-\-touch\fR] [\fB\-n\fR|\fB\-\-new\-management\-key\fR] [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-p\fR|\fB\-\-protect\fR] [\fB\-g\fR|\fB\-\-generate\fR] [\fB\-\-recovery\-file\fR] [\fB\-\-force\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
-Change the management key
+Change the management key.
+.PP
+Persist a private recovery file before replacing the key. The file is removed on success and retained on failure or interruption; it contains the new key and instructions for finishing an interrupted replacement.
 .SH OPTIONS
 .TP
 \fB\-t\fR, \fB\-\-touch\fR
@@ -34,6 +36,9 @@ Store the new management key protected by PIN and block PUK recovery
 \fB\-g\fR, \fB\-\-generate\fR
 Generate a random management key
 .TP
+\fB\-\-recovery\-file\fR \fI<FILE>\fR
+Recovery file (must not exist; default: a unique file in the current directory). Unix permissions are 0600. Removed on success
+.TP
 \fB\-\-force\fR
 Do not prompt; requires \-\-generate or \-\-new\-management\-key
 .TP
@@ -44,4 +49,4 @@ Current management key as 48 hex characters (prompted when needed)
 PIN code (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
