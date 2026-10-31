@@ -56,7 +56,7 @@ pub enum ConfigCommand {
         #[command(subcommand)]
         command: KeyboardCommand,
     },
-    /// Show or change the CTAP SM2 configuration (3.0+; writes need 3.1).
+    /// Show or change the CTAP SM2 configuration (3.0+).
     Sm2 {
         #[command(subcommand)]
         command: Option<Sm2Command>,
@@ -84,7 +84,7 @@ pub enum AdminPinCommand {
 
 #[derive(Subcommand)]
 pub enum Sm2Command {
-    /// Set the SM2 COSE curve/algorithm identifiers (3.1+; unspecified
+    /// Set the SM2 COSE curve/algorithm identifiers (3.0+; unspecified
     /// identifiers keep their current values).
     #[command(group(
         ArgGroup::new("patch")
@@ -376,20 +376,20 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         })
         .map_err(|error| describe_drive_error(&error))?;
         const APPLETS: [&str; 8] = [
-            "system", "Admin", "OpenPGP", "PIV", "OATH", "CTAP", "NDEF", "PASS",
+            "System", "Admin", "OpenPGP", "PIV", "OTP", "WebAuthn", "NFC Tag", "Pass",
         ];
-        println!("Applet storage:");
-        for record in &usage {
+        println!("Applet storage (logical payload):");
+        // Like Console, show payload sizes without treating absent optional
+        // files/attributes as errors. Keep the physical residual separate.
+        for record in usage.iter().filter(|record| record.applet_id != 0) {
             let name = APPLETS
                 .get(record.applet_id as usize)
                 .copied()
                 .unwrap_or("unknown");
-            let flagged = if record.flags & 1 != 0 {
-                " (missing paths/attributes)"
-            } else {
-                ""
-            };
-            println!("  {name:<10}{} byte(s){flagged}", record.logical_bytes);
+            println!("  {name:<10}{} B", record.logical_bytes);
+        }
+        if let Some(system) = usage.iter().find(|record| record.applet_id == 0) {
+            println!("Filesystem overhead/other: {} B", system.logical_bytes);
         }
     }
     Ok(())

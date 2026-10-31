@@ -347,18 +347,41 @@ pub fn sm2_configuration<E>(
     }
 }
 
-/// Read and patch the CTAP SM2 identifiers: libcanokey reads the current
-/// typed configuration, writes only when the patch changes a value, and
-/// preserves the unspecified identifier. Gated by
-/// `Capability::AdminExtendedConfiguration` (3.1); PIN-protected like the
-/// read. The nine-byte native layout of 3.0.x (`Request::WriteLegacySm2`) is
-/// deliberately not exposed here.
+/// Read and patch the CTAP SM2 identifiers (3.0+), preserving unspecified
+/// identifiers and skipping unchanged writes. On evidenced 3.0.x devices the
+/// packed native integers are little-endian, as in CanoKey Console; preserve
+/// the legacy enable flag. The read and write share the caller's exclusive
+/// transaction so Admin authorization remains valid through both operations.
 pub fn configure_sm2<E>(
     profile: &DeviceProfile,
     patch: Sm2Patch,
     pin: Option<Pin>,
     exchange: &mut Exchange<'_, E>,
 ) -> Result<(), DriveError<E>> {
+    use canokey::compatibility::{Capability, Support};
+
+    if profile.capability(Capability::AdminLegacySm2).support == Support::Supported {
+        let Sm2Readout::Legacy(current) = sm2_configuration(profile, pin, exchange)? else {
+            return Err(unexpected_value());
+        };
+        let mut raw = *current.raw();
+        if let Some(curve_id) = patch.curve_id {
+            raw[1..5].copy_from_slice(&curve_id.to_le_bytes());
+        }
+        if let Some(algorithm_id) = patch.algorithm_id {
+            raw[5..9].copy_from_slice(&algorithm_id.to_le_bytes());
+        }
+        if &raw != current.raw() {
+            let operation = admin::operation_with_access(
+                profile,
+                Request::WriteLegacySm2(LegacySm2Configuration::from_bytes(&raw)?),
+                admin::Access::Existing,
+                OperationOptions::default(),
+            )?;
+            execute(operation, exchange)?;
+        }
+        return Ok(());
+    }
     run(profile, Request::ConfigureSm2(patch), pin, exchange)?;
     Ok(())
 }
@@ -886,6 +909,98 @@ mod feature_tests {
     }
 
     #[test]
+    fn configure_sm2_legacy_preserves_enable_and_unpatched_bytes() {
+        // 3.0.x uses packed little-endian i32s (Console's historical format).
+        // SELECT/VERIFY/WRITE retain the legacy explicit Le. A write must
+        // reuse the authenticated selection instead of selecting again.
+        for firmware in [b"3.0.0", b"3.0.1", b"3.0.3"] {
+            for (reply, patch, write) in [
+                (
+                    &[0, 9, 0, 0, 0, 0xca, 0xff, 0xff, 0xff, 0x90, 0][..],
+                    Sm2Patch {
+                        curve_id: Some(10),
+                        algorithm_id: None,
+                    },
+                    &[0, 0x12, 0, 0, 9, 0, 10, 0, 0, 0, 0xca, 0xff, 0xff, 0xff, 0][..],
+                ),
+                (
+                    &[1, 9, 0, 0, 0, 0xca, 0xff, 0xff, 0xff, 0x90, 0][..],
+                    Sm2Patch {
+                        curve_id: None,
+                        algorithm_id: Some(-48),
+                    },
+                    &[0, 0x12, 0, 0, 9, 1, 9, 0, 0, 0, 0xd0, 0xff, 0xff, 0xff, 0][..],
+                ),
+            ] {
+                let mut script = Script::new(&[
+                    (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+                    (b"\x00\x20\x00\x00\x06654321\x00", &[0x90, 0]),
+                    (&[0, 0x11, 0, 0, 0], reply),
+                    (write, &[0x90, 0]),
+                ]);
+                configure_sm2(&profile(firmware), patch, Some(pin()), &mut |c| {
+                    script.exchange(c)
+                })
+                .unwrap();
+                assert!(script.transcript.is_empty());
+            }
+            let mut script = Script::new(&[
+                (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+                (b"\x00\x20\x00\x00\x06654321\x00", &[0x90, 0]),
+                (
+                    &[0, 0x11, 0, 0, 0],
+                    &[1, 9, 0, 0, 0, 0xca, 0xff, 0xff, 0xff, 0x90, 0],
+                ),
+            ]);
+            configure_sm2(
+                &profile(firmware),
+                Sm2Patch {
+                    curve_id: Some(9),
+                    algorithm_id: Some(-54),
+                },
+                Some(pin()),
+                &mut |c| script.exchange(c),
+            )
+            .unwrap();
+            assert!(script.transcript.is_empty());
+        }
+    }
+
+    #[test]
+    fn configure_sm2_legacy_requires_pin_and_stops_on_read_failure() {
+        let patch = Sm2Patch {
+            curve_id: Some(9),
+            algorithm_id: None,
+        };
+        let error = configure_sm2(&profile(b"3.0.1"), patch, None, &mut |_| -> io::Result<
+            Vec<u8>,
+        > {
+            panic!("PIN gate must reject before I/O")
+        })
+        .unwrap_err();
+        let DriveError::Protocol(error) = error else {
+            panic!("expected PIN gate")
+        };
+        assert_eq!(error.kind, ErrorKind::SecurityStatusNotSatisfied);
+
+        // Malformed configuration and device read errors must never cause a
+        // write using guessed values. Both replies terminate the transcript.
+        for reply in [&[0x6a, 0x80][..], &[1, 9, 0, 0x90, 0][..]] {
+            let mut script = Script::new(&[
+                (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+                (b"\x00\x20\x00\x00\x06654321\x00", &[0x90, 0]),
+                (&[0, 0x11, 0, 0, 0], reply),
+            ]);
+            assert!(
+                configure_sm2(&profile(b"3.0.1"), patch, Some(pin()), &mut |c| script
+                    .exchange(c))
+                .is_err()
+            );
+            assert!(script.transcript.is_empty());
+        }
+    }
+
+    #[test]
     fn feature_gates_reject_before_any_io() {
         fn zero_io(
             firmware: &[u8],
@@ -924,9 +1039,7 @@ mod feature_tests {
             applet_usage(profile, &mut |_| -> io::Result<Vec<u8>> { unreachable!() }).map(|_| ())
         });
         assert_eq!(kind, ErrorKind::UnsupportedFeature);
-        // The typed SM2 patch needs the 3.1 extended configuration; 3.0.x only
-        // has the nine-byte native write, which stays unexposed.
-        let kind = zero_io(b"3.0.1", |profile| {
+        let kind = zero_io(b"2.0.1", |profile| {
             configure_sm2(
                 profile,
                 Sm2Patch {
