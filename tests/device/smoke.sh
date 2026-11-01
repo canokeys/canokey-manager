@@ -76,6 +76,12 @@ done
 
 section "ckman config info"
 "${CKMAN[@]}" config info
+# This harness only selects disposable virtual devices with the known Admin
+# PIN. Authenticated reads must work on legacy layouts as well as modern ones.
+configuration="$("${CKMAN[@]}" config info --admin-pin 123456)"
+printf '%s\n' "$configuration"
+grep -Fq 'LED:' <<<"$configuration"
+grep -Fq 'Flash usage:' <<<"$configuration"
 
 section "ckman config admin-pin status"
 # Read-only verification-state query (empty VERIFY); every catalog firmware

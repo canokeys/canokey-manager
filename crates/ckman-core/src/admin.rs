@@ -105,9 +105,8 @@ pub fn set_nfc<E>(
 ///
 /// Only the pinned 3.1 layout allows reading the device configuration without
 /// the Admin PIN; older known firmware answers READ CONFIG with 6982 and
-/// libcanokey rejects an unauthenticated read at construction. Callers
-/// building read-only status output must check this first instead of
-/// prompting for the Admin PIN.
+/// libcanokey rejects an unauthenticated read at construction. Older firmware
+/// still supports authenticated reads with an explicitly supplied Admin PIN.
 pub fn public_configuration_supported(
     profile: &DeviceProfile,
 ) -> canokey::compatibility::CapabilityStatus {
@@ -561,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_configuration_read_with_pin_uses_13_layout() {
+    fn legacy_configuration_and_usage_reads_with_pin_use_13_layout() {
         // With an explicit Admin PIN the read still works on legacy firmware;
         // the library parses the 1.3 seven-byte layout (flags plus OpenPGP
         // touch policies/cache). This pins that only the *unauthenticated*
@@ -569,11 +568,14 @@ mod tests {
         let mut script = Script {
             transcript: {
                 // Explicit annotation so each fixed-size array coerces to a slice.
-                let transcript: [(&[u8], &[u8]); 3] = [
+                let transcript: [(&[u8], &[u8]); 6] = [
                     // 1.3 carries an explicit Le even on SELECT and VERIFY.
                     (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
                     (b"\0\x20\0\0\x06654321\0", &[0x90, 0]),
                     (&[0, 0x42, 0, 0, 0], &[1, 1, 0, 0, 0, 0, 30, 0x90, 0]),
+                    (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+                    (b"\0\x20\0\0\x06654321\0", &[0x90, 0]),
+                    (&[0, 0x41, 0, 0, 0], &[1, 32, 0x90, 0]),
                 ];
                 transcript.into_iter().collect()
             },
@@ -587,6 +589,9 @@ mod tests {
         assert_eq!(config.ndef_enabled(), None, "absent on 1.3");
         assert_eq!(config.openpgp_touch(), Some([0, 0, 0, 30]));
         assert_eq!(config.raw(), &[1, 1, 0, 0, 0, 0, 30]);
+        let usage =
+            flash_usage(&profile(b"1.3"), Some(pin()), &mut |c| script.exchange(c)).unwrap();
+        assert_eq!((usage.used_kib, usage.total_kib), (1, 32));
         assert!(script.transcript.is_empty());
     }
 

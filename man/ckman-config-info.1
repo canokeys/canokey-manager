@@ -4,10 +4,15 @@
 .SH NAME
 ckman\-config\-info \- Show the current device configuration
 .SH SYNOPSIS
-\fBckman\-config\-info\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-config\-info\fR [\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Show the current device configuration
+Show the current device configuration.
+.PP
+Firmware before 3.1 requires the Admin PIN to read configuration.
 .SH OPTIONS
 .TP
+\fB\-\-admin\-pin\fR \fI<PIN>\fR
+CanoKey Admin PIN (required for configuration reads before 3.1)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)

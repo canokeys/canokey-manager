@@ -22,7 +22,13 @@ pub enum ConfigCommand {
         force: bool,
     },
     /// Show the current device configuration.
-    Info,
+    ///
+    /// Firmware before 3.1 requires the Admin PIN to read configuration.
+    Info {
+        /// CanoKey Admin PIN (required for configuration reads before 3.1).
+        #[arg(long, value_name = "PIN", value_parser = super::secret_arg)]
+        admin_pin: Option<super::SecretString>,
+    },
     /// Turn the LED on or off (device configuration patch).
     Led {
         /// Desired LED state.
@@ -183,7 +189,7 @@ pub fn run(device: Option<u32>, reader: Option<&str>, command: &ConfigCommand) -
     match command {
         ConfigCommand::Nfc { state } => nfc(device, reader, matches!(state, NfcState::On)),
         ConfigCommand::Reset { force } => reset(device, reader, *force),
-        ConfigCommand::Info => info(device, reader),
+        ConfigCommand::Info { admin_pin } => info(device, reader, super::secret_str(admin_pin)),
         ConfigCommand::Led { state } => patch(device, reader, "LED", |p| {
             p.led_on = Some(matches!(state, NfcState::On));
         }),
@@ -275,7 +281,10 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
     Ok(())
 }
 
-fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
+fn info(device: Option<u32>, reader: Option<&str>, admin_pin: Option<&str>) -> CliResult<()> {
+    let pin = admin_pin
+        .map(|pin| admin::Pin::from_bytes(pin.as_bytes()))
+        .transpose()?;
     let pcsc = Pcsc::establish()?;
     let mut target = single_target(&pcsc, device, reader)?;
     // READ CONFIG sits behind the firmware's Admin-PIN gate on every layout
@@ -283,9 +292,9 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     // command: prompting from a non-interactive runner fails on /dev/tty
     // (ENXIO), which looks like a dropped card.
     match admin::public_configuration_supported(&target.profile).support {
-        Support::Unsupported => {
+        Support::Unsupported if pin.is_none() => {
             println!(
-                "Configuration read is not supported by this firmware (requires 3.1 or newer)."
+                "Reading configuration on this firmware requires the Admin PIN; use config info --admin-pin PIN."
             );
             return Ok(());
         }
@@ -293,9 +302,9 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             println!("Unrecognized firmware; configuration not read.");
             return Ok(());
         }
-        Support::Supported => {}
+        Support::Supported | Support::Unsupported => {}
     }
-    let configuration = admin::read_configuration(&target.profile, None, &mut |command| {
+    let configuration = admin::read_configuration(&target.profile, pin, &mut |command| {
         target.connection.exchange(command)
     })
     .map_err(|error| describe_drive_error(&error))?;
@@ -322,7 +331,6 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         }
         AdminConfiguration::Legacy(config) => {
-            // (only reachable if the public-read gate semantics loosen)
             println!("LED:                  {}", on_off(config.led_on()));
             println!("NDEF read-only:       {}", yes_no(config.ndef_read_only()));
             if let Some(value) = config.ndef_enabled() {
@@ -349,10 +357,12 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         }
     }
 
-    // Extended reads (3.1 evidence). Flash usage is public together with the
-    // configuration read; core commit and applet usage are gated on the
-    // extended-configuration capability.
-    let usage = admin::flash_usage(&target.profile, None, &mut |command| {
+    // Flash usage shares the configuration read's authentication requirement.
+    // Core commit and applet usage require the extended-configuration capability.
+    let pin = admin_pin
+        .map(|pin| admin::Pin::from_bytes(pin.as_bytes()))
+        .transpose()?;
+    let usage = admin::flash_usage(&target.profile, pin, &mut |command| {
         target.connection.exchange(command)
     })
     .map_err(|error| describe_drive_error(&error))?;
