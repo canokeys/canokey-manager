@@ -511,6 +511,14 @@ fn key_is_present(data: &openpgp::ApplicationData, slot: Slot) -> CliResult<bool
     })
 }
 
+fn key_origin(data: &openpgp::ApplicationData, slot: Slot) -> CliResult<&'static str> {
+    Ok(match openpgp::key_information(data, slot)? {
+        Some(1) => "generated on device",
+        Some(2) => "imported",
+        _ => "unknown",
+    })
+}
+
 /// Algorithm attributes rendered as names (`RSA2048`, curve names).
 /// Device-controlled bytes are never trusted: empty and short inputs render
 /// as an `unknown (hex)` fallback.
@@ -631,6 +639,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             fingerprint_hex(data.fingerprint(slot)?).unwrap_or_else(|| "not set".to_string());
         println!("{} key:", slot_name(slot));
         println!("  Fingerprint:   {fingerprint}");
+        println!("  Origin:        {}", key_origin(&data, slot)?);
         println!(
             "  Touch policy:  {}",
             touch_policy_name(data.touch_policy(slot)?)
@@ -899,14 +908,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 "Algorithm:     {}",
                 attributes_name(data.algorithm_attributes(slot)?)
             );
-            println!(
-                "Origin:        {}",
-                match openpgp::key_information(&data, slot)? {
-                    Some(1) => "generated on device",
-                    Some(2) => "imported",
-                    _ => "unknown",
-                }
-            );
+            println!("Origin:        {}", key_origin(&data, slot)?);
             if let Some(time) = data.generation_time(slot)? {
                 if time != 0 {
                     println!("Created:       {time}");
@@ -1274,6 +1276,11 @@ mod tests {
             .unwrap();
         assert!(key_is_present(&app, Slot::Signature).unwrap());
         assert!(key_is_present(&app, Slot::Decryption).unwrap());
+        assert_eq!(
+            key_origin(&app, Slot::Signature).unwrap(),
+            "generated on device"
+        );
+        assert_eq!(key_origin(&app, Slot::Decryption).unwrap(), "imported");
         assert!(!key_is_present(&app, Slot::Authentication).unwrap());
         let mut bytes = vec![0x6e, 68, 0x73, 66, 0xde, 2, 1, 0, 0xc5, 60];
         bytes.extend([0x11; 60]);
@@ -1281,6 +1288,7 @@ mod tests {
         assert!(!key_is_present(&app, Slot::Signature).unwrap());
         // Older cards without DE still fall back to their fingerprint.
         assert!(key_is_present(&app, Slot::Decryption).unwrap());
+        assert_eq!(key_origin(&app, Slot::Decryption).unwrap(), "unknown");
     }
 
     #[test]

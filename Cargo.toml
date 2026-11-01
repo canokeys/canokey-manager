@@ -40,6 +40,8 @@ sha2 = { version = "0.10", features = ["oid"] }
 spki = "0.7"
 sm2 = { version = "0.13", default-features = false, features = ["arithmetic"] }
 thiserror = "2"
+# Newer time releases require a newer compiler than our MSRV (1.85.1).
+time = "=0.3.44"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-normalization = "=0.1.25"

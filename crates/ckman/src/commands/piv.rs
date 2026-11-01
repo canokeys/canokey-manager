@@ -1494,14 +1494,33 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
                         "  Fingerprint (SHA-256): {}",
                         hex_encode(&info.sha256_fingerprint())
                     );
-                    println!("  Not before:         {}", info.validity.not_before_unix);
-                    println!("  Not after:          {}", info.validity.not_after_unix);
+                    println!(
+                        "  Not before:         {}",
+                        certificate_time(info.validity.not_before_unix)
+                    );
+                    println!(
+                        "  Not after:          {}",
+                        certificate_time(info.validity.not_after_unix)
+                    );
                 }
                 Err(_) => println!("  Error: failed to parse certificate"),
             }
         }
     }
     Ok(())
+}
+
+fn certificate_time(timestamp: i64) -> String {
+    match time::OffsetDateTime::from_unix_timestamp(timestamp) {
+        Ok(date) => format!(
+            "{} {:02}:{:02}:{:02} UTC",
+            date.date(),
+            date.hour(),
+            date.minute(),
+            date.second()
+        ),
+        Err(_) => format!("invalid timestamp ({timestamp})"),
+    }
 }
 
 fn slot_key_type(profile: &DeviceProfile, metadata: Option<&Metadata>) -> &'static str {

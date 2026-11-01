@@ -59,6 +59,7 @@ grep -Eq "^Language preferences:[[:space:]]+en" <<<"$openpgp_info"
 grep -Eq "^Sex:[[:space:]]+2" <<<"$openpgp_info"
 grep -Eq "^Login:[[:space:]]+alice" <<<"$openpgp_info"
 grep -Fq "https://example.invalid/alice.pub" <<<"$openpgp_info"
+grep -Eq '^  Origin:[[:space:]]+generated on device$' <<<"$openpgp_info"
 
 section "ckman openpgp access set-touch-cache"
 # Card-wide UIF touch cache (1.5.2+; this script runs on 2.0+). Set, then

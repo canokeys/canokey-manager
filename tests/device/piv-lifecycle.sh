@@ -80,6 +80,21 @@ section "ckman piv certificates generate + export"
 "${CKMAN[@]}" piv certificates export 9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-cert.pem"
 openssl x509 -in "$CANOKEY_USBIP_WORK_DIR/piv-generated-cert.pem" -noout -text >/dev/null
 
+section "ckman piv info shows certificate validity in UTC"
+"${CKMAN[@]}" piv info >"$work_dir/piv-info.txt"
+LC_ALL=C openssl x509 -in "$work_dir/piv-generated-cert.pem" -noout -dates >"$work_dir/cert-dates.txt"
+LC_ALL=C python3 - "$work_dir/cert-dates.txt" "$work_dir/piv-info.txt" <<'PY'
+import datetime
+import pathlib
+import sys
+
+info = pathlib.Path(sys.argv[2]).read_text()
+for line, label in zip(pathlib.Path(sys.argv[1]).read_text().splitlines(), ["Not before:", "Not after:"]):
+    date = datetime.datetime.strptime(line.split("=", 1)[1], "%b %d %H:%M:%S %Y GMT")
+    expected = f"  {label:<20}{date:%Y-%m-%d %H:%M:%S} UTC"
+    assert expected in info, (expected, info)
+PY
+
 # Stdout exports must contain only certificate bytes, without a status suffix.
 for format in pem der; do
   "${CKMAN[@]}" piv certificates export 9a "$CANOKEY_USBIP_WORK_DIR/cert.$format" --format "$format"
