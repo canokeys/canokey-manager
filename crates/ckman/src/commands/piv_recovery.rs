@@ -142,6 +142,8 @@ mod tests {
         let directory = TestDirectory::new();
         let path = directory.0.join("key.recovery");
         let recovery = create(&path).unwrap();
+        // Windows canonicalization adds the extended-length path prefix.
+        let saved_path = recovery.path().to_path_buf();
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("algorithm: aes192"));
         assert!(contents.contains(&format!("new-management-key: {}", "42".repeat(24))));
@@ -159,7 +161,7 @@ mod tests {
                 Err("connection lost after key replacement".into())
             })
             .unwrap_err();
-        assert!(error.to_string().contains(path.to_str().unwrap()));
+        assert!(error.to_string().contains(saved_path.to_str().unwrap()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
         let panic_path = directory.0.join("panic.recovery");
         let recovery = create(&panic_path).unwrap();
