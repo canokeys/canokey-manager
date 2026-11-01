@@ -102,12 +102,27 @@ section "ckman openpgp info"
 "${CKMAN[@]}" openpgp info
 
 section "ckman fido info"
+check_fido_info() {
+  local output
+  output="$("${CKMAN[@]}" fido info)"
+  printf '%s\n' "$output"
+  # Historical CanoKey SM2 -48 must not become IANA ML-DSA-44; the newer
+  # default -54 must also be recognized. Exit status alone missed both bugs.
+  if grep -Eq 'MlDsa44|Unknown\(-54\)' <<<"$output"; then
+    echo "ERROR: CanoKey SM2 algorithm was misidentified" >&2
+    return 1
+  fi
+  if [[ "$CANOKEY_FIRMWARE_VERSION_NORMALIZED" == 4.0.0 ]]; then
+    grep -Fq 'SM2 (COSE -54, CanoKey ID)' <<<"$output"
+    grep -Fq 'MlDsa65' <<<"$output"
+  fi
+}
 # FIDO over CCID exists from firmware 1.5.2; on 1.3 the command errors
 # cleanly before any I/O, and the matrix reports it UNSUPPORTED instead.
 run_versioned_feature \
   "ckman fido info" \
   "fido-pcsc" \
-  "${CKMAN[@]}" fido info
+  check_fido_info
 
 echo
 echo "Smoke lifecycle passed on firmware ${CANOKEY_FIRMWARE_VERSION_NORMALIZED}."

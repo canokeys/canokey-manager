@@ -26,6 +26,9 @@ password can be remembered in the OS keyring per device
 
 FIDO commands prefer the native USB HID (CTAPHID) transport and fall back to
 FIDO over CCID when `--reader` is given or no HID interface is present.
+`fido info` recognizes CanoKey's historical SM2 identifiers; see the
+[WebAuthn SM2 identifier history](docs/fido-sm2.md) for the -48/-54 mapping
+and custom-configuration limitations.
 
 `config info` reports physical filesystem allocation in KiB, and applet
 logical payloads in bytes (B), using Console's applet names. Optional files
