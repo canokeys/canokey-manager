@@ -334,6 +334,23 @@ pub enum Sm2Readout {
     Legacy(LegacySm2Configuration),
 }
 
+impl Sm2Readout {
+    /// Active WebAuthn SM2 algorithm ID, or `None` when legacy SM2 is disabled.
+    /// Legacy firmware stores its packed signed identifiers little-endian,
+    /// matching the layout used by [`configure_sm2`].
+    pub fn algorithm_id(&self) -> Option<i32> {
+        match self {
+            Self::Typed(config) => Some(config.algorithm_id),
+            Self::Legacy(config) if config.enabled() => Some(i32::from_le_bytes(
+                config.raw()[5..9]
+                    .try_into()
+                    .expect("fixed legacy SM2 layout"),
+            )),
+            Self::Legacy(_) => None,
+        }
+    }
+}
+
 /// Read the CTAP SM2 configuration (3.0+; PIN-gated on every firmware).
 pub fn sm2_configuration<E>(
     profile: &DeviceProfile,
@@ -818,6 +835,7 @@ mod feature_tests {
         let readout =
             sm2_configuration(&profile(b"3.1.0"), Some(pin()), &mut |c| script.exchange(c))
                 .unwrap();
+        assert_eq!(readout.algorithm_id(), Some(-54));
         let Sm2Readout::Typed(config) = readout else {
             panic!("3.1 uses the typed layout")
         };
@@ -829,15 +847,34 @@ mod feature_tests {
         let mut script = Script::new(&[
             (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
             (b"\x00 \x00\x00654321\x00", &[0x90, 0]),
-            (&[0, 0x11, 0, 0, 0], &[1, 0, 0, 0, 9, 0, 0, 0, 0, 0x90, 0]),
+            // Enabled, curve 9, custom algorithm -100: packed little-endian.
+            (
+                &[0, 0x11, 0, 0, 0],
+                &[1, 9, 0, 0, 0, 0x9c, 0xff, 0xff, 0xff, 0x90, 0],
+            ),
         ]);
         let readout =
             sm2_configuration(&profile(b"3.0.0"), Some(pin()), &mut |c| script.exchange(c))
                 .unwrap();
+        assert_eq!(readout.algorithm_id(), Some(-100));
         let Sm2Readout::Legacy(config) = readout else {
             panic!("3.0.x uses the legacy layout")
         };
         assert!(config.enabled());
+
+        let mut script = Script::new(&[
+            (&[0, 0xa4, 4, 0, 5, 0xf0, 0, 0, 0, 0, 0], &[0x90, 0]),
+            (b"\x00 \x00\x00\x06654321\x00", &[0x90, 0]),
+            (
+                &[0, 0x11, 0, 0, 0],
+                &[0, 9, 0, 0, 0, 0xd0, 0xff, 0xff, 0xff, 0x90, 0],
+            ),
+        ]);
+        let disabled =
+            sm2_configuration(&profile(b"3.0.0"), Some(pin()), &mut |c| script.exchange(c))
+                .unwrap();
+        assert_eq!(disabled.algorithm_id(), None);
+        assert!(script.transcript.is_empty());
     }
 
     #[test]

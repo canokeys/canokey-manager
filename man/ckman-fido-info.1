@@ -4,10 +4,13 @@
 .SH NAME
 ckman\-fido\-info \- Display general status of the FIDO application
 .SH SYNOPSIS
-\fBckman\-fido\-info\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBckman\-fido\-info\fR [\fB\-\-admin\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Display general status of the FIDO application
 .SH OPTIONS
+.TP
+\fB\-\-admin\-pin\fR \fI<PIN>\fR
+CanoKey Admin PIN to read the actual SM2 ID (uses PC/SC)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

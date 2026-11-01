@@ -29,11 +29,23 @@ libcanokey's generic `CoseAlgorithm` Debug value incorrectly reports
 ML-DSA-44 on historical CanoKeys. Conversely, -54 is unknown to that enum.
 The CLI handles both historical defaults locally, for HID and PC/SC,
 without changing the library's standards-based mapping or querying another
-device for a firmware version.
+device for a firmware version. Without authentication, the output includes
+a note that these names are inferred and custom IDs may be misidentified.
 
 SM2 IDs are configurable: getInfo contains no curve or other information
 that can identify arbitrary custom SM2 IDs unambiguously. The display
 recognizes the two known defaults; other IDs retain the library's COSE
-interpretation (including `Unknown(id)`). To inspect the authoritative
-configuration, use `ckman config sm2` on the same device (prompts for the Admin PIN).
-The info command does not authenticate or change configuration.
+interpretation (including `Unknown(id)`).
+
+Use `ckman fido info --admin-pin PIN` for authoritative SM2 identification
+on firmware 3.0 and newer. This selects the device once over PC/SC, reads
+its SM2 configuration with the supplied Admin PIN, then reads FIDO getInfo
+on the same connection. Normal `--reader` and `--device` selection applies.
+It requires a working PC/SC interface even when USB HID is available.
+The configured algorithm ID takes precedence over every generic COSE
+name, and legacy SM2 disabled state is respected. Authentication/read
+failures are reported as errors without falling back to inferred names.
+The command does not change SM2 configuration.
+
+`ckman config sm2` can also inspect the configuration directly (prompts for
+the Admin PIN).

@@ -116,6 +116,18 @@ check_fido_info() {
     grep -Fq 'SM2 (COSE -54, CanoKey ID)' <<<"$output"
     grep -Fq 'MlDsa65' <<<"$output"
   fi
+  case "$CANOKEY_FIRMWARE_VERSION_NORMALIZED" in
+    3.*|4.*)
+      # Known PIN of the disposable virtual device; authenticate and read
+      # the actual configuration on the same PC/SC connection as getInfo.
+      output="$("${CKMAN[@]}" fido info --admin-pin 123456)"
+      printf '%s\n' "$output"
+      if grep -Fq 'SM2 names are inferred' <<<"$output"; then
+        echo "ERROR: authenticated SM2 read fell back to inferred names" >&2
+        return 1
+      fi
+      ;;
+  esac
 }
 # FIDO over CCID exists from firmware 1.5.2; on 1.3 the command errors
 # cleanly before any I/O, and the matrix reports it UNSUPPORTED instead.

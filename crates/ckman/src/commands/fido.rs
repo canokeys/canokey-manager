@@ -1,4 +1,5 @@
 use super::{confirm, single_target, CliResult};
+use ckman_core::admin;
 use ckman_core::fido::{self, FidoError};
 use ckman_core::{DriveError, Exchange};
 use ckman_transport::ctaphid::{CtapHidChannel, Keepalive};
@@ -16,7 +17,11 @@ use std::time::Duration;
 #[derive(Subcommand)]
 pub enum FidoCommand {
     /// Display general status of the FIDO application.
-    Info,
+    Info {
+        /// CanoKey Admin PIN to read the actual SM2 ID (uses PC/SC).
+        #[arg(long, value_name = "PIN", value_parser = super::secret_arg)]
+        admin_pin: Option<super::SecretString>,
+    },
     /// Reset the FIDO application, deleting all credentials and the PIN.
     ///
     /// The reset must be triggered immediately after the CanoKey is
@@ -195,7 +200,7 @@ pub enum CredentialsCommand {
 
 pub fn run(device: Option<u32>, reader: Option<&str>, command: &FidoCommand) -> CliResult<()> {
     match command {
-        FidoCommand::Info => info(device, reader),
+        FidoCommand::Info { admin_pin } => info(device, reader, super::secret_str(admin_pin)),
         FidoCommand::Reset { force } => reset(device, reader, *force),
         FidoCommand::Access { command } => access(device, reader, command),
         FidoCommand::Config { command } => config(device, reader, command),
@@ -500,8 +505,26 @@ fn prompt_new_pin(minimum: u64) -> CliResult<super::SecretString> {
     Ok(pin)
 }
 
-fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
-    let mut link = FidoLink::connect(device, reader)?;
+fn info(device: Option<u32>, reader: Option<&str>, admin_pin: Option<&str>) -> CliResult<()> {
+    let (mut link, sm2) = if let Some(pin) = admin_pin {
+        let pin = admin::Pin::from_bytes(pin.as_bytes())?;
+        // Admin configuration is available over PC/SC. Select once and use
+        // the same connection for both reads; never pair an arbitrary card
+        // with a separately selected HID authenticator.
+        let pcsc = Pcsc::establish()?;
+        let target = single_target(&pcsc, device, reader)?;
+        let mut link = FidoLink::pcsc(target)?;
+        let FidoLink::Pcsc(target) = &mut link else {
+            unreachable!()
+        };
+        let config = admin::sm2_configuration(&target.profile, Some(pin), &mut |command| {
+            target.connection.exchange(command)
+        })
+        .map_err(|error| super::describe_drive_error(&error))?;
+        (link, Some(config.algorithm_id().map(i64::from)))
+    } else {
+        (FidoLink::connect(device, reader)?, None)
+    };
     let info = link.run(|exchange| fido::get_info(exchange))?;
     println!("FIDO2 version:          {}", info.versions().join(", "));
     println!("AAGUID:                 {}", hex_encode(info.aaguid()));
@@ -524,9 +547,12 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     if let Some(algorithms) = info.algorithms() {
         let rendered: Vec<String> = algorithms
             .iter()
-            .map(|algorithm| algorithm_name(algorithm.alg))
+            .map(|algorithm| algorithm_name(algorithm.alg, sm2))
             .collect();
         println!("Algorithms:             {}", rendered.join(", "));
+        if sm2.is_none() {
+            println!("Note: SM2 names are inferred from historical CanoKey IDs; custom IDs may be misidentified. Use fido info --admin-pin PIN to read the actual SM2 configuration (requires PC/SC).");
+        }
     }
     if let Some(transports) = info.transports() {
         println!("Transports:             {}", transports.join(", "));
@@ -543,14 +569,16 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     Ok(())
 }
 
-fn algorithm_name(id: i64) -> String {
+// None: not read; Some(None): verified disabled; Some(Some(id)): verified ID.
+fn algorithm_name(id: i64, sm2: Option<Option<i64>>) -> String {
     // CanoKey-specific interpretation, not a change to the global COSE registry.
     // SM2 originally defaulted to -48 (core 0ddb93bc); core 64f54499 changed
     // the default to -54 after -48 was assigned to ML-DSA-44. Existing SM2
     // configuration survives upgrades. See docs/fido-sm2.md.
-    match id {
-        -48 => "SM2 (COSE -48, legacy CanoKey ID)".into(),
-        -54 => "SM2 (COSE -54, CanoKey ID)".into(),
+    match (id, sm2) {
+        (_, Some(Some(configured))) if id == configured => format!("SM2 (COSE {id}, configured)"),
+        (-48, None) => "SM2 (COSE -48, legacy CanoKey ID)".into(),
+        (-54, None) => "SM2 (COSE -54, CanoKey ID)".into(),
         _ => format!("{:?}", canokey::ctap::cose::CoseAlgorithm::from_id(id)),
     }
 }
@@ -1035,15 +1063,18 @@ mod tests {
         // ctap_get_info (0ddb93bc) and ctap_prepare_get_info_stream
         // (64f54499). Required versions/AAGUID follow the ctap2 fixtures.
         // The custom-ID case must retain its unknown raw ID.
-        for (firmware, algorithm_array, expected) in [
+        for (firmware, algorithm_array, expected, configured, verified_expected) in [
             ("3.0.1", "83a264747970656a7075626c69632d6b657963616c6726a264747970656a7075626c69632d6b657963616c6727a264747970656a7075626c69632d6b657963616c67382f",
-             "Es256, Ed25519, SM2 (COSE -48, legacy CanoKey ID)"),
+             "Es256, Ed25519, SM2 (COSE -48, legacy CanoKey ID)", Some(-48),
+             "Es256, Ed25519, SM2 (COSE -48, configured)"),
             ("3.0.1 (SM2 disabled)", "82a264747970656a7075626c69632d6b657963616c6726a264747970656a7075626c69632d6b657963616c6727",
-             "Es256, Ed25519"),
+             "Es256, Ed25519", None, "Es256, Ed25519"),
             ("4.0.0", "84a264747970656a7075626c69632d6b657963616c6726a264747970656a7075626c69632d6b657963616c6727a264747970656a7075626c69632d6b657963616c673835a264747970656a7075626c69632d6b657963616c673830",
-             "Es256, Ed25519, SM2 (COSE -54, CanoKey ID), MlDsa65"),
+             "Es256, Ed25519, SM2 (COSE -54, CanoKey ID), MlDsa65", Some(-54),
+             "Es256, Ed25519, SM2 (COSE -54, configured), MlDsa65"),
             ("3.0.1 (custom config)", "83a264747970656a7075626c69632d6b657963616c6726a264747970656a7075626c69632d6b657963616c6727a264747970656a7075626c69632d6b657963616c673863",
-             "Es256, Ed25519, Unknown(-100)"),
+             "Es256, Ed25519, Unknown(-100)", Some(-100),
+             "Es256, Ed25519, SM2 (COSE -100, configured)"),
         ] {
             let response_hex = format!(
                 "00a30181684649444f5f325f300350244eb29ee0904e4981fe1f20f8d3b8f40a{algorithm_array}9000"
@@ -1062,10 +1093,21 @@ mod tests {
             }).unwrap();
             assert!(transcript.next().is_none());
             let rendered = info.algorithms().unwrap().iter()
-                .map(|algorithm| algorithm_name(algorithm.alg))
+                .map(|algorithm| algorithm_name(algorithm.alg, None))
                 .collect::<Vec<_>>().join(", ");
             assert_eq!(rendered, expected, "{firmware}");
+            let verified = info.algorithms().unwrap().iter()
+                .map(|algorithm| algorithm_name(algorithm.alg, Some(configured)))
+                .collect::<Vec<_>>().join(", ");
+            assert_eq!(verified, verified_expected, "{firmware}");
         }
+        // An authoritative custom ID overrides even a standard COSE name.
+        assert_eq!(
+            algorithm_name(-49, Some(Some(-49))),
+            "SM2 (COSE -49, configured)"
+        );
+        // Do not infer a legacy default when the actual config differs.
+        assert_eq!(algorithm_name(-48, Some(Some(-100))), "MlDsa44");
     }
 
     #[test]
