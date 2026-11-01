@@ -423,7 +423,12 @@ class Suite:
                 card.command(0x20, p2=0x81, data=DEFAULT_ADMIN_PIN.encode())
                 card.command(0x2A, 0x9E, 0x9A, b'first')
                 card.command(0x2A, 0x9E, 0x9A, b'second', expected=SW_OK if policy == 'once' else 0x6982)
-        for policy in ['on', 'cached', 'fixed']:
+        # Caching is card-wide and separate from the slot's UIF policy.
+        for policy, cache_seconds in [('on', 0), ('on', 15), ('fixed', 0)]:
+            self.run(f'OpenPGP touch cache {cache_seconds}', 'openpgp', 'access',
+                     'set-touch-cache', str(cache_seconds), *admin)
+            info = self.run('OpenPGP touch cache readback', 'openpgp', 'info')
+            assert f'Touch cache time:         {cache_seconds} second(s)' in info, info
             self.run(f'OpenPGP touch policy {policy}', 'openpgp', 'keys', 'set-touch', 'sig', policy, '--force', *admin)
             with Card(self.reader) as card:
                 card.select('d27600012401')
@@ -453,7 +458,7 @@ class Suite:
                  '--pin', 'e\u0301abc', '--new-pin', pin)
         self.run('FIDO PIN minimum length', 'fido', 'access', 'set-min-length', '8', '--pin', pin)
         self.run('FIDO force PIN change', 'fido', 'access', 'force-change', '--pin', pin)
-        self.run('FIDO forced PIN blocks token', 'fido', 'credentials', 'list', '--pin', pin, failure='0x37')
+        self.run('FIDO forced PIN blocks token', 'fido', 'credentials', 'list', '--pin', pin, failure="the new PIN does not meet the device's requirements")
         self.run('FIDO forced PIN change clears flag', 'fido', 'access', 'change-pin', '--pin', pin, '--new-pin', 'abcdefgh')
         pin = 'abcdefgh'
         self.run('FIDO always UV enable', 'fido', 'config', 'toggle-always-uv', '--pin', pin)

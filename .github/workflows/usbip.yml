@@ -480,11 +480,20 @@ jobs:
         env:
           CKMAN_DESTRUCTIVE: "1"
         run: |
+          set +e
           external/canokey-usbip/compat/run \
             --core-ref "$CANOKEY_CORE_REF" --timeout 600 \
             --require usb --require ccid --require pcsc \
             --test-command ".venv-device/bin/python tests/device/rust-functional.py --output $RUNNER_TEMP/canokey-usbip-artifacts/functional.json" \
             --output-dir "$RUNNER_TEMP/canokey-usbip-artifacts"
+
+          run_status=$?
+          set -e
+          test_stdout="$RUNNER_TEMP/canokey-usbip-artifacts/test.stdout"
+          test_stderr="$RUNNER_TEMP/canokey-usbip-artifacts/test.stderr"
+          [[ ! -f "$test_stdout" ]] || cat "$test_stdout"
+          [[ ! -s "$test_stderr" ]] || cat "$test_stderr" >&2
+          exit "$run_status"
 
       - name: Collect hosted runner diagnostics
         if: always()

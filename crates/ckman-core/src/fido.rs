@@ -217,17 +217,19 @@ pub fn pin_retries<E>(
     run(pin::get_pin_retries(protocol, options()), exchange)
 }
 
-/// Read PIN retries when getInfo advertises ClientPIN support. Both true
-/// (PIN set) and false (PIN unset) support the read; an absent option means
-/// no query is sent. Transport and protocol failures remain errors.
+/// Read PIN retries when getInfo reports a configured PIN. An absent or
+/// false ClientPIN option skips the query: legacy CanoKey firmware can return
+/// an uninitialized retry value before a PIN is set. Once a PIN is configured,
+/// transport and protocol failures remain errors.
 pub fn pin_retries_if_supported<E>(
     info: &AuthenticatorInfo,
     exchange: &mut Exchange<'_, E>,
 ) -> Result<Option<PinRetries>, FidoError<E>> {
-    if !info
-        .options()
-        .is_some_and(|options| options.iter().any(|(name, _)| name == "clientPin"))
-    {
+    if !info.options().is_some_and(|options| {
+        options
+            .iter()
+            .any(|(name, enabled)| name == "clientPin" && *enabled)
+    }) {
         return Ok(None);
     }
     pin_retries(preferred_protocol(info), exchange).map(Some)
@@ -924,9 +926,9 @@ mod tests {
             let mut script = Script::new(&[SELECT_OK, (&[0x80, 0x10, 0, 0, 1, 4], &response)]);
             let info = get_info(&mut |command| script.exchange(command)).unwrap();
             assert!(script.transcript.is_empty());
-            if client_pin.is_none() {
+            if client_pin != Some(true) {
                 assert!(pin_retries_if_supported::<io::Error>(&info, &mut |_| {
-                    panic!("no ClientPIN support: no retry query may be sent")
+                    panic!("no configured PIN: no retry query may be sent")
                 })
                 .unwrap()
                 .is_none());
