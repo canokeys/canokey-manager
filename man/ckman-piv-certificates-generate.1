@@ -6,7 +6,9 @@ ckman\-piv\-certificates\-generate \- Generate a self\-signed certificate, signe
 .SH SYNOPSIS
 \fBckman\-piv\-certificates\-generate\fR <\fB\-s\fR|\fB\-\-subject\fR> [\fB\-v\fR|\fB\-\-valid\-days\fR] [\fB\-\-hash\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-P\fR|\fB\-\-pin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> [\fIPUBLIC_KEY\fR] 
 .SH DESCRIPTION
-Generate a self\-signed certificate, signed by the key in the slot
+Generate a self\-signed certificate, signed by the key in the slot.
+.PP
+Existing certificates require overwrite confirmation before signing.
 .SH OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-subject\fR \fI<SUBJECT>\fR
@@ -37,7 +39,7 @@ Current management key as 48 hex characters (prompted when needed)
 PIN code (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISLOT\fR>
 PIV slot

@@ -6,14 +6,16 @@ ckman\-piv\-objects\-import \- Write an arbitrary PIV object value (without the 
 .SH SYNOPSIS
 \fBckman\-piv\-objects\-import\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIOBJECT_ID\fR> <\fIDATA\fR> 
 .SH DESCRIPTION
-Write an arbitrary PIV object value (without the outer 53 container)
+Write an arbitrary PIV object value (without the outer 53 container).
+.PP
+Replacing a certificate object requires overwrite confirmation.
 .SH OPTIONS
 .TP
 \fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
 Current management key as 48 hex characters (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIOBJECT_ID\fR>
 Object ID as hex (e.g. 5f0000 or 5fc105)

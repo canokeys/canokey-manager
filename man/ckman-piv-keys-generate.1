@@ -6,7 +6,9 @@ ckman\-piv\-keys\-generate \- Generate an asymmetric key pair on the device
 .SH SYNOPSIS
 \fBckman\-piv\-keys\-generate\fR [\fB\-a\fR|\fB\-\-algorithm\fR] [\fB\-\-pin\-policy\fR] [\fB\-\-touch\-policy\fR] [\fB\-\-format\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> <\fIPUBLIC_KEY_OUTPUT\fR> 
 .SH DESCRIPTION
-Generate an asymmetric key pair on the device
+Generate an asymmetric key pair on the device.
+.PP
+Occupied slots require explicit overwrite confirmation (default: no).
 .SH OPTIONS
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fI<ALGORITHM>\fR [default: rsa2048]
@@ -91,7 +93,7 @@ der
 Current management key as 48 hex characters (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISLOT\fR>
 PIV slot (9a, 9c, 9d, 9e, or retired 82\-95)

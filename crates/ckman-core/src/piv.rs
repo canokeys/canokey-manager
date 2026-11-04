@@ -300,6 +300,154 @@ pub fn write_object<E>(
     Ok(())
 }
 
+/// Certificate-container reference, separate from ordinary private-key slots.
+/// F9 supports certificate storage without becoming a general signing slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificateReference {
+    /// A certificate associated with an ordinary PIV key slot.
+    Key(Slot),
+    /// The F9 attestation signer certificate in object 5FFF01 (3.1.x).
+    Attestation,
+}
+
+impl From<Slot> for CertificateReference {
+    fn from(slot: Slot) -> Self {
+        Self::Key(slot)
+    }
+}
+
+impl CertificateReference {
+    /// Map this reference to its certificate object's BER identifier.
+    pub fn object_id(self) -> ObjectId {
+        match self {
+            Self::Key(slot) => ObjectId::certificate(slot),
+            Self::Attestation => {
+                ObjectId::from_bytes(&[0x5f, 0xff, 1]).expect("fixed PIV object ID")
+            }
+        }
+    }
+
+    /// Recognize an ordinary or F9 certificate object, without inferring support.
+    /// Other objects are returned as None, including private-key references.
+    pub fn from_object_id(id: ObjectId) -> Option<Self> {
+        if id == Self::Attestation.object_id() {
+            return Some(Self::Attestation);
+        }
+        [
+            Slot::Authentication,
+            Slot::Signature,
+            Slot::KeyManagement,
+            Slot::CardAuthentication,
+        ]
+        .into_iter()
+        .chain(
+            (1..=20).map(|index| {
+                Slot::Retired(RetiredSlot::new(index).expect("fixed retired slot range"))
+            }),
+        )
+        .find(|slot| ObjectId::certificate(*slot) == id)
+        .map(Self::Key)
+    }
+
+    fn check<E>(self, profile: &DeviceProfile) -> Result<(), PivError<E>> {
+        if self == Self::Attestation {
+            profile
+                .capability(canokey::compatibility::Capability::Attestation)
+                .require()
+                .map_err(DriveError::from)?;
+        }
+        Ok(())
+    }
+}
+
+/// Read the raw certificate object, preserving malformed inner certificate data.
+/// Used to inspect existing content before replacement; only a typed NotFound
+/// proves absence. F9 is gated to supported attestation firmware before I/O.
+pub fn read_certificate_object<E>(
+    profile: &DeviceProfile,
+    reference: CertificateReference,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<SecretBytes, PivError<E>> {
+    reference.check(profile)?;
+    read_object(profile, reference.object_id(), Access::None, exchange)
+}
+
+/// Read and unwrap an ordinary or F9 certificate, without validating X.509 trust.
+/// F9 is gated before I/O and uses its dedicated library operation.
+pub fn read_certificate_at<E>(
+    profile: &DeviceProfile,
+    reference: CertificateReference,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<Certificate, PivError<E>> {
+    match reference {
+        CertificateReference::Key(slot) => read_certificate(profile, slot, Access::None, exchange),
+        CertificateReference::Attestation => attestation_certificate(profile, exchange),
+    }
+}
+
+/// Store a nonempty certificate in an ordinary or F9 container, retaining its key.
+/// Requires explicit management access. F9 uses the standard 70/71=00/FE
+/// container with the library's bounded, authenticated object-write operation;
+/// firmware support and input limits are checked before I/O. No X.509 trust or
+/// public-key matching is inferred; caller-side overwrite consent is required.
+pub fn write_certificate_at<E>(
+    profile: &DeviceProfile,
+    reference: CertificateReference,
+    der: SecretBytes,
+    access: Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    reference.check(profile)?;
+    if let CertificateReference::Key(slot) = reference {
+        return write_certificate(profile, slot, der, access, exchange);
+    }
+    if der.is_empty() {
+        return Err(PivError::protocol(ErrorKind::InvalidArgument));
+    }
+    let mut writer = TlvWriter::new(options().limits.max_input_bytes);
+    for (tag, value) in [(0x70, der.as_bytes()), (0x71, &[0][..]), (0xfe, &[][..])] {
+        writer
+            .push(Tag::from_bytes(&[tag]).map_err(DriveError::from)?, value)
+            .map_err(DriveError::from)?;
+    }
+    write_object(
+        profile,
+        reference.object_id(),
+        writer.into_bytes(),
+        access,
+        exchange,
+    )
+}
+
+/// Delete an ordinary or F9 certificate without deleting its key.
+/// Requires evidenced certificate-deletion support and explicit management
+/// access. The library writes the empty object container without retries;
+/// callers must obtain confirmation before deleting existing content.
+pub fn delete_certificate_at<E>(
+    profile: &DeviceProfile,
+    reference: CertificateReference,
+    access: Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    reference.check(profile)?;
+    match reference {
+        CertificateReference::Key(slot) => delete_certificate(profile, slot, access, exchange),
+        CertificateReference::Attestation => {
+            profile
+                .capability(canokey::compatibility::Capability::CertificateDeletion)
+                .require()
+                .map_err(DriveError::from)?;
+            write_object(
+                profile,
+                reference.object_id(),
+                SecretBytes::default(),
+                access,
+                exchange,
+            )
+        }
+    }
+}
+
 /// Read and unwrap a certificate (gzip handled by libcanokey); no X.509
 /// validation is performed.
 pub fn read_certificate<E>(
@@ -1731,6 +1879,124 @@ mod tests {
         assert_eq!(certificate.der(), &[0x30, 0]);
         assert!(!certificate.was_compressed());
         assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn firmware_310_f9_certificate_storage_roundtrip_and_delete() {
+        let reference = CertificateReference::Attestation;
+        let mut transcript = AES_AUTH.to_vec();
+        transcript.push((
+            &[
+                0, 0xdb, 0x3f, 0xff, 0x10, 0x5c, 3, 0x5f, 0xff, 1, 0x53, 9, 0x70, 2, 0x30, 0, 0x71,
+                1, 0, 0xfe, 0,
+            ],
+            OK,
+        ));
+        let mut script = Script::new(&transcript);
+        write_certificate_at(
+            &profile("3.1.0"),
+            reference,
+            SecretBytes::new(vec![0x30, 0]),
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert!(script.transcript.is_empty());
+
+        // GET DATA framing is from libcanokey's F9 attestation fixture.
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (
+                &[0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xff, 1, 0],
+                &[0x53, 9, 0x70, 2, 0x30, 0, 0x71, 1, 0, 0xfe, 0, 0x90, 0],
+            ),
+        ]);
+        let cert =
+            read_certificate_at(&profile("3.1.0"), reference, &mut |c| script.exchange(c)).unwrap();
+        assert_eq!(cert.der(), &[0x30, 0]);
+        assert!(script.transcript.is_empty());
+
+        let mut transcript = AES_AUTH.to_vec();
+        transcript.push((
+            &[0, 0xdb, 0x3f, 0xff, 7, 0x5c, 3, 0x5f, 0xff, 1, 0x53, 0],
+            OK,
+        ));
+        let mut script = Script::new(&transcript);
+        delete_certificate_at(&profile("3.1.0"), reference, aes_access(), &mut |c| {
+            script.exchange(c)
+        })
+        .unwrap();
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn f9_storage_gates_and_invalid_access_fail_before_io() {
+        let reference = CertificateReference::Attestation;
+        let mut no_io =
+            |_: &[u8]| -> io::Result<Vec<u8>> { panic!("invalid operation must fail before I/O") };
+        for result in [
+            read_certificate_object(&profile("3.0.3"), reference, &mut no_io).map(|_| ()),
+            read_certificate_at(&profile("3.0.3"), reference, &mut no_io).map(|_| ()),
+            write_certificate_at(
+                &profile("3.0.3"),
+                reference,
+                SecretBytes::new(vec![0x30, 0]),
+                aes_access(),
+                &mut no_io,
+            ),
+            delete_certificate_at(&profile("3.0.3"), reference, aes_access(), &mut no_io),
+        ] {
+            assert!(matches!(result,
+                Err(PivError::Drive(DriveError::Protocol(error)))
+                    if error.kind == ErrorKind::UnsupportedFeature));
+        }
+        assert!(write_certificate_at(
+            &profile("3.1.0"),
+            reference,
+            SecretBytes::default(),
+            aes_access(),
+            &mut no_io
+        )
+        .is_err());
+        assert!(write_certificate_at(
+            &profile("3.1.0"),
+            reference,
+            SecretBytes::new(vec![0x30, 0]),
+            Access::None,
+            &mut no_io
+        )
+        .is_err());
+        assert!(
+            delete_certificate_at(&profile("3.1.0"), reference, Access::None, &mut no_io).is_err()
+        );
+    }
+
+    #[test]
+    fn certificate_object_ids_cover_ordinary_and_f9_slots_only() {
+        for slot in [
+            Slot::Authentication,
+            Slot::Signature,
+            Slot::KeyManagement,
+            Slot::CardAuthentication,
+        ]
+        .into_iter()
+        .chain((1..=20).map(|index| Slot::Retired(RetiredSlot::new(index).unwrap())))
+        {
+            let reference = CertificateReference::Key(slot);
+            assert_eq!(
+                CertificateReference::from_object_id(reference.object_id()),
+                Some(reference)
+            );
+        }
+        let reference = CertificateReference::Attestation;
+        assert_eq!(
+            CertificateReference::from_object_id(reference.object_id()),
+            Some(reference)
+        );
+        assert_eq!(
+            CertificateReference::from_object_id(pivman_object_id()),
+            None
+        );
     }
 
     #[test]

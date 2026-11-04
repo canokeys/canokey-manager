@@ -6,14 +6,16 @@ ckman\-piv\-certificates\-delete \- Delete the certificate in a slot (the key is
 .SH SYNOPSIS
 \fBckman\-piv\-certificates\-delete\fR [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> 
 .SH DESCRIPTION
-Delete the certificate in a slot (the key is retained)
+Delete the certificate in a slot (the key is retained).
+.PP
+Existing certificates require explicit confirmation (default: no).
 .SH OPTIONS
 .TP
 \fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
 Current management key as 48 hex characters (prompted when needed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISLOT\fR>
-PIV slot
+PIV certificate slot (9a, 9c, 9d, 9e, 82\-95, or f9)

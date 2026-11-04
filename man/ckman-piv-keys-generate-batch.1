@@ -8,7 +8,7 @@ ckman\-piv\-keys\-generate\-batch \- Generate the same algorithm into several sl
 .SH DESCRIPTION
 Generate the same algorithm into several slots in one batch (one management authentication, progress per slot).
 .PP
-Save each public key before generating the next slot. On failure, completed keys and their files remain; no rollback is attempted.
+Save each public key before generating the next slot. On failure, completed keys and their files remain; no rollback is attempted. All occupied slots must be confirmed before any key is generated.
 .SH OPTIONS
 .TP
 \fB\-\-slots\fR \fI<SLOTS>\fR

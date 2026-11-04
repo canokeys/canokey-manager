@@ -20,6 +20,13 @@ CANOKEY_FIRMWARE_VERSION_NORMALIZED="$(
 
 source "$script_dir/lib.sh"
 
+# The operator explicitly authorized this destructive USB/IP lifecycle above.
+# Supply overwrite consent when historical firmware cannot report key presence
+# or a test intentionally replaces an existing slot. The batch has two slots.
+approve_piv_slot_write() {
+  printf 'yes\nyes\n' | "$@"
+}
+
 PIV_DEFAULT_PIN="123456"
 PIV_DEFAULT_PUK="12345678"
 PIV_DEFAULT_MANAGEMENT_KEY="010203040506070801020304050607080102030405060708"
@@ -60,7 +67,7 @@ openssl req -new -x509 -key "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem" \
   -out "$CANOKEY_USBIP_WORK_DIR/piv-import-certificate.pem" 2>/dev/null
 
 section "ckman piv keys generate"
-"${CKMAN[@]}" piv keys generate \
+approve_piv_slot_write "${CKMAN[@]}" piv keys generate \
   --algorithm ecc-p256 \
   --management-key "$PIV_MANAGEMENT_KEY" \
   9a "$CANOKEY_USBIP_WORK_DIR/piv-generated-public.pem"
@@ -73,7 +80,7 @@ run_versioned_feature \
   "${CKMAN[@]}" piv keys info 9a
 
 section "ckman piv certificates generate + export"
-"${CKMAN[@]}" piv certificates generate 9a \
+approve_piv_slot_write "${CKMAN[@]}" piv certificates generate 9a \
   --management-key "$PIV_MANAGEMENT_KEY" \
   --pin "$PIV_DEFAULT_PIN" \
   --subject "CN=ckman usbip generated" --valid-days 1
@@ -103,16 +110,16 @@ for format in pem der; do
 done
 
 section "ckman piv keys import + certificates import"
-"${CKMAN[@]}" piv keys import 9c \
+approve_piv_slot_write "${CKMAN[@]}" piv keys import 9c \
   --management-key "$PIV_MANAGEMENT_KEY" \
   "$CANOKEY_USBIP_WORK_DIR/piv-import-private.pem"
-"${CKMAN[@]}" piv certificates import 9c \
+approve_piv_slot_write "${CKMAN[@]}" piv certificates import 9c \
   --management-key "$PIV_MANAGEMENT_KEY" \
   "$CANOKEY_USBIP_WORK_DIR/piv-import-certificate.pem"
 
 section "ckman piv objects export/import round trip"
 echo -n "ckman-object-test" > "$CANOKEY_USBIP_WORK_DIR/object.bin"
-"${CKMAN[@]}" piv objects import 5fc10a "$CANOKEY_USBIP_WORK_DIR/object.bin" \
+approve_piv_slot_write "${CKMAN[@]}" piv objects import 5fc10a "$CANOKEY_USBIP_WORK_DIR/object.bin" \
   --management-key "$PIV_MANAGEMENT_KEY"
 "${CKMAN[@]}" piv objects export 5fc10a "$CANOKEY_USBIP_WORK_DIR/object-out.bin"
 cmp "$CANOKEY_USBIP_WORK_DIR/object.bin" "$CANOKEY_USBIP_WORK_DIR/object-out.bin"
@@ -129,7 +136,7 @@ openssl dgst -sha256 \
   "$CANOKEY_USBIP_WORK_DIR/sign-message.bin"
 
 section "ckman piv keys generate-batch"
-"${CKMAN[@]}" piv keys generate-batch \
+approve_piv_slot_write "${CKMAN[@]}" piv keys generate-batch \
   --slots 9d,9e \
   --algorithm ecc-p256 \
   --output-dir "$CANOKEY_USBIP_WORK_DIR" \
@@ -158,7 +165,7 @@ cmp "$CANOKEY_USBIP_WORK_DIR/derive-secret-card.bin" \
 
 section "ckman piv decrypt"
 # Raw RSA private operation: the padded block round-trips, message last.
-"${CKMAN[@]}" piv keys generate \
+approve_piv_slot_write "${CKMAN[@]}" piv keys generate \
   --algorithm rsa2048 \
   --management-key "$PIV_MANAGEMENT_KEY" \
   82 "$CANOKEY_USBIP_WORK_DIR/piv-rsa-public.pem"
@@ -178,7 +185,7 @@ cmp \
 
 # ML-KEM-768 decapsulation and SM2 key agreement exist on 3.1 only.
 piv_decapsulate_roundtrip() {
-  "${CKMAN[@]}" piv keys generate \
+  approve_piv_slot_write "${CKMAN[@]}" piv keys generate \
     --algorithm ml-kem768 \
     --management-key "$PIV_MANAGEMENT_KEY" \
     83 "$CANOKEY_USBIP_WORK_DIR/piv-kem-public.pem"
@@ -197,7 +204,7 @@ run_versioned_feature \
   piv_decapsulate_roundtrip
 
 piv_agree_sm2_roundtrip() {
-  "${CKMAN[@]}" piv keys generate \
+  approve_piv_slot_write "${CKMAN[@]}" piv keys generate \
     --algorithm sm2 \
     --management-key "$PIV_MANAGEMENT_KEY" \
     84 "$CANOKEY_USBIP_WORK_DIR/piv-sm2-public.pem"

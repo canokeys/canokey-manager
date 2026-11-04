@@ -1,3 +1,5 @@
+mod overwrite;
+
 use super::output::SecretOutput;
 use super::{confirm, single_target, CliResult, Target};
 use ckman_core::admin::{self, Applet};
@@ -238,6 +240,8 @@ pub enum AccessCommand {
 #[derive(Subcommand)]
 pub enum KeysCommand {
     /// Generate an asymmetric key pair on the device.
+    ///
+    /// Occupied slots require explicit overwrite confirmation (default: no).
     Generate {
         /// PIV slot (9a, 9c, 9d, 9e, or retired 82-95).
         #[arg(value_parser = parse_slot)]
@@ -261,6 +265,8 @@ pub enum KeysCommand {
     },
     /// Import a private key from a PEM/DER file (PKCS#8, PKCS#1, SEC1) or a
     /// PKCS#12 bundle (its first private key).
+    ///
+    /// Occupied slots require explicit overwrite confirmation (default: no).
     Import {
         /// PIV slot.
         #[arg(value_parser = parse_slot)]
@@ -331,6 +337,7 @@ pub enum KeysCommand {
     ///
     /// Save each public key before generating the next slot. On failure,
     /// completed keys and their files remain; no rollback is attempted.
+    /// All occupied slots must be confirmed before any key is generated.
     GenerateBatch {
         /// Distinct comma-separated PIV slots (e.g. 9a,9c,9d,9e).
         #[arg(long, required = true, value_delimiter = ',', value_parser = parse_slot)]
@@ -380,11 +387,12 @@ pub enum CertificatesCommand {
     ///
     /// A PEM bundle holding several blocks (key plus certificate, or a
     /// certificate chain) contributes its first CERTIFICATE block; a PKCS#12
-    /// bundle contributes its leaf certificate.
+    /// bundle contributes its leaf certificate. Existing certificates require
+    /// explicit overwrite confirmation (default: no), including in f9.
     Import {
-        /// PIV slot.
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV certificate slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_certificate_slot)]
+        slot: piv::CertificateReference,
         /// File containing the certificate ('-' for stdin).
         certificate: String,
         #[command(flatten)]
@@ -392,9 +400,9 @@ pub enum CertificatesCommand {
     },
     /// Export the certificate stored in a slot.
     Export {
-        /// PIV slot.
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV certificate slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_certificate_slot)]
+        slot: piv::CertificateReference,
         /// File to write the certificate to ('-' for stdout).
         certificate: String,
         /// Output format.
@@ -402,6 +410,8 @@ pub enum CertificatesCommand {
         format: EncodingArg,
     },
     /// Generate a self-signed certificate, signed by the key in the slot.
+    ///
+    /// Existing certificates require overwrite confirmation before signing.
     Generate {
         /// PIV slot.
         #[arg(value_parser = parse_slot)]
@@ -441,10 +451,12 @@ pub enum CertificatesCommand {
         pin: PinArgs,
     },
     /// Delete the certificate in a slot (the key is retained).
+    ///
+    /// Existing certificates require explicit confirmation (default: no).
     Delete {
-        /// PIV slot.
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV certificate slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_certificate_slot)]
+        slot: piv::CertificateReference,
         #[command(flatten)]
         mgmt: MgmtArgs,
     },
@@ -473,6 +485,8 @@ pub enum ObjectsCommand {
         mgmt: MgmtArgs,
     },
     /// Write an arbitrary PIV object value (without the outer 53 container).
+    ///
+    /// Replacing a certificate object requires overwrite confirmation.
     Import {
         /// Object ID as hex (e.g. 5f0000 or 5fc105).
         #[arg(value_parser = parse_object_id)]
@@ -947,6 +961,20 @@ pub enum KeyInfoReference {
     Attestation,
 }
 
+fn parse_certificate_slot(text: &str) -> Result<piv::CertificateReference, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "f9" | "att" | "attestation" => Ok(piv::CertificateReference::Attestation),
+        _ => parse_slot(text).map(piv::CertificateReference::Key),
+    }
+}
+
+fn certificate_slot_name(reference: piv::CertificateReference) -> String {
+    match reference {
+        piv::CertificateReference::Key(slot) => slot_name(slot),
+        piv::CertificateReference::Attestation => "f9".to_string(),
+    }
+}
+
 fn parse_key_info_reference(text: &str) -> Result<KeyInfoReference, String> {
     match text.to_ascii_lowercase().as_str() {
         "f9" | "att" | "attestation" => Ok(KeyInfoReference::Attestation),
@@ -1121,6 +1149,33 @@ impl PivSession {
         let pcsc = Pcsc::establish()?;
         let target = single_target(&pcsc, device, reader)?;
         Ok(Self { target })
+    }
+
+    fn confirm_key_replacement(&mut self, slot: Slot) -> CliResult<()> {
+        self.confirm_key_replacements(&[slot])
+    }
+
+    fn confirm_key_replacements(&mut self, slots: &[Slot]) -> CliResult<()> {
+        overwrite::keys(
+            &self.target.profile,
+            slots,
+            &mut |command| self.target.connection.exchange(command),
+            &mut confirm,
+        )
+    }
+
+    fn confirm_certificate_change(
+        &mut self,
+        reference: piv::CertificateReference,
+        change: overwrite::CertificateChange,
+    ) -> CliResult<()> {
+        overwrite::certificate(
+            &self.target.profile,
+            reference,
+            change,
+            &mut |command| self.target.connection.exchange(command),
+            &mut confirm,
+        )
     }
 
     fn profile(&self) -> &DeviceProfile {
@@ -1905,6 +1960,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 ))?)
             };
             let mut session = PivSession::connect(device, reader)?;
+            session.confirm_key_replacement(*slot)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let mut parameters = KeyParameters::new(*slot, key_algorithm(*algorithm));
@@ -1941,6 +1997,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         } => {
             let mut outputs = prepare_batch_outputs(slots, output_dir, *format)?;
             let mut session = PivSession::connect(device, reader)?;
+            session.confirm_key_replacements(slots)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let parameters: Vec<KeyParameters> = slots
@@ -2001,6 +2058,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 .piv_material()
                 .map_err(|error| format!("{error}"))?;
             let mut session = PivSession::connect(device, reader)?;
+            session.confirm_key_replacement(*slot)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             let mut parameters = KeyParameters::new(*slot, imported.algorithm);
@@ -2375,30 +2433,36 @@ fn certificates(
             let data = super::input::read_secret(certificate)?;
             let parsed = super::parse_certificate_input(&data)?;
             let mut session = PivSession::connect(device, reader)?;
-            // When a key occupies the slot, the certificate must match it.
-            if let Some(metadata) = optional_piv(session.run_typed(|profile, exchange| {
-                piv::metadata(
-                    profile,
-                    MetadataReference::Key(*slot),
-                    canokey::piv::Access::None,
-                    exchange,
-                )
-            }))? {
-                if let Some(public) = &metadata.fields().public_key {
-                    let slot_spki = public
-                        .to_spki_der()
-                        .map_err(|error| format!("cannot encode the slot public key: {error}"))?;
-                    if !keys::public_keys_equal(&slot_spki, &parsed.public_key.spki_der)? {
-                        return Err(
-                            "the certificate does not match the private key in the slot".into()
-                        );
-                    }
+            let public = match slot {
+                piv::CertificateReference::Key(slot) => {
+                    optional_piv(session.run_typed(|profile, exchange| {
+                        piv::metadata(
+                            profile,
+                            MetadataReference::Key(*slot),
+                            canokey::piv::Access::None,
+                            exchange,
+                        )
+                    }))?
+                    .and_then(|metadata| metadata.fields().public_key.clone())
+                }
+                piv::CertificateReference::Attestation => {
+                    optional_piv(session.run_typed(piv::attestation_metadata))?
+                        .and_then(|fields| fields.public_key)
+                }
+            };
+            if let Some(public) = public {
+                let slot_spki = public
+                    .to_spki_der()
+                    .map_err(|error| format!("cannot encode the slot public key: {error}"))?;
+                if !keys::public_keys_equal(&slot_spki, &parsed.public_key.spki_der)? {
+                    return Err("the certificate does not match the private key in the slot".into());
                 }
             }
+            session.confirm_certificate_change(*slot, overwrite::CertificateChange::Replace)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
-                piv::write_certificate(
+                piv::write_certificate_at(
                     profile,
                     *slot,
                     SecretBytes::new(parsed.der.clone()),
@@ -2406,7 +2470,10 @@ fn certificates(
                     exchange,
                 )
             })?;
-            println!("Certificate imported in slot {}.", slot_name(*slot));
+            println!(
+                "Certificate imported in slot {}.",
+                certificate_slot_name(*slot)
+            );
             Ok(())
         }
         CertificatesCommand::Export {
@@ -2415,9 +2482,8 @@ fn certificates(
             format,
         } => {
             let mut session = PivSession::connect(device, reader)?;
-            let cert = session.run(|profile, exchange| {
-                piv::read_certificate(profile, *slot, canokey::piv::Access::None, exchange)
-            })?;
+            let cert = session
+                .run(|profile, exchange| piv::read_certificate_at(profile, *slot, exchange))?;
             let data = match format {
                 EncodingArg::Pem => x509::pem_encode("CERTIFICATE", cert.der()),
                 EncodingArg::Der => cert.der().to_vec(),
@@ -2483,6 +2549,10 @@ fn certificates(
             };
             validate_slot_public_key(&metadata, algorithm, &spki_der)?;
             x509::signature_algorithm(algorithm, certificate_hash(algorithm, *hash))?;
+            session.confirm_certificate_change(
+                (*slot).into(),
+                overwrite::CertificateChange::Replace,
+            )?;
             let management = session.resolve_management(
                 super::secret_str(&mgmt.management_key),
                 super::secret_str(&pin.pin),
@@ -2580,12 +2650,16 @@ fn certificates(
         }
         CertificatesCommand::Delete { slot, mgmt } => {
             let mut session = PivSession::connect(device, reader)?;
+            session.confirm_certificate_change(*slot, overwrite::CertificateChange::Delete)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
-                piv::delete_certificate(profile, *slot, management.access()?, exchange)
+                piv::delete_certificate_at(profile, *slot, management.access()?, exchange)
             })?;
-            println!("Certificate in slot {} deleted.", slot_name(*slot));
+            println!(
+                "Certificate in slot {} deleted.",
+                certificate_slot_name(*slot)
+            );
             Ok(())
         }
     }
@@ -2654,6 +2728,10 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
         } => {
             let data = read_input(data)?;
             let mut session = PivSession::connect(device, reader)?;
+            if let Some(reference) = piv::CertificateReference::from_object_id(*object_id) {
+                session
+                    .confirm_certificate_change(reference, overwrite::CertificateChange::Replace)?;
+            }
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
             session.run(|profile, exchange| {
@@ -2677,18 +2755,60 @@ mod tests {
     use canokey::compatibility::{DeviceObservations, PivApplicationVersion};
 
     #[test]
-    fn f9_is_only_accepted_by_read_only_metadata_parser() {
+    fn f9_is_accepted_for_metadata_and_certificate_storage_only() {
         for spelling in ["f9", "F9", "att", "attestation"] {
             assert!(matches!(
                 parse_key_info_reference(spelling),
                 Ok(KeyInfoReference::Attestation)
             ));
+            assert_eq!(
+                parse_certificate_slot(spelling).unwrap(),
+                piv::CertificateReference::Attestation
+            );
             assert!(parse_slot(spelling).is_err());
         }
         assert!(matches!(
             parse_key_info_reference("9a"),
             Ok(KeyInfoReference::Key(Slot::Authentication))
         ));
+    }
+
+    #[test]
+    fn f9_certificate_commands_parse_without_enabling_private_key_operations() {
+        use clap::Parser;
+        for arguments in [
+            vec!["ckman", "piv", "certificates", "import", "f9", "cert.pem"],
+            vec!["ckman", "piv", "certificates", "export", "f9", "cert.pem"],
+            vec!["ckman", "piv", "certificates", "delete", "f9"],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(arguments).is_ok());
+        }
+        for arguments in [
+            vec!["ckman", "piv", "keys", "generate", "f9", "pub.pem"],
+            vec!["ckman", "piv", "keys", "import", "f9", "key.pem"],
+            vec![
+                "ckman",
+                "piv",
+                "certificates",
+                "generate",
+                "f9",
+                "--subject",
+                "CN=test",
+            ],
+            vec![
+                "ckman",
+                "piv",
+                "certificates",
+                "request",
+                "f9",
+                "pub.pem",
+                "req.pem",
+                "--subject",
+                "CN=test",
+            ],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(arguments).is_err());
+        }
     }
 
     #[test]

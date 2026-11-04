@@ -8,7 +8,7 @@ ckman\-piv\-certificates\-import \- Import a certificate (PEM/DER/PKCS#12) into 
 .SH DESCRIPTION
 Import a certificate (PEM/DER/PKCS#12) into a slot.
 .PP
-A PEM bundle holding several blocks (key plus certificate, or a certificate chain) contributes its first CERTIFICATE block; a PKCS#12 bundle contributes its leaf certificate.
+A PEM bundle holding several blocks (key plus certificate, or a certificate chain) contributes its first CERTIFICATE block; a PKCS#12 bundle contributes its leaf certificate. Existing certificates require explicit overwrite confirmation (default: no), including in f9.
 .SH OPTIONS
 .TP
 \fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
@@ -18,7 +18,7 @@ Current management key as 48 hex characters (prompted when needed)
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISLOT\fR>
-PIV slot
+PIV certificate slot (9a, 9c, 9d, 9e, 82\-95, or f9)
 .TP
 <\fICERTIFICATE\fR>
 File containing the certificate (\*(Aq\-\*(Aq for stdin)
