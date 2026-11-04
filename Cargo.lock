@@ -162,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "canokey"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60b85e473d88f07c775207b7932a11f7d41ce807d36eefd12f5b40003d20a4e8"
+checksum = "9dc9c53971d6edcd5c0330c5f0bb17237c5ad5ccc2ca13b677f882af7dd77eec"
 dependencies = [
  "canokey-admin",
  "canokey-compat",
@@ -261,9 +261,9 @@ dependencies = [
 
 [[package]]
 name = "canokey-piv"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dac7a292b420c2ae4134bdfc6bb9821741f60a40f3bcb2dc50e8dc15bfa28cd"
+checksum = "83bfd726d290f6e3daf16a0b2e577175cecec434c125752fdf119bfd81ce75d2"
 dependencies = [
  "aes",
  "canokey-compat",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "ckman"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "canokey",
  "ckman-core",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64ct",
  "canokey",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-mangen"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "ckman",
  "clap",
@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "ckman-transport"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "hidapi",
  "pcsc",

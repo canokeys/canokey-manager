@@ -12,6 +12,9 @@
 //! the protection flags and the derivation salt, PRINTED (5FC109) stores the
 //! PIN-protected management key itself.
 
+/// Host-side CanoKey PIV attestation chain and device-binding policy.
+pub mod attestation;
+
 use crate::{execute, DriveError, Exchange};
 use canokey::piv::{self, SelectionInfo};
 use canokey::tlv::{Tag, TlvReader, TlvWriter};
@@ -62,6 +65,9 @@ pub enum PivError<E> {
     /// Host-side X.509 building failed.
     #[error(transparent)]
     X509(#[from] crate::x509::X509Error),
+    /// Host-side attestation trust or device-binding checks failed.
+    #[error(transparent)]
+    Attestation(#[from] attestation::AttestationError),
     /// Host-side key-file parsing failed.
     #[error(transparent)]
     Key(#[from] crate::keys::KeyError),
@@ -416,6 +422,74 @@ pub fn attest<E>(
     Ok(run(piv::attest(profile, slot, true, options()), exchange)?
         .as_bytes()
         .to_vec())
+}
+
+/// Read F9 signer metadata separately from ordinary private-operation slots.
+/// Unsupported firmware fails before I/O; absent keys remain NotFound.
+pub fn attestation_metadata<E>(
+    profile: &DeviceProfile,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<canokey::piv::MetadataFields, PivError<E>> {
+    run(piv::read_attestation_metadata(profile, options()), exchange)
+}
+
+/// Read and unwrap the F9 certificate (5FFF01), without inferring trust.
+/// Key and certificate presence are independent; malformed containers fail.
+pub fn attestation_certificate<E>(
+    profile: &DeviceProfile,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<Certificate, PivError<E>> {
+    run(
+        piv::read_attestation_certificate(profile, options()),
+        exchange,
+    )
+}
+
+/// Collect fresh attestation evidence and verify it against an independent root.
+/// The caller must retain one exclusive connection, including the probe that
+/// observed `profile`'s serial, for the entire operation. No authentication,
+/// mutation, target-key private operation or retries are performed. `root` is
+/// DER and `now_unix` is current UTC Unix time; see [`attestation::verify`].
+/// Missing evidence, unsupported firmware and all chain/binding failures fail.
+pub fn verify_attestation<E>(
+    profile: &DeviceProfile,
+    slot: Slot,
+    root: &[u8],
+    now_unix: u64,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<attestation::VerifiedAttestation, PivError<E>> {
+    profile
+        .capability(canokey::compatibility::Capability::Attestation)
+        .require()
+        .map_err(DriveError::from)?;
+    let serial = profile
+        .info()
+        .serial()
+        .and_then(|serial| serial.try_into().ok())
+        .ok_or(attestation::AttestationError::Binding(
+            "device serial unavailable",
+        ))?;
+    let target = metadata(
+        profile,
+        MetadataReference::Key(slot),
+        Access::None,
+        exchange,
+    )?;
+    let certificate = attest(profile, slot, exchange)?;
+    let issuer = attestation_certificate(profile, exchange)?;
+    let signer = attestation_metadata(profile, exchange)?;
+    Ok(attestation::verify(
+        attestation::Evidence {
+            certificate: &certificate,
+            issuer: issuer.der(),
+            slot,
+            serial,
+            target: target.fields(),
+            signer: &signer,
+        },
+        root,
+        now_unix,
+    )?)
 }
 
 /// Read a slot's UTF-16 container name (3.1+; empty when unset).

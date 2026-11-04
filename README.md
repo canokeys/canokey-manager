@@ -15,7 +15,7 @@ formats (X.509, PKCS#8, otpauth://). Everything is pure Rust.
 | Device | `ckman list`, `ckman info` (incl. vendor chip ID where the firmware reports one) |
 | Configuration | `ckman config info` (incl. flash/applet storage and core commit on 3.1), `config nfc`, `config led`, `config ndef-read-only`, `config webusb-landing`, `config admin-pin change/status` (device Admin PIN), `config pass` (touch-to-type slots), `config ndef read/write`, `config keyboard` (layout/keymap), `config sm2` / `sm2 set` (3.0+), `config reset` |
 | OATH | `ckman oath info`, `oath serial`, `oath challenge-response` (KeePassXC-style HMAC-SHA1 via a PASS slot), `oath reset`, `oath access change/remember/forget`, `oath accounts add/uri/list/code/rename/delete/set-default` |
-| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/generate-batch/import/attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name`, `piv sign/decrypt/derive/decapsulate/agree-sm2` (raw private-key operations), `piv random` (device RNG), `piv logout` |
+| PIV | `ckman piv info`, `piv reset`, `piv access …` (PIN/PUK/management key, retries, unblock), `piv keys generate/generate-batch/import/attest/verify-attest/info/export/move/delete`, `piv certificates import/export/generate/request/delete`, `piv objects export/import/name`, `piv sign/decrypt/derive/decapsulate/agree-sm2` (raw private-key operations), `piv random` (device RNG), `piv logout` |
 | OpenPGP | `ckman openpgp info` (incl. cardholder data), `openpgp reset`, `openpgp access …` (PIN/admin PIN/reset code, retries, signature policy, touch cache time), `openpgp cardholder set-name/set-login/set-language/set-sex/set-url`, `openpgp keys info/generate/import/export/set-touch`, `openpgp certificates import/export/delete` |
 | FIDO2 | `ckman fido info`, `fido reset`, `fido touch-test`, `fido access set-pin/change-pin/set-min-length/force-change/verify-pin`, `fido config toggle-always-uv/enable-long-touch-for-reset`, `fido credentials list/update-user/delete`, `fido blobs read/write` |
 | Shell | `ckman completions <bash\|zsh\|fish\|powershell>` (stdout) |
@@ -38,6 +38,40 @@ is the firmware's physical allocation minus the attributed payloads; it
 includes metadata, block slack, copy-on-write overhead and unassigned data.
 These figures do not measure how much space deleting an applet would reclaim.
 See [the storage accounting audit](docs/storage-accounting.md) for details.
+
+PIV firmware 3.1.x exposes the F9 attestation signer through `piv info` and
+`piv keys info f9`. The overview reports key and certificate presence separately;
+certificate details alone do not imply trust. Older firmware skips F9 in the
+overview and rejects an explicit F9 query.
+
+```sh
+ckman piv keys verify-attest 9a
+ckman piv keys verify-attest 9a --ca custom-root.pem
+```
+
+`verify-attest` requests a fresh certificate for an ordinary device-generated
+key and checks the fixed chain **target -> F9 signer -> trusted root**. It checks
+signatures, validity, CA constraints, path length, KeyUsage when present, duplicate
+extensions and unsupported critical extensions. It also matches the signed
+public key, slot, device serial and PIN/touch policy against observations from
+the same exclusive device connection, and matches F9's public key to its issuer
+certificate. Only complete verification returns exit code 0. No PIN, management
+key or target private-key operation is required; imported keys cannot be attested.
+
+The default trust anchor is the bundled **CanoKey PIV Root CA No. 1** from the
+[official certificate publication](https://docs.canokeys.org/attestation/), with
+DER SHA-256 fingerprint
+`2EB382E5EC235661F926C23D25BA92227BD6B9D5D354131177547368ABEA681C`.
+`--ca` replaces it with exactly one independently trusted PEM/DER P-256 root;
+PEM bundles, system roots and network retrieval are not used. Both chain signers
+must use P-256/SHA-256; the target key can use any firmware-attestable algorithm
+whose public key metadata is supported, including ML-DSA-65. Certificate expiry
+uses the host's current UTC time. Missing evidence, binding mismatches and
+untrusted chains are errors, even if a certificate's signature alone is valid.
+
+This verifies the device-generated-key statement under the selected root's trust
+policy. The protocol has no challenge binding; no anti-replay or revocation check
+is performed. Offline file verification and F9 provisioning are not included.
 
 ## Install
 

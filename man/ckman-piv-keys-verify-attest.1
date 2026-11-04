@@ -1,0 +1,21 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-keys-verify-attest 1  ckman 
+.SH NAME
+ckman\-piv\-keys\-verify\-attest \- Verify fresh attestation against a trusted root and the live device
+.SH SYNOPSIS
+\fBckman\-piv\-keys\-verify\-attest\fR [\fB\-\-ca\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLOT\fR> 
+.SH DESCRIPTION
+Verify fresh attestation against a trusted root and the live device.
+.PP
+Checks the fixed target \-> F9 signer \-> root chain; no revocation or anti\-replay check is performed. No PIN or management key is required.
+.SH OPTIONS
+.TP
+\fB\-\-ca\fR \fI<FILE>\fR
+One P\-256 PEM/DER root certificate, replacing the built\-in CanoKey PIV Root CA No. 1. No system roots or network lookup are used
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISLOT\fR>
+Ordinary PIV slot containing a key generated on the device

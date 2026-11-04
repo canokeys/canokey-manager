@@ -290,11 +290,24 @@ pub enum KeysCommand {
         #[arg(long, value_enum, default_value_t = EncodingArg::Pem)]
         format: EncodingArg,
     },
-    /// Show metadata about the key in a slot.
-    Info {
-        /// PIV slot.
+    /// Verify fresh attestation against a trusted root and the live device.
+    ///
+    /// Checks the fixed target -> F9 signer -> root chain; no revocation or
+    /// anti-replay check is performed. No PIN or management key is required.
+    VerifyAttest {
+        /// Ordinary PIV slot containing a key generated on the device.
         #[arg(value_parser = parse_slot)]
         slot: Slot,
+        /// One P-256 PEM/DER root certificate, replacing the built-in CanoKey
+        /// PIV Root CA No. 1. No system roots or network lookup are used.
+        #[arg(long, value_name = "FILE")]
+        ca: Option<std::path::PathBuf>,
+    },
+    /// Show metadata about an ordinary key or the F9 attestation signer.
+    Info {
+        /// PIV slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_key_info_reference)]
+        slot: KeyInfoReference,
     },
     /// Export the public key of a slot.
     Export {
@@ -927,6 +940,20 @@ fn logout(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
 
 // --- shared plumbing ---------------------------------------------------------
 
+/// Read-only metadata reference; F9 is deliberately not an ordinary Slot.
+#[derive(Clone, Copy, Debug)]
+pub enum KeyInfoReference {
+    Key(Slot),
+    Attestation,
+}
+
+fn parse_key_info_reference(text: &str) -> Result<KeyInfoReference, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "f9" | "att" | "attestation" => Ok(KeyInfoReference::Attestation),
+        _ => parse_slot(text).map(KeyInfoReference::Key),
+    }
+}
+
 fn parse_slot(text: &str) -> Result<Slot, String> {
     match text.to_ascii_lowercase().as_str() {
         "9a" => Ok(Slot::Authentication),
@@ -1002,6 +1029,7 @@ fn describe_piv(error: &PivError<io::Error>) -> String {
         ),
         PivError::X509(error) => format!("{error}"),
         PivError::Key(error) => format!("{error}"),
+        PivError::Attestation(error) => error.to_string(),
         PivError::Drive(error) => describe_piv_drive(error),
     }
 }
@@ -1485,27 +1513,70 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         }
         if let Some(certificate) = &certificate {
-            match canokey::x509::parse_der(certificate.der(), Default::default()) {
-                Ok(info) => {
-                    println!("  Subject DN:         {}", info.subject.display);
-                    println!("  Issuer DN:          {}", info.issuer.display);
-                    println!("  Serial:             {}", hex_encode(&info.serial_number));
-                    println!(
-                        "  Fingerprint (SHA-256): {}",
-                        hex_encode(&info.sha256_fingerprint())
-                    );
-                    println!(
-                        "  Not before:         {}",
-                        certificate_time(info.validity.not_before_unix)
-                    );
-                    println!(
-                        "  Not after:          {}",
-                        certificate_time(info.validity.not_after_unix)
-                    );
-                }
-                Err(_) => println!("  Error: failed to parse certificate"),
-            }
+            print_certificate(certificate);
         }
+    }
+    if session
+        .profile()
+        .capability(canokey::compatibility::Capability::Attestation)
+        .support
+        == canokey::compatibility::Support::Supported
+    {
+        attestation_info(&mut session)?;
+    }
+    Ok(())
+}
+
+fn print_certificate(certificate: &piv::Certificate) {
+    match canokey::x509::parse_der(certificate.der(), Default::default()) {
+        Ok(info) => {
+            println!("  Subject DN:         {}", info.subject.display);
+            println!("  Issuer DN:          {}", info.issuer.display);
+            println!("  Serial:             {}", hex_encode(&info.serial_number));
+            println!(
+                "  Fingerprint (SHA-256): {}",
+                hex_encode(&info.sha256_fingerprint())
+            );
+            println!(
+                "  Not before:         {}",
+                certificate_time(info.validity.not_before_unix)
+            );
+            println!(
+                "  Not after:          {}",
+                certificate_time(info.validity.not_after_unix)
+            );
+        }
+        Err(_) => println!("  Error: failed to parse certificate"),
+    }
+}
+
+fn attestation_info(session: &mut PivSession) -> CliResult<()> {
+    let key = optional_piv(session.run_typed(piv::attestation_metadata))?;
+    let certificate = optional_piv(session.run_typed(piv::attestation_certificate))?;
+    println!("Slot   f9 (Attestation):");
+    println!(
+        "  State:              {}",
+        match (key.is_some(), certificate.is_some()) {
+            (true, true) => "key and certificate present (trust not checked)",
+            (true, false) => "key only; certificate not configured",
+            (false, true) => "certificate only; key not configured",
+            (false, false) => "not configured",
+        }
+    );
+    if let Some(fields) = key {
+        println!(
+            "  Private key type: {}",
+            fields
+                .algorithm_id
+                .and_then(|id| session_algorithm_name(session.profile(), id))
+                .unwrap_or("unknown")
+        );
+        if let Some(origin) = fields.origin {
+            println!("  Origin:             {origin:?}");
+        }
+    }
+    if let Some(certificate) = certificate {
+        print_certificate(&certificate);
     }
     Ok(())
 }
@@ -1962,17 +2033,56 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             eprintln!("Attestation certificate written to {certificate}.");
             Ok(())
         }
+        KeysCommand::VerifyAttest { slot, ca } => {
+            let root = match ca {
+                Some(path) => {
+                    let mut bytes = Vec::new();
+                    std::fs::File::open(path)?
+                        .take((piv::attestation::MAX_CERTIFICATE_BYTES * 2 + 1) as u64)
+                        .read_to_end(&mut bytes)?;
+                    piv::attestation::decode_root(&bytes)?
+                }
+                None => piv::attestation::decode_root(piv::attestation::CANOKEY_PIV_ROOT)?,
+            };
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            let mut session = PivSession::connect(device, reader)?;
+            let verified = session.run(|profile, exchange| {
+                piv::verify_attestation(profile, *slot, &root, now, exchange)
+            })?;
+            println!("Slot:         {}", slot_name(*slot));
+            println!("Signature:    verified");
+            println!("Device/key:   matched");
+            println!(
+                "Trust:        {}",
+                if ca.is_some() {
+                    "custom root"
+                } else {
+                    "CanoKey PIV Root CA No. 1"
+                }
+            );
+            println!("Root SHA-256: {}", hex_encode(&verified.root_fingerprint));
+            Ok(())
+        }
         KeysCommand::Info { slot } => {
             let mut session = PivSession::connect(device, reader)?;
-            let metadata = session.run(|profile, exchange| {
-                piv::metadata(
-                    profile,
-                    MetadataReference::Key(*slot),
-                    canokey::piv::Access::None,
-                    exchange,
-                )
-            })?;
-            let fields = metadata.fields();
+            let fields = match slot {
+                KeyInfoReference::Key(slot) => session
+                    .run(|profile, exchange| {
+                        piv::metadata(
+                            profile,
+                            MetadataReference::Key(*slot),
+                            canokey::piv::Access::None,
+                            exchange,
+                        )
+                    })
+                    .map(|metadata| match metadata {
+                        Metadata::Key { fields, .. }
+                        | Metadata::Pin(fields)
+                        | Metadata::Puk(fields)
+                        | Metadata::Management(fields) => fields,
+                    })?,
+                KeyInfoReference::Attestation => session.run(piv::attestation_metadata)?,
+            };
             if let Some(id) = fields.algorithm_id {
                 let name = session_algorithm_name(session.profile(), id).unwrap_or("unknown");
                 println!("Algorithm:    {name} (wire id 0x{id:02x})");
@@ -2565,6 +2675,43 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
 mod tests {
     use super::*;
     use canokey::compatibility::{DeviceObservations, PivApplicationVersion};
+
+    #[test]
+    fn f9_is_only_accepted_by_read_only_metadata_parser() {
+        for spelling in ["f9", "F9", "att", "attestation"] {
+            assert!(matches!(
+                parse_key_info_reference(spelling),
+                Ok(KeyInfoReference::Attestation)
+            ));
+            assert!(parse_slot(spelling).is_err());
+        }
+        assert!(matches!(
+            parse_key_info_reference("9a"),
+            Ok(KeyInfoReference::Key(Slot::Authentication))
+        ));
+    }
+
+    #[test]
+    fn invalid_attestation_root_is_rejected_before_device_access() {
+        let directory = super::super::output::tests::TestDirectory::new();
+        let path = directory.0.join("root.pem");
+        std::fs::write(&path, b"invalid root").unwrap();
+        let error = keys(
+            None,
+            Some("nonexistent-audit-reader"),
+            &KeysCommand::VerifyAttest {
+                slot: Slot::Authentication,
+                ca: Some(path),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<piv::attestation::AttestationError>()
+                .is_some(),
+            "{error}"
+        );
+    }
 
     #[test]
     fn secret_destinations_are_checked_before_device_access() {
