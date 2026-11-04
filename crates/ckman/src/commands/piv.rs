@@ -243,9 +243,9 @@ pub enum KeysCommand {
     ///
     /// Occupied slots require explicit overwrite confirmation (default: no).
     Generate {
-        /// PIV slot (9a, 9c, 9d, 9e, or retired 82-95).
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV slot (9a, 9c, 9d, 9e, 82-95, or f9; f9 requires ecc-p256).
+        #[arg(value_parser = parse_key_reference)]
+        slot: KeyReference,
         /// File to write the public key to ('-' for stdout).
         public_key_output: String,
         /// Algorithm to use in key generation.
@@ -268,9 +268,9 @@ pub enum KeysCommand {
     ///
     /// Occupied slots require explicit overwrite confirmation (default: no).
     Import {
-        /// PIV slot.
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_key_reference)]
+        slot: KeyReference,
         /// File containing the private key ('-' for stdin).
         private_key: String,
         /// Password used to decrypt the private key.
@@ -312,21 +312,21 @@ pub enum KeysCommand {
     /// Show metadata about an ordinary key or the F9 attestation signer.
     Info {
         /// PIV slot (9a, 9c, 9d, 9e, 82-95, or f9).
-        #[arg(value_parser = parse_key_info_reference)]
-        slot: KeyInfoReference,
+        #[arg(value_parser = parse_key_reference)]
+        slot: KeyReference,
     },
     /// Export the public key of a slot.
     Export {
-        /// PIV slot.
-        #[arg(value_parser = parse_slot)]
-        slot: Slot,
+        /// PIV slot (9a, 9c, 9d, 9e, 82-95, or f9).
+        #[arg(value_parser = parse_key_reference)]
+        slot: KeyReference,
         /// File to write the public key to ('-' for stdout).
         public_key_output: String,
         /// Output format.
         #[arg(long, value_enum, default_value_t = EncodingArg::Pem)]
         format: EncodingArg,
         /// Verify that the private key matches by a test signature (RSA,
-        /// ECCP256 or ECCP384; needs PIN).
+        /// ECCP256 or ECCP384; ordinary slots only, needs PIN).
         #[arg(long)]
         verify: bool,
         #[command(flatten)]
@@ -954,11 +954,45 @@ fn logout(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
 
 // --- shared plumbing ---------------------------------------------------------
 
-/// Read-only metadata reference; F9 is deliberately not an ordinary Slot.
-#[derive(Clone, Copy, Debug)]
-pub enum KeyInfoReference {
+/// Key reference for metadata and provisioning; F9 remains outside ordinary Slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyReference {
     Key(Slot),
     Attestation,
+}
+
+impl From<Slot> for KeyReference {
+    fn from(slot: Slot) -> Self {
+        Self::Key(slot)
+    }
+}
+
+impl KeyReference {
+    fn certificate(self) -> piv::CertificateReference {
+        match self {
+            Self::Key(slot) => slot.into(),
+            Self::Attestation => piv::CertificateReference::Attestation,
+        }
+    }
+    fn name(self) -> String {
+        certificate_slot_name(self.certificate())
+    }
+}
+
+fn into_metadata_fields(metadata: Metadata) -> canokey::piv::MetadataFields {
+    match metadata {
+        Metadata::Key { fields, .. }
+        | Metadata::Pin(fields)
+        | Metadata::Puk(fields)
+        | Metadata::Management(fields) => fields,
+    }
+}
+
+fn validate_key_provisioning(reference: KeyReference, algorithm: Algorithm) -> CliResult<()> {
+    if reference == KeyReference::Attestation && algorithm != Algorithm::EccP256 {
+        return Err("the F9 attestation key only supports P-256; use --algorithm ecc-p256".into());
+    }
+    Ok(())
 }
 
 fn parse_certificate_slot(text: &str) -> Result<piv::CertificateReference, String> {
@@ -975,10 +1009,10 @@ fn certificate_slot_name(reference: piv::CertificateReference) -> String {
     }
 }
 
-fn parse_key_info_reference(text: &str) -> Result<KeyInfoReference, String> {
+fn parse_key_reference(text: &str) -> Result<KeyReference, String> {
     match text.to_ascii_lowercase().as_str() {
-        "f9" | "att" | "attestation" => Ok(KeyInfoReference::Attestation),
-        _ => parse_slot(text).map(KeyInfoReference::Key),
+        "f9" | "att" | "attestation" => Ok(KeyReference::Attestation),
+        _ => parse_slot(text).map(KeyReference::Key),
     }
 }
 
@@ -1151,8 +1185,13 @@ impl PivSession {
         Ok(Self { target })
     }
 
-    fn confirm_key_replacement(&mut self, slot: Slot) -> CliResult<()> {
-        self.confirm_key_replacements(&[slot])
+    fn confirm_key_replacement(&mut self, slot: KeyReference) -> CliResult<()> {
+        overwrite::key(
+            &self.target.profile,
+            slot,
+            &mut |command| self.target.connection.exchange(command),
+            &mut confirm,
+        )
     }
 
     fn confirm_key_replacements(&mut self, slots: &[Slot]) -> CliResult<()> {
@@ -1952,6 +1991,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             format,
             mgmt,
         } => {
+            validate_key_provisioning(*slot, key_algorithm(*algorithm))?;
             let mut output = if public_key_output == "-" {
                 None
             } else {
@@ -1963,11 +2003,22 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             session.confirm_key_replacement(*slot)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
-            let mut parameters = KeyParameters::new(*slot, key_algorithm(*algorithm));
-            parameters.pin_policy = pin_policy_of(*pin_policy);
-            parameters.touch_policy = touch_policy_of(*touch_policy);
-            let public = session.run(|profile, exchange| {
-                piv::generate_key(profile, parameters, management.access()?, exchange)
+            let public = session.run(|profile, exchange| match slot {
+                KeyReference::Key(slot) => {
+                    let mut parameters = KeyParameters::new(*slot, key_algorithm(*algorithm));
+                    parameters.pin_policy = pin_policy_of(*pin_policy);
+                    parameters.touch_policy = touch_policy_of(*touch_policy);
+                    piv::generate_key(profile, parameters, management.access()?, exchange)
+                }
+                KeyReference::Attestation => piv::generate_attestation_key(
+                    profile,
+                    piv::AttestationKeyParameters {
+                        pin_policy: pin_policy_of(*pin_policy),
+                        touch_policy: touch_policy_of(*touch_policy),
+                    },
+                    management.access()?,
+                    exchange,
+                ),
             })?;
             let der = public
                 .to_spki_der()
@@ -1982,7 +2033,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             }
             eprintln!(
                 "Private key generated in slot {}, public key written to {public_key_output}.",
-                slot_name(*slot)
+                slot.name()
             );
             Ok(())
         }
@@ -2054,6 +2105,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         } => {
             let data = super::input::read_secret(private_key)?;
             let imported = super::parse_private_key_input(&data, password)?;
+            validate_key_provisioning(*slot, imported.algorithm)?;
             let material = imported
                 .piv_material()
                 .map_err(|error| format!("{error}"))?;
@@ -2061,19 +2113,31 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             session.confirm_key_replacement(*slot)?;
             let management =
                 session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
-            let mut parameters = KeyParameters::new(*slot, imported.algorithm);
-            parameters.pin_policy = pin_policy_of(*pin_policy);
-            parameters.touch_policy = touch_policy_of(*touch_policy);
-            session.run(|profile, exchange| {
-                piv::import_key(
+            session.run(|profile, exchange| match slot {
+                KeyReference::Key(slot) => {
+                    let mut parameters = KeyParameters::new(*slot, imported.algorithm);
+                    parameters.pin_policy = pin_policy_of(*pin_policy);
+                    parameters.touch_policy = touch_policy_of(*touch_policy);
+                    piv::import_key(
+                        profile,
+                        parameters,
+                        material,
+                        management.access()?,
+                        exchange,
+                    )
+                }
+                KeyReference::Attestation => piv::import_attestation_key(
                     profile,
-                    parameters,
+                    piv::AttestationKeyParameters {
+                        pin_policy: pin_policy_of(*pin_policy),
+                        touch_policy: touch_policy_of(*touch_policy),
+                    },
                     material,
                     management.access()?,
                     exchange,
-                )
+                ),
             })?;
-            println!("Private key imported in slot {}.", slot_name(*slot));
+            println!("Private key imported in slot {}.", slot.name());
             Ok(())
         }
         KeysCommand::Attest {
@@ -2124,7 +2188,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
         KeysCommand::Info { slot } => {
             let mut session = PivSession::connect(device, reader)?;
             let fields = match slot {
-                KeyInfoReference::Key(slot) => session
+                KeyReference::Key(slot) => session
                     .run(|profile, exchange| {
                         piv::metadata(
                             profile,
@@ -2139,7 +2203,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                         | Metadata::Puk(fields)
                         | Metadata::Management(fields) => fields,
                     })?,
-                KeyInfoReference::Attestation => session.run(piv::attestation_metadata)?,
+                KeyReference::Attestation => session.run(piv::attestation_metadata)?,
             };
             if let Some(id) = fields.algorithm_id {
                 let name = session_algorithm_name(session.profile(), id).unwrap_or("unknown");
@@ -2170,16 +2234,20 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
             verify,
             pin,
         } => {
+            if *slot == KeyReference::Attestation && *verify {
+                return Err("--verify is only supported for ordinary PIV key slots".into());
+            }
             let mut session = PivSession::connect(device, reader)?;
-            let metadata = session.run(|profile, exchange| {
-                piv::metadata(
+            let fields = session.run(|profile, exchange| match slot {
+                KeyReference::Key(slot) => piv::metadata(
                     profile,
                     MetadataReference::Key(*slot),
                     canokey::piv::Access::None,
                     exchange,
                 )
+                .map(into_metadata_fields),
+                KeyReference::Attestation => piv::attestation_metadata(profile, exchange),
             })?;
-            let fields = metadata.fields();
             let public = fields
                 .public_key
                 .clone()
@@ -2191,7 +2259,7 @@ fn keys(device: Option<u32>, reader: Option<&str>, command: &KeysCommand) -> Cli
                 EncodingArg::Pem => x509::pem_encode("PUBLIC KEY", &der),
                 EncodingArg::Der => der,
             };
-            if *verify {
+            if let (true, KeyReference::Key(slot)) = (*verify, slot) {
                 require_export_verification(public.algorithm())?;
                 let pin = session.resolve_pin(super::secret_str(&pin.pin), "Enter PIN")?;
                 let algorithm = public.algorithm();
@@ -2755,11 +2823,11 @@ mod tests {
     use canokey::compatibility::{DeviceObservations, PivApplicationVersion};
 
     #[test]
-    fn f9_is_accepted_for_metadata_and_certificate_storage_only() {
+    fn f9_is_accepted_by_dedicated_key_and_certificate_references() {
         for spelling in ["f9", "F9", "att", "attestation"] {
             assert!(matches!(
-                parse_key_info_reference(spelling),
-                Ok(KeyInfoReference::Attestation)
+                parse_key_reference(spelling),
+                Ok(KeyReference::Attestation)
             ));
             assert_eq!(
                 parse_certificate_slot(spelling).unwrap(),
@@ -2768,24 +2836,32 @@ mod tests {
             assert!(parse_slot(spelling).is_err());
         }
         assert!(matches!(
-            parse_key_info_reference("9a"),
-            Ok(KeyInfoReference::Key(Slot::Authentication))
+            parse_key_reference("9a"),
+            Ok(KeyReference::Key(Slot::Authentication))
         ));
     }
 
     #[test]
-    fn f9_certificate_commands_parse_without_enabling_private_key_operations() {
+    fn f9_provisioning_and_certificate_commands_parse_without_enabling_private_operations() {
         use clap::Parser;
         for arguments in [
             vec!["ckman", "piv", "certificates", "import", "f9", "cert.pem"],
             vec!["ckman", "piv", "certificates", "export", "f9", "cert.pem"],
             vec!["ckman", "piv", "certificates", "delete", "f9"],
+            vec![
+                "ckman", "piv", "keys", "generate", "f9", "pub.pem", "-a", "ecc-p256",
+            ],
+            vec!["ckman", "piv", "keys", "import", "f9", "key.pem"],
+            vec!["ckman", "piv", "keys", "export", "f9", "pub.pem"],
         ] {
             assert!(crate::cli::Cli::try_parse_from(arguments).is_ok());
         }
         for arguments in [
-            vec!["ckman", "piv", "keys", "generate", "f9", "pub.pem"],
-            vec!["ckman", "piv", "keys", "import", "f9", "key.pem"],
+            vec!["ckman", "piv", "keys", "delete", "f9"],
+            vec!["ckman", "piv", "keys", "move", "f9", "9a"],
+            vec!["ckman", "piv", "keys", "move", "9a", "f9"],
+            vec!["ckman", "piv", "keys", "generate-batch", "--slots", "9a,f9"],
+            vec!["ckman", "piv", "sign", "f9", "message", "signature"],
             vec![
                 "ckman",
                 "piv",
@@ -2809,6 +2885,37 @@ mod tests {
         ] {
             assert!(crate::cli::Cli::try_parse_from(arguments).is_err());
         }
+    }
+
+    #[test]
+    fn f9_invalid_algorithm_and_private_verification_fail_before_device_access() {
+        let mgmt = MgmtArgs {
+            management_key: None,
+        };
+        let command = KeysCommand::Generate {
+            slot: KeyReference::Attestation,
+            public_key_output: "-".to_string(),
+            algorithm: KeyAlgorithmArg::Rsa2048,
+            pin_policy: None,
+            touch_policy: None,
+            format: EncodingArg::Pem,
+            mgmt,
+        };
+        assert!(keys(None, Some("nonexistent-audit-reader"), &command)
+            .unwrap_err()
+            .to_string()
+            .contains("only supports P-256"));
+        let command = KeysCommand::Export {
+            slot: KeyReference::Attestation,
+            public_key_output: "-".to_string(),
+            format: EncodingArg::Pem,
+            verify: true,
+            pin: PinArgs { pin: None },
+        };
+        assert!(keys(None, Some("nonexistent-audit-reader"), &command)
+            .unwrap_err()
+            .to_string()
+            .contains("ordinary PIV key slots"));
     }
 
     #[test]
@@ -3014,7 +3121,7 @@ mod tests {
         let path = directory.0.join("rsa-e3.der");
         std::fs::write(&path, private.to_pkcs8_der().unwrap().as_bytes()).unwrap();
         let command = KeysCommand::Import {
-            slot: Slot::Authentication,
+            slot: KeyReference::Key(Slot::Authentication),
             private_key: path.display().to_string(),
             password: None,
             pin_policy: None,
@@ -3037,7 +3144,7 @@ mod tests {
             directory.0.join("missing").join("key.pem"),
         ] {
             let command = KeysCommand::Generate {
-                slot: Slot::Authentication,
+                slot: KeyReference::Key(Slot::Authentication),
                 public_key_output: output.display().to_string(),
                 algorithm: KeyAlgorithmArg::EccP256,
                 pin_policy: None,

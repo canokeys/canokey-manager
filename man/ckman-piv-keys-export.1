@@ -23,7 +23,7 @@ der
 .RE
 .TP
 \fB\-\-verify\fR
-Verify that the private key matches by a test signature (RSA, ECCP256 or ECCP384; needs PIN)
+Verify that the private key matches by a test signature (RSA, ECCP256 or ECCP384; ordinary slots only, needs PIN)
 .TP
 \fB\-P\fR, \fB\-\-pin\fR \fI<PIN>\fR
 PIN code (prompted when needed)
@@ -32,7 +32,7 @@ PIN code (prompted when needed)
 Print help
 .TP
 <\fISLOT\fR>
-PIV slot
+PIV slot (9a, 9c, 9d, 9e, 82\-95, or f9)
 .TP
 <\fIPUBLIC_KEY_OUTPUT\fR>
 File to write the public key to (\*(Aq\-\*(Aq for stdout)

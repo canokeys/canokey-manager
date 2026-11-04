@@ -1,5 +1,7 @@
 //! Inspect PIV slot contents and require explicit consent before replacement.
-use super::{certificate_slot_name, describe_piv, hex_encode, slot_name, CliResult};
+use super::{
+    certificate_slot_name, describe_piv, hex_encode, into_metadata_fields, CliResult, KeyReference,
+};
 use canokey::{DeviceProfile, ErrorKind, Phase};
 use ckman_core::piv::{
     self, CertificateReference, KeyOrigin, KnownOrUnknown, MetadataReference, Slot,
@@ -52,18 +54,22 @@ fn certificate_summary(bytes: &[u8]) -> String {
 
 pub(super) fn key(
     profile: &DeviceProfile,
-    slot: Slot,
+    reference: KeyReference,
     exchange: &mut Exchange<'_, io::Error>,
     ask: &mut impl FnMut(&str) -> CliResult<bool>,
 ) -> CliResult<()> {
-    let status = match piv::metadata(
-        profile,
-        MetadataReference::Key(slot),
-        piv::Access::None,
-        exchange,
-    ) {
-        Ok(metadata) => {
-            let fields = metadata.fields();
+    let metadata = match reference {
+        KeyReference::Key(slot) => piv::metadata(
+            profile,
+            MetadataReference::Key(slot),
+            piv::Access::None,
+            exchange,
+        )
+        .map(into_metadata_fields),
+        KeyReference::Attestation => piv::attestation_metadata(profile, exchange),
+    };
+    let status = match metadata {
+        Ok(fields) => {
             if fields.origin == Some(KnownOrUnknown::Known(KeyOrigin::NotPresent))
                 && fields.public_key.is_none()
             {
@@ -82,20 +88,23 @@ pub(super) fn key(
                     .unwrap_or_default();
                 Some(format!(
                     "Slot {} already contains a private key.{fingerprint}",
-                    slot_name(slot)
+                    reference.name()
                 ))
             }
         }
         Err(error) if missing(&error) => None,
-        Err(error) if unavailable(&error) => Some(format!(
-            "Cannot determine whether slot {} contains a private key on this firmware.",
-            slot_name(slot)
-        )),
+        Err(error) if reference != KeyReference::Attestation && unavailable(&error) => {
+            Some(format!(
+                "Cannot determine whether slot {} contains a private key on this firmware.",
+                reference.name()
+            ))
+        }
         Err(error) => return Err(describe_piv(&error).into()),
     };
     // A certificate-only slot is also occupied: installing a new key can leave
     // the retained certificate inconsistent, so show that content as well.
-    let certificate = match piv::read_certificate_object(profile, slot.into(), exchange) {
+    let certificate = match piv::read_certificate_object(profile, reference.certificate(), exchange)
+    {
         Ok(data) => Some(certificate_summary(data.as_bytes())),
         Err(error) if missing(&error) => None,
         Err(error) => return Err(describe_piv(&error).into()),
@@ -104,11 +113,14 @@ pub(super) fn key(
         return Ok(());
     }
     let mut prompt = status
-        .unwrap_or_else(|| format!("Slot {} already contains a certificate.", slot_name(slot)));
+        .unwrap_or_else(|| format!("Slot {} already contains a certificate.", reference.name()));
     if let Some(summary) = certificate {
         prompt.push_str(&format!(
             "\nExisting certificate (retained by this operation):\n{summary}"
         ));
+    }
+    if reference == KeyReference::Attestation {
+        prompt.push_str("\nReplacing the F9 signer changes attestation identity and trust. The existing certificate will be retained and may no longer match.");
     }
     prompt.push_str("\nReplacing a private key is irreversible. A retained certificate may no longer match. Replace this slot's private key?");
     approve(&prompt, ask)
@@ -122,7 +134,7 @@ pub(super) fn keys(
     ask: &mut impl FnMut(&str) -> CliResult<bool>,
 ) -> CliResult<()> {
     for slot in slots {
-        key(profile, *slot, exchange, ask)?;
+        key(profile, (*slot).into(), exchange, ask)?;
     }
     Ok(())
 }
@@ -240,6 +252,90 @@ mod tests {
     }
 
     #[test]
+    fn firmware_310_f9_existing_key_or_certificate_requires_explicit_consent() {
+        let get_metadata = &[0, 0xf7, 0, 0xf9];
+        let get_certificate = &[0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xff, 1, 0];
+        let mut metadata = vec![1, 1, 0x11, 3, 1, 1, 4, 0x43, 0x86, 0x41];
+        metadata.extend(super::super::hex_decode("046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5").unwrap());
+        metadata.extend(OK);
+        for (key_response, certificate_response) in [
+            (metadata.as_slice(), MISSING),
+            (MISSING, MALFORMED_CERT),
+            (metadata.as_slice(), MALFORMED_CERT),
+        ] {
+            for consent in [false, true] {
+                let mut script = Script::new(&[
+                    (SELECT, OK),
+                    (get_metadata, key_response),
+                    (SELECT, OK),
+                    (get_certificate, certificate_response),
+                ]);
+                let mut asked = 0;
+                let result = key(
+                    &profile("3.1.0"),
+                    KeyReference::Attestation,
+                    &mut |c| script.exchange(c),
+                    &mut |prompt| {
+                        asked += 1;
+                        assert!(prompt.contains("f9"));
+                        assert!(prompt.contains("attestation identity and trust"));
+                        if key_response == metadata.as_slice() {
+                            assert!(prompt.contains("Existing public key SHA-256:"));
+                        }
+                        Ok(consent)
+                    },
+                );
+                assert_eq!(result.is_ok(), consent);
+                assert_eq!(asked, 1);
+                assert!(script.0.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn firmware_310_empty_f9_does_not_prompt_and_legacy_f9_never_touches_card() {
+        let mut script = Script::new(&[
+            (SELECT, OK),
+            (&[0, 0xf7, 0, 0xf9], MISSING),
+            (SELECT, OK),
+            (
+                &[0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xff, 1, 0],
+                MISSING,
+            ),
+        ]);
+        key(
+            &profile("3.1.0"),
+            KeyReference::Attestation,
+            &mut |c| script.exchange(c),
+            &mut |_| panic!("empty F9 must not prompt"),
+        )
+        .unwrap();
+        assert!(script.0.is_empty());
+        assert!(key(
+            &profile("3.0.3"),
+            KeyReference::Attestation,
+            &mut |_| panic!("unsupported F9 must fail before I/O"),
+            &mut |_| panic!("unsupported F9 must not prompt")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn firmware_310_f9_metadata_failure_aborts_without_prompt_or_write() {
+        for response in [&[0x69, 0x82][..], &[1, 1, 0x11, 1, 1, 0x11, 0x90, 0][..]] {
+            let mut script = Script::new(&[(SELECT, OK), (&[0, 0xf7, 0, 0xf9], response)]);
+            assert!(key(
+                &profile("3.1.0"),
+                KeyReference::Attestation,
+                &mut |c| script.exchange(c),
+                &mut |_| panic!("failed F9 read must abort")
+            )
+            .is_err());
+            assert!(script.0.is_empty());
+        }
+    }
+
+    #[test]
     fn firmware_310_empty_key_and_certificate_do_not_prompt() {
         let mut script = Script::new(&[
             (SELECT, OK),
@@ -249,7 +345,7 @@ mod tests {
         ]);
         key(
             &profile("3.1.0"),
-            Slot::Authentication,
+            Slot::Authentication.into(),
             &mut |c| script.exchange(c),
             &mut |_| panic!("empty slot must not prompt"),
         )
@@ -273,7 +369,7 @@ mod tests {
             let mut prompts = Vec::new();
             let error = key(
                 &profile("3.1.0"),
-                Slot::Authentication,
+                Slot::Authentication.into(),
                 &mut |c| script.exchange(c),
                 &mut |prompt| {
                     prompts.push(prompt.to_string());
@@ -304,7 +400,7 @@ mod tests {
         let mut prompted = false;
         key(
             &profile("3.0.3"),
-            Slot::Authentication,
+            Slot::Authentication.into(),
             &mut |c| script.exchange(c),
             &mut |prompt| {
                 assert!(prompt.contains("Cannot determine"));
@@ -323,7 +419,7 @@ mod tests {
             let mut script = Script::new(&[(SELECT, OK), (METADATA, response)]);
             assert!(key(
                 &profile("3.1.0"),
-                Slot::Authentication,
+                Slot::Authentication.into(),
                 &mut |c| script.exchange(c),
                 &mut |_| panic!("read error must abort")
             )
@@ -332,7 +428,7 @@ mod tests {
         }
         assert!(key(
             &profile("3.1.0"),
-            Slot::Authentication,
+            Slot::Authentication.into(),
             &mut |_| Err(io::Error::new(io::ErrorKind::BrokenPipe, "disconnected")),
             &mut |_| panic!("transport failure must abort")
         )

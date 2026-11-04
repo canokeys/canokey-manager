@@ -24,10 +24,11 @@ use zeroize::Zeroizing;
 pub use crate::x509::HashAlgorithm;
 pub use canokey::piv::{sign_streaming, ContainerName, ContainerNameReference, StreamingSignInput};
 pub use canokey::piv::{
-    Access, Algorithm, Certificate, KeyOrigin, KeyParameters, KnownOrUnknown,
-    ManagementAuthentication, ManagementKey, ManagementKeyAlgorithm, ManagementTouchPolicy,
-    Metadata, MetadataReference, MutationResult, ObjectId, Pin, PinPolicy, PinStatus,
-    PrivateKeyMaterial, PublicKey, Puk, RetiredSlot, SignInput, Signature, Slot, TouchPolicy,
+    Access, Algorithm, AttestationKeyParameters, Certificate, KeyOrigin, KeyParameters,
+    KnownOrUnknown, ManagementAuthentication, ManagementKey, ManagementKeyAlgorithm,
+    ManagementTouchPolicy, Metadata, MetadataReference, MutationResult, ObjectId, Pin, PinPolicy,
+    PinStatus, PrivateKeyMaterial, PublicKey, Puk, RetiredSlot, SignInput, Signature, Slot,
+    TouchPolicy,
 };
 pub use canokey::piv::{BatchItem, BatchRequest, Sm2Agreement, Sm2AgreementInput, Sm2Role};
 
@@ -570,6 +571,38 @@ pub fn attest<E>(
     Ok(run(piv::attest(profile, slot, true, options()), exchange)?
         .as_bytes()
         .to_vec())
+}
+
+/// Generate the fixed P-256 F9 signer with explicit management access.
+/// The old key is replaced, certificates remain, and failures are never retried.
+/// Callers must obtain overwrite consent before invoking this operation.
+pub fn generate_attestation_key<E>(
+    profile: &DeviceProfile,
+    parameters: AttestationKeyParameters,
+    access: Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<PublicKey, PivError<E>> {
+    run(
+        piv::generate_attestation_key(profile, parameters, access, options()),
+        exchange,
+    )
+}
+
+/// Import P-256 private material into F9 with explicit management access.
+/// Owned material is wiped by the library. Certificates remain; callers must
+/// obtain overwrite consent. Unsupported firmware/material fails before I/O.
+pub fn import_attestation_key<E>(
+    profile: &DeviceProfile,
+    parameters: AttestationKeyParameters,
+    material: PrivateKeyMaterial,
+    access: Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    run(
+        piv::import_attestation_key(profile, parameters, material, access, options()),
+        exchange,
+    )?;
+    Ok(())
 }
 
 /// Read F9 signer metadata separately from ordinary private-operation slots.
@@ -1878,6 +1911,42 @@ mod tests {
         .unwrap();
         assert_eq!(certificate.der(), &[0x30, 0]);
         assert!(!certificate.was_compressed());
+        assert!(script.transcript.is_empty());
+    }
+
+    #[test]
+    fn firmware_310_f9_key_wrappers_generate_and_import_without_touching_certificates() {
+        let mut response = hex("7f49438641");
+        response.extend(hex(P256_POINT));
+        response.extend(OK);
+        let mut transcript = AES_AUTH.to_vec();
+        transcript.push((&[0, 0x47, 0, 0xf9, 5, 0xac, 3, 0x80, 1, 0x11], &response));
+        let mut script = Script::new(&transcript);
+        let public = generate_attestation_key(
+            &profile("3.1.0"),
+            AttestationKeyParameters::default(),
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
+        assert_eq!(public.algorithm(), Algorithm::EccP256);
+        assert!(script.transcript.is_empty());
+
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        let mut command = hex("00fe11f9220620");
+        command.extend(scalar);
+        let mut transcript = AES_AUTH.to_vec();
+        transcript.push((&command, OK));
+        let mut script = Script::new(&transcript);
+        import_attestation_key(
+            &profile("3.1.0"),
+            AttestationKeyParameters::default(),
+            PrivateKeyMaterial::ec_scalar(Algorithm::EccP256, &scalar).unwrap(),
+            aes_access(),
+            &mut |c| script.exchange(c),
+        )
+        .unwrap();
         assert!(script.transcript.is_empty());
     }
 

@@ -46,8 +46,14 @@ overview and rejects an explicit F9 query.
 
 `piv certificates import`, `export` and `delete` accept `f9` on 3.1.x firmware.
 Certificate import checks the public key against slot metadata when available;
-changing the F9 certificate affects attestation trust. Certificate generation
-and CSR requests remain limited to ordinary key slots.
+changing the F9 certificate affects attestation trust.
+
+The signer supports `piv keys generate f9 --algorithm ecc-p256 PUBLIC-KEY`,
+`piv keys import f9 PRIVATE-KEY` and `piv keys export f9 PUBLIC-KEY`.
+F9 only supports P-256; replacing its key requires explicit consent and retains
+the existing certificate, which may no longer match. Key move/delete, general
+private operations, certificate generation and CSR requests remain limited to
+ordinary key slots.
 
 PIV key generation/import and certificate import/generation ask for explicit
 confirmation before replacing an occupied slot. The prompt defaults to no;
@@ -84,7 +90,7 @@ untrusted chains are errors, even if a certificate's signature alone is valid.
 
 This verifies the device-generated-key statement under the selected root's trust
 policy. The protocol has no challenge binding; no anti-replay or revocation check
-is performed. Offline file verification and F9 private-key provisioning are not included.
+is performed. Offline file verification is not included.
 
 ## Install
 
