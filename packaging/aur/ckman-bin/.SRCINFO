@@ -1,6 +1,6 @@
 pkgbase = ckman-bin
 	pkgdesc = CanoKey management CLI (device config, OATH, PIV, OpenPGP, FIDO2)
-	pkgver = 0.1.5
+	pkgver = 0.1.6
 	pkgrel = 1
 	url = https://github.com/canokeys/canokey-manager
 	arch = x86_64
@@ -11,9 +11,9 @@ pkgbase = ckman-bin
 	depends = ccid
 	provides = ckman
 	conflicts = ckman
-	source_x86_64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.5/ckman-x86_64-unknown-linux-gnu.tar.xz
-	sha256sums_x86_64 = 75f21d2aa737e73b3cd3adb963176d425b18662dc5d273acbc89cd3163e67591
-	source_aarch64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.5/ckman-aarch64-unknown-linux-gnu.tar.xz
-	sha256sums_aarch64 = c1f2509a216d858c31b2ecd8348c4d84d98a231a57a6fd3e028f0d738da5c8ed
+	source_x86_64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.6/ckman-x86_64-unknown-linux-gnu.tar.xz
+	sha256sums_x86_64 = b11c297e344dfbe6d2f37cb4f46f554e71888f1f8e2c47a3abb3915a4f132b01
+	source_aarch64 = https://github.com/canokeys/canokey-manager/releases/download/v0.1.6/ckman-aarch64-unknown-linux-gnu.tar.xz
+	sha256sums_aarch64 = 97a2314516e15a32d165db26cefbc1137ce9022af2ba476d00b5979bddf8e9bd
 
 pkgname = ckman-bin
