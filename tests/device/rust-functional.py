@@ -227,7 +227,11 @@ class Suite:
         self.run('PIV key move', 'piv', 'keys', 'move', '9a', '95', *management)
         self.run('PIV moved source absent', 'piv', 'keys', 'info', '9a', failure='not found')
         self.run('PIV certificate retained after move', 'piv', 'certificates', 'export', '9a', cert_file)
-        self.run('PIV certificate delete', 'piv', 'certificates', 'delete', '9a', *management)
+        self.run('PIV certificate delete declined', 'piv', 'certificates', 'delete', '9a',
+                 *management, input=b'no\n', failure='Cancelled')
+        self.run('PIV declined deletion retained certificate', 'piv', 'certificates', 'export', '9a', cert_file)
+        assert x509.load_pem_x509_certificate(cert_file.read_bytes()).fingerprint(hashes.SHA256()) == cert.fingerprint(hashes.SHA256())
+        self.run('PIV certificate delete', 'piv', 'certificates', 'delete', '9a', *management, input=b'yes\n')
         self.run('PIV deleted certificate absent', 'piv', 'certificates', 'export', '9a', cert_file, failure='not found')
         self.run('PIV moved key retained', 'piv', 'keys', 'info', '95')
         self.run('PIV moved key delete', 'piv', 'keys', 'delete', '95', *management)
@@ -238,7 +242,7 @@ class Suite:
             private_file = self.work / f'{algorithm}.pem'
             private_file.write_bytes(key.private_bytes(serialization.Encoding.PEM,
                                       serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-            self.run(f'PIV {algorithm} import', 'piv', 'keys', 'import', '9c', private_file, *management)
+            self.run(f'PIV {algorithm} import', 'piv', 'keys', 'import', '9c', private_file, *management, input=b'yes\n')
             message = b'ckman PIV independent signature'
             message_file, signature_file = self.work / 'message', self.work / 'signature'
             message_file.write_bytes(message)
@@ -266,7 +270,7 @@ class Suite:
         for name, key, data, password in formats:
             source = self.work / 'format-key'
             source.write_bytes(data)
-            self.run(f'PIV {name} import', 'piv', 'keys', 'import', '9c', source, *password, *management)
+            self.run(f'PIV {name} import', 'piv', 'keys', 'import', '9c', source, *password, *management, input=b'yes\n')
             self.run(f'PIV {name} public export', 'piv', 'keys', 'export', '9c', exported)
             actual = serialization.load_pem_public_key(exported.read_bytes())
             assert actual.public_numbers() == key.public_key().public_numbers()
