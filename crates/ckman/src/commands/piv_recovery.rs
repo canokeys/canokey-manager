@@ -103,6 +103,11 @@ impl ManagementKeyRecovery {
             .and_then(|_| sync_directory(self.path.parent().expect("absolute recovery path")))
         {
             eprintln!("WARNING: management key updated successfully, but recovery-file cleanup failed: {error}; check {}", self.path.display());
+        } else {
+            eprintln!(
+                "Temporary management key recovery file removed: {}",
+                self.path.display()
+            );
         }
         Ok(())
     }

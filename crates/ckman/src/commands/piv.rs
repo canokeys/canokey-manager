@@ -1934,7 +1934,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                 touch == piv::ManagementTouchPolicy::Always,
             )?;
             eprintln!(
-                "Management key recovery file saved at {}",
+                "Management key recovery file temporarily saved at {} (removed after a successful update)",
                 recovery.path().display()
             );
             recovery.run(|| {

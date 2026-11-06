@@ -4,6 +4,37 @@ use ckman_core::{admin, DriveError, Exchange};
 use ckman_transport::pcsc::Pcsc;
 use std::io;
 
+fn describe_warning(warning: &canokey::compatibility::CompatibilityWarning) -> Option<String> {
+    use canokey::compatibility::CompatibilityWarning;
+
+    let optional_field = |name| match name {
+        "algorithm_config" => "algorithm configuration",
+        "model" => "device model",
+        "serial" => "serial number",
+        other => other,
+    };
+    Some(match warning {
+        CompatibilityWarning::UnrecognizedFirmware => {
+            "Firmware version could not be recognized; mutating operations are disabled.".into()
+        }
+        CompatibilityWarning::LatestKnownFallback => {
+            "Firmware version is outside the known compatibility range; conservative compatibility settings are being used.".into()
+        }
+        CompatibilityWarning::DeclaredBaseVersion => {
+            // Build suffixes do not affect numeric version compatibility.
+            return None;
+        }
+        CompatibilityWarning::OptionalCommandUnsupported(name) => format!(
+            "Could not read {}: this optional query is not supported by the device.",
+            optional_field(*name)
+        ),
+        CompatibilityWarning::OptionalCommandNeedsAuthentication(name) => format!(
+            "Could not read {}: authentication is required. No credentials were tried during device discovery.",
+            optional_field(*name)
+        ),
+    })
+}
+
 // Older vendor implementations may omit this optional command or P1.
 // Only those explicit command-level rejections mean "unavailable".
 fn read_chip_id(
@@ -60,7 +91,9 @@ pub fn run(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         println!("PIV version:        {}.{}.{}", piv.0[0], piv.0[1], piv.0[2]);
     }
     for warning in target.profile.warnings() {
-        println!("Warning:            {warning:?}");
+        if let Some(message) = describe_warning(warning) {
+            println!("Warning:            {message}");
+        }
     }
     Ok(())
 }

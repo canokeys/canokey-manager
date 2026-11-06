@@ -16,6 +16,9 @@ pub enum ConfigCommand {
         state: NfcState,
     },
     /// Reset the device to factory defaults, erasing all applets and PINs.
+    ///
+    /// This is a full device reset and requires a blocked Admin PIN and a USB connection.
+    /// --force skips confirmation only; it does not bypass this requirement.
     Reset {
         /// Do not ask for confirmation.
         #[arg(long)]
@@ -276,7 +279,15 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
     admin::factory_reset(&target.profile, &mut |command| {
         target.connection.exchange(command)
     })
-    .map_err(|error| describe_drive_error(&error))?;
+    .map_err(|error| match &error {
+        ckman_core::DriveError::Protocol(protocol)
+            if protocol.phase == canokey::Phase::Command
+                && protocol.kind == canokey::ErrorKind::ConditionsNotSatisfied =>
+        {
+            "Full device reset refused: resetting all applets and PINs requires a blocked Admin PIN and a USB connection (NFC is not supported). Ensure the Admin PIN is blocked, connect via USB, then retry config reset. --force only skips confirmation; it does not bypass this requirement.".to_owned()
+        }
+        _ => describe_drive_error(&error),
+    })?;
     println!("Factory reset complete.");
     Ok(())
 }
