@@ -275,6 +275,55 @@ pub fn set_management_key<E>(
 
 // --- Objects and certificates ----------------------------------------------
 
+/// Replace the CHUID (5FC102) with an unsigned, non-federal identifier.
+/// Uses the interoperable FASC-N and 2030-01-01 expiry used by ykman;
+/// `guid` is the 16-byte cardholder identifier, without UUID text encoding.
+pub fn set_chuid<E>(
+    profile: &DeviceProfile,
+    guid: [u8; 16],
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    // SP 800-73 CHUID: FASC-N, GUID, expiration date, empty signature/LRC.
+    let mut value = vec![
+        0x30, 0x19, 0xd4, 0xe7, 0x39, 0xda, 0x73, 0x9c, 0xed, 0x39, 0xce, 0x73, 0x9d, 0x83, 0x68,
+        0x58, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21, 0xc8, 0x42, 0x10, 0xc3, 0xeb, 0x34, 0x10,
+    ];
+    value.extend(guid);
+    value.extend(b"\x35\x0820300101\x3e\0\xfe\0");
+    write_object(
+        profile,
+        ObjectId::from_bytes(&[0x5f, 0xc1, 0x02]).map_err(DriveError::from)?,
+        SecretBytes::new(value),
+        access,
+        exchange,
+    )
+}
+
+/// Replace the CCC (5FC107) with the standard PIV capability container.
+/// `card_id` supplies the 14-byte identifier after the GSC-RID/manufacturer/
+/// card-type prefix A000000116FF02, matching ykman's generated CCC format.
+pub fn set_ccc<E>(
+    profile: &DeviceProfile,
+    card_id: [u8; 14],
+    access: piv::Access,
+    exchange: &mut Exchange<'_, E>,
+) -> Result<(), PivError<E>> {
+    let mut value = vec![0xf0, 0x15, 0xa0, 0, 0, 1, 0x16, 0xff, 2];
+    value.extend(card_id);
+    value.extend([
+        0xf1, 1, 0x21, 0xf2, 1, 0x21, 0xf3, 0, 0xf4, 1, 0, 0xf5, 1, 0x10, 0xf6, 0, 0xf7, 0, 0xfa,
+        0, 0xfb, 0, 0xfc, 0, 0xfd, 0, 0xfe, 0,
+    ]);
+    write_object(
+        profile,
+        ObjectId::from_bytes(&[0x5f, 0xc1, 0x07]).map_err(DriveError::from)?,
+        SecretBytes::new(value),
+        access,
+        exchange,
+    )
+}
+
 /// Read a PIV object (the value inside its 53 container).
 pub fn read_object<E>(
     profile: &DeviceProfile,
@@ -1607,6 +1656,62 @@ mod tests {
             )
             .unwrap(),
         ))
+    }
+
+    #[test]
+    fn set_identifiers_310_transcripts() {
+        // CHUID known-answer bytes from ykman tests/test_piv.py's
+        // test_chuid_serialize; CCC layout from ykman.piv.generate_ccc.
+        // PUT DATA framing and AES authentication mirror libcanokey's
+        // tests/management.rs. No physical device is used.
+        let commands = [
+            concat!(
+                "00db3fff425c035fc102533b",
+                "3019d4e739da739ced39ce739d836858210842108421c84210c3eb3410",
+                "78787878787878787878787878787878",
+                "350832303330303130313e00fe00"
+            ),
+            concat!(
+                "00db3fff3a5c035fc1075333",
+                "f015a000000116ff02",
+                "7878787878787878787878787878",
+                "f10121f20121f300f40100f50110f600f700fa00fb00fc00fd00fe00"
+            ),
+        ];
+        for (index, command) in commands.iter().enumerate() {
+            for response in [OK, &[0x69, 0x82][..]] {
+                let command = hex(command);
+                let mut transcript = AES_AUTH.to_vec();
+                transcript.push((&command, response));
+                let mut script = Script::new(&transcript);
+                let result = if index == 0 {
+                    set_chuid(&profile("3.1.0"), [b'x'; 16], aes_access(), &mut |c| {
+                        script.exchange(c)
+                    })
+                } else {
+                    set_ccc(&profile("3.1.0"), [b'x'; 14], aes_access(), &mut |c| {
+                        script.exchange(c)
+                    })
+                };
+                if response == OK {
+                    result.unwrap();
+                } else {
+                    assert!(matches!(result,
+                        Err(PivError::Drive(DriveError::Protocol(error)))
+                        if error.kind == ErrorKind::SecurityStatusNotSatisfied));
+                }
+                assert!(script.transcript.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn set_identifiers_requires_management_before_io() {
+        let mut exchange = |_: &[u8]| -> io::Result<Vec<u8>> {
+            panic!("missing management access must fail before I/O")
+        };
+        assert!(set_chuid(&profile("3.1.0"), [0; 16], piv::Access::None, &mut exchange).is_err());
+        assert!(set_ccc(&profile("3.1.0"), [0; 14], piv::Access::None, &mut exchange).is_err());
     }
 
     #[test]

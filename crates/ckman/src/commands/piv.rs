@@ -21,6 +21,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum PivCommand {
     /// Display general status of the PIV application.
     Info,
+    /// Replace CHUID with an unsigned non-federal identifier (expires 2030-01-01).
+    SetChuid {
+        /// Cardholder GUID as 32 hex characters (default: a random UUID v4).
+        #[arg(long, value_parser = parse_identifier::<16>)]
+        guid: Option<[u8; 16]>,
+        #[command(flatten)]
+        mgmt: MgmtArgs,
+    },
+    /// Replace the Card Capability Container with a new card identifier.
+    SetCcc {
+        /// Card ID suffix as 28 hex characters (default: random). The fixed
+        /// A000000116FF02 prefix is added automatically.
+        #[arg(long, value_parser = parse_identifier::<14>)]
+        card_id: Option<[u8; 14]>,
+        #[command(flatten)]
+        mgmt: MgmtArgs,
+    },
     /// Reset the PIV application, deleting all keys, certificates and PINs.
     Reset {
         /// Do not ask for confirmation.
@@ -573,6 +590,44 @@ pub struct PinArgs {
 pub fn run(device: Option<u32>, reader: Option<&str>, command: &PivCommand) -> CliResult<()> {
     match command {
         PivCommand::Info => info(device, reader),
+        PivCommand::SetChuid { guid, mgmt } => {
+            let guid = match guid {
+                Some(guid) => *guid,
+                None => {
+                    let mut guid = [0; 16];
+                    getrandom::fill(&mut guid)?;
+                    guid[6] = (guid[6] & 0x0f) | 0x40;
+                    guid[8] = (guid[8] & 0x3f) | 0x80;
+                    guid
+                }
+            };
+            let mut session = PivSession::connect(device, reader)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
+            session.run(|profile, exchange| {
+                piv::set_chuid(profile, guid, management.access()?, exchange)
+            })?;
+            println!("CHUID set (GUID: {}).", hex_encode(&guid));
+            Ok(())
+        }
+        PivCommand::SetCcc { card_id, mgmt } => {
+            let card_id = match card_id {
+                Some(card_id) => *card_id,
+                None => {
+                    let mut card_id = [0; 14];
+                    getrandom::fill(&mut card_id)?;
+                    card_id
+                }
+            };
+            let mut session = PivSession::connect(device, reader)?;
+            let management =
+                session.resolve_management(super::secret_str(&mgmt.management_key), None)?;
+            session.run(|profile, exchange| {
+                piv::set_ccc(profile, card_id, management.access()?, exchange)
+            })?;
+            println!("CCC set (card ID: a000000116ff02{}).", hex_encode(&card_id));
+            Ok(())
+        }
         PivCommand::Reset { force, admin_pin } => {
             reset(device, reader, *force, super::secret_str(admin_pin))
         }
@@ -1039,6 +1094,12 @@ fn parse_slot(text: &str) -> Result<Slot, String> {
 fn parse_object_id(text: &str) -> Result<canokey::piv::ObjectId, String> {
     let bytes = hex_decode(text).ok_or_else(|| "invalid hex object id".to_string())?;
     canokey::piv::ObjectId::from_bytes(&bytes).map_err(|_| "invalid object id".to_string())
+}
+
+fn parse_identifier<const N: usize>(text: &str) -> Result<[u8; N], String> {
+    hex_decode(text)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| format!("identifier must be exactly {} hex characters", N * 2))
 }
 
 fn slot_name(slot: Slot) -> String {
@@ -2821,6 +2882,42 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
 mod tests {
     use super::*;
     use canokey::compatibility::{DeviceObservations, PivApplicationVersion};
+
+    #[test]
+    fn identifier_commands_validate_input_before_connecting() {
+        use clap::Parser;
+        for (command, option, length) in [("set-chuid", "--guid", 32), ("set-ccc", "--card-id", 28)]
+        {
+            assert!(crate::cli::Cli::try_parse_from(["ckman", "piv", command]).is_ok());
+            let valid = "AB".repeat(length / 2);
+            assert!(crate::cli::Cli::try_parse_from([
+                "ckman",
+                "piv",
+                command,
+                option,
+                &valid,
+                "-m",
+                "010203040506070801020304050607080102030405060708",
+            ])
+            .is_ok());
+            for invalid in [
+                String::new(),
+                "ab".repeat(length / 2 - 1),
+                "ab".repeat(length / 2 + 1),
+                "z".repeat(length),
+                "é".repeat(length / 2),
+            ] {
+                assert!(crate::cli::Cli::try_parse_from([
+                    "ckman", "piv", command, option, &invalid,
+                ])
+                .is_err());
+            }
+        }
+        assert_eq!(
+            parse_identifier::<16>(&"aB".repeat(16)).unwrap(),
+            [0xab; 16]
+        );
+    }
 
     #[test]
     fn f9_is_accepted_by_dedicated_key_and_certificate_references() {

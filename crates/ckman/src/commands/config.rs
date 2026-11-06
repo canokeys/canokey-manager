@@ -18,7 +18,8 @@ pub enum ConfigCommand {
     /// Reset the device to factory defaults, erasing all applets and PINs.
     ///
     /// This is a full device reset and requires a blocked Admin PIN and a USB connection.
-    /// --force skips confirmation only; it does not bypass this requirement.
+    /// Follow the LED prompts and touch repeatedly to confirm physical presence.
+    /// --force skips CLI confirmation only; it does not bypass these requirements.
     Reset {
         /// Do not ask for confirmation.
         #[arg(long)]
@@ -276,20 +277,31 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
             return Err("factory reset aborted".into());
         }
     }
+    eprintln!("Follow the LED prompts and touch the key repeatedly to confirm factory reset.");
     admin::factory_reset(&target.profile, &mut |command| {
         target.connection.exchange(command)
     })
-    .map_err(|error| match &error {
+    .map_err(|error| describe_factory_reset_error(&error))?;
+    println!("Factory reset complete.");
+    Ok(())
+}
+
+fn describe_factory_reset_error(error: &ckman_core::DriveError<io::Error>) -> String {
+    match error {
+        ckman_core::DriveError::Protocol(protocol)
+            if protocol.phase == canokey::Phase::Command
+                && protocol.kind == canokey::ErrorKind::SecurityStatusNotSatisfied =>
+        {
+            "Factory reset physical-presence confirmation failed or timed out. Retry config reset over USB and follow the LED prompts, touching the key repeatedly. No PIN authentication is required for factory reset; --force only skips CLI confirmation, not touch confirmation.".to_owned()
+        }
         ckman_core::DriveError::Protocol(protocol)
             if protocol.phase == canokey::Phase::Command
                 && protocol.kind == canokey::ErrorKind::ConditionsNotSatisfied =>
         {
             "Full device reset refused: resetting all applets and PINs requires a blocked Admin PIN and a USB connection (NFC is not supported). Ensure the Admin PIN is blocked, connect via USB, then retry config reset. --force only skips confirmation; it does not bypass this requirement.".to_owned()
         }
-        _ => describe_drive_error(&error),
-    })?;
-    println!("Factory reset complete.");
-    Ok(())
+        _ => describe_drive_error(error),
+    }
 }
 
 fn info(device: Option<u32>, reader: Option<&str>, admin_pin: Option<&str>) -> CliResult<()> {
@@ -741,6 +753,83 @@ fn sm2(device: Option<u32>, reader: Option<&str>, command: &Option<Sm2Command>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_status_errors_explain_reset_conditions_without_prompting_for_pin() {
+        use canokey::compatibility::DeviceObservations;
+        let profile =
+            canokey::DeviceProfile::from_observations(DeviceObservations::new(b"3.1.0".to_vec()))
+                .unwrap();
+        for (status, expected) in [
+            (
+                [0x69, 0x82],
+                "physical-presence confirmation failed or timed out",
+            ),
+            (
+                [0x69, 0x85],
+                "requires a blocked Admin PIN and a USB connection",
+            ),
+        ] {
+            let mut commands = Vec::new();
+            let error = admin::factory_reset(&profile, &mut |command| {
+                commands.push(command.to_vec());
+                Ok::<_, io::Error>(if commands.len() == 1 {
+                    vec![0x90, 0]
+                } else {
+                    status.to_vec()
+                })
+            })
+            .unwrap_err();
+            assert_eq!(
+                commands,
+                [
+                    b"\0\xa4\x04\0\x05\xf0\0\0\0\0".to_vec(),
+                    b"\0\x50\0\0\x05RESET".to_vec()
+                ]
+            );
+            let message = describe_factory_reset_error(&error);
+            assert!(message.contains(expected), "{message}");
+            assert!(
+                !message.contains("operation requires authentication"),
+                "{message}"
+            );
+        }
+        // A failure selecting the applet must not be described as a failed touch.
+        let error = ckman_core::DriveError::Protocol(
+            canokey::Error::new(canokey::ErrorKind::SecurityStatusNotSatisfied)
+                .at(canokey::Phase::Select),
+        );
+        assert_eq!(
+            describe_factory_reset_error(&error),
+            "the operation requires authentication"
+        );
+    }
+
+    #[test]
+    fn nfc_blocked_admin_pin_is_named_and_never_retried() {
+        use canokey::compatibility::DeviceObservations;
+        let profile =
+            canokey::DeviceProfile::from_observations(DeviceObservations::new(b"3.1.0".to_vec()))
+                .unwrap();
+        let mut calls = 0;
+        let error = admin::set_nfc(
+            &profile,
+            false,
+            Some(admin::Pin::from_bytes(b"123456").unwrap()),
+            &mut |_| {
+                calls += 1;
+                Ok::<_, io::Error>(if calls == 1 {
+                    vec![0x90, 0]
+                } else {
+                    vec![0x69, 0x83]
+                })
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls, 2, "only SELECT and VERIFY, no NFC mutation or retry");
+        assert_eq!(describe_drive_error(&error), "the Admin PIN is blocked");
+        assert!(!super::super::needs_admin_pin(&error));
+    }
 
     #[test]
     fn malformed_pass_hmac_arguments_fail_before_device_access() {

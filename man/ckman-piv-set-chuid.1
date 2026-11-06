@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-set-chuid 1  ckman 
+.SH NAME
+ckman\-piv\-set\-chuid \- Replace CHUID with an unsigned non\-federal identifier (expires 2030\-01\-01)
+.SH SYNOPSIS
+\fBckman\-piv\-set\-chuid\fR [\fB\-\-guid\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Replace CHUID with an unsigned non\-federal identifier (expires 2030\-01\-01)
+.SH OPTIONS
+.TP
+\fB\-\-guid\fR \fI<GUID>\fR
+Cardholder GUID as 32 hex characters (default: a random UUID v4)
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ckman-piv-set-ccc 1  ckman 
+.SH NAME
+ckman\-piv\-set\-ccc \- Replace the Card Capability Container with a new card identifier
+.SH SYNOPSIS
+\fBckman\-piv\-set\-ccc\fR [\fB\-\-card\-id\fR] [\fB\-m\fR|\fB\-\-management\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Replace the Card Capability Container with a new card identifier
+.SH OPTIONS
+.TP
+\fB\-\-card\-id\fR \fI<CARD_ID>\fR
+Card ID suffix as 28 hex characters (default: random). The fixed A000000116FF02 prefix is added automatically
+.TP
+\fB\-m\fR, \fB\-\-management\-key\fR \fI<MANAGEMENT_KEY>\fR
+Current management key as 48 hex characters (prompted when needed)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

@@ -296,7 +296,10 @@ pub fn describe_drive_error(error: &DriveError<io::Error>) -> String {
                 Some(retries) => format!("incorrect PIN ({retries} attempts remaining)"),
                 None => "incorrect PIN".to_string(),
             },
-            ErrorKind::PinBlocked => "the PIN is blocked".to_string(),
+            ErrorKind::PinBlocked => match error.reference {
+                Some(SecretReference::AdminPin) => "the Admin PIN is blocked".to_string(),
+                _ => "the PIN is blocked".to_string(),
+            },
             ErrorKind::SecurityStatusNotSatisfied => {
                 "the operation requires authentication".to_string()
             }
