@@ -581,7 +581,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         println!("OpenPGP version:          {:x}.{:x}", aid[6], aid[7]);
     }
     println!(
-        "Application version:      {}",
+        "Firmware version:         {}",
         String::from_utf8_lossy(session.profile().info().firmware_text())
     );
     if let Some(status) = data.password_status()? {
@@ -597,8 +597,8 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         );
     }
-    // The pinned firmware evidence has no KDF data object at all.
-    println!("KDF enabled:              no");
+    // The pinned firmware evidence has no KDF data object; nothing is printed
+    // rather than claiming a hardcoded "disabled" state.
     if let Some(cardholder) = session.run(|profile, exchange| {
         optional_record(openpgp::read_cardholder_data(profile, exchange))
     })? {
@@ -690,10 +690,12 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
         } => {
             let mut session = OpenPgpSession::connect(device, reader)?;
             let admin = OpenPgpSession::admin(super::secret_str(admin_pin), "Enter Admin PIN")?;
-            println!("WARNING: Setting PIN retries will reset the values for all 3 PINs!");
+            println!(
+                "WARNING: This resets the PIN and Admin PIN to their factory defaults (the Reset Code is unchanged)."
+            );
             if !force
                 && !confirm(&format!(
-                    "Set PIN retry counters to: {pin_retries} {reset_code_retries} {admin_pin_retries}?"
+                    "Set retry counters to: PIN={pin_retries}, Reset Code={reset_code_retries}, Admin PIN={admin_pin_retries}?"
                 ))?
             {
                 return Err("aborted".into());

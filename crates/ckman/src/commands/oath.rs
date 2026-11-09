@@ -115,18 +115,19 @@ pub enum AccessCommand {
         /// Provide the new password as an argument.
         #[arg(short = 'n', long, value_parser = crate::commands::secret_arg)]
         new_password: Option<crate::commands::SecretString>,
-        /// Remember the password on this machine (long-only: the global
+        /// Remember the access key on this machine (long-only: the global
         /// -r/--reader owns the short flag).
         #[arg(long)]
         remember: bool,
     },
-    /// Store the OATH password in the OS keyring to avoid entering it on each use.
+    /// Store the device-bound OATH access key (derived from the password) in
+    /// the OS keyring to avoid entering the password on each use.
     Remember {
         /// The current password.
         #[arg(short, long, value_parser = crate::commands::secret_arg)]
         password: Option<crate::commands::SecretString>,
     },
-    /// Remove this device's stored password from the OS keyring.
+    /// Remove this device's stored access key from the OS keyring.
     Forget,
 }
 
@@ -205,7 +206,8 @@ pub enum AccountsCommand {
     },
     /// Generate codes from matching accounts using each account's own period.
     /// Touch-protected TOTP accounts request touch individually. HOTP accounts
-    /// are calculated only when exactly one account matches.
+    /// are calculated only when exactly one account matches; with several
+    /// matches they show a [HOTP Account] placeholder instead.
     /// Results are printed as each account completes.
     Code {
         /// Query string to match specific accounts.
@@ -225,7 +227,7 @@ pub enum AccountsCommand {
         query: String,
         /// The new name of the account (use "issuer:name" to specify an issuer).
         name: String,
-        /// Confirm the rename without prompting.
+        /// Do not ask for confirmation.
         #[arg(short, long)]
         force: bool,
         #[command(flatten)]
@@ -248,7 +250,7 @@ pub enum AccountsCommand {
     Delete {
         /// A query to match a single account (as shown in "list").
         query: String,
-        /// Confirm the deletion without prompting.
+        /// Do not ask for confirmation.
         #[arg(short, long)]
         force: bool,
         #[command(flatten)]
@@ -280,7 +282,7 @@ pub struct AccessArgs {
     /// The password to unlock the OATH application.
     #[arg(short, long, value_parser = crate::commands::secret_arg)]
     password: Option<crate::commands::SecretString>,
-    /// Remember the password on this machine (long-only: the global
+    /// Remember the access key on this machine (long-only: the global
     /// -r/--reader owns the short flag).
     #[arg(long)]
     remember: bool,
@@ -713,7 +715,7 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
                     keyring::Entry::new(KEYRING_SERVICE, &format!("oath:{serial}")).ok()
                 }) {
                     if entry.get_password().is_ok() {
-                        println!("The password for this CanoKey is remembered by ckman.");
+                        println!("An access key for this CanoKey is remembered by ckman.");
                     }
                 }
             }

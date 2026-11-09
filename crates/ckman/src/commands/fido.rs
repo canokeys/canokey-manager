@@ -97,7 +97,8 @@ pub enum AccessCommand {
         #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
         pin: Option<crate::commands::SecretString>,
     },
-    /// Verify the FIDO2 PIN against the CanoKey (resets the retry counter).
+    /// Verify the FIDO2 PIN against the CanoKey (on success, the retry
+    /// counter is restored to its maximum).
     VerifyPin {
         /// Current PIN (prompted when omitted).
         #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
@@ -163,12 +164,12 @@ pub enum CredentialsCommand {
     },
     /// Delete a resident credential.
     Delete {
-        /// A unique substring of the credential ID (as shown by "list").
+        /// A unique hex prefix of the credential ID (as shown by "list").
         credential_id: String,
         /// FIDO2 PIN (prompted when omitted).
         #[arg(short = 'P', long, value_parser = crate::commands::secret_arg)]
         pin: Option<crate::commands::SecretString>,
-        /// Confirm deletion without prompting.
+        /// Do not ask for confirmation.
         #[arg(short, long)]
         force: bool,
     },
@@ -181,7 +182,7 @@ pub enum CredentialsCommand {
             .multiple(true)
     ))]
     UpdateUser {
-        /// A unique substring of the credential ID (as shown by "list").
+        /// A unique hex prefix of the credential ID (as shown by "list").
         credential_id: String,
         /// New username.
         #[arg(short, long)]
@@ -591,7 +592,7 @@ fn reset(device: Option<u32>, reader: Option<&str>, force: bool) -> CliResult<()
             return Err("FIDO reset aborted".into());
         }
         println!("Remove and re-insert your CanoKey, then press Enter.");
-        println!("(The reset command is only accepted for a few seconds after insertion.)");
+        println!("(The reset command is only accepted within about 10 seconds after insertion.)");
         read_line()?;
     }
     let mut link = FidoLink::connect(device, reader)?;

@@ -8,7 +8,7 @@
   reports one.
 - Configuration: `config admin-pin change` and `config admin-pin status`
   manage and inspect the device Admin PIN; `config sm2 set --curve-id
-  <id>/--algorithm-id <id>` patches the CTAP SM2 identifiers (3.1+;
+  <id>/--algorithm-id <id>` patches the CTAP SM2 identifiers (3.0+;
   `config sm2` readout unchanged).
 - OpenPGP: `openpgp cardholder set-name/set-login/set-language/set-sex/set-url`
   write the cardholder data objects, and `openpgp info` displays them;

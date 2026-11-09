@@ -20,9 +20,9 @@ formats (X.509, PKCS#8, otpauth://). Everything is pure Rust.
 | FIDO2 | `ckman fido info`, `fido reset`, `fido touch-test`, `fido access set-pin/change-pin/set-min-length/force-change/verify-pin`, `fido config toggle-always-uv/enable-long-touch-for-reset`, `fido credentials list/update-user/delete`, `fido blobs read/write` |
 | Shell | `ckman completions <bash\|zsh\|fish\|powershell>` (stdout) |
 
-PINs and passwords are prompted without echo (via `rpassword`); the OATH
-password can be remembered in the OS keyring per device
-(`ckman oath access remember`).
+PINs and passwords are prompted without echo (via `rpassword`); a
+device-bound OATH access key (derived from the password) can be remembered in
+the OS keyring per device (`ckman oath access remember`).
 
 FIDO commands prefer the native USB HID (CTAPHID) transport and fall back to
 FIDO over CCID when `--reader` is given or no HID interface is present.

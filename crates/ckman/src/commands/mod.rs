@@ -101,7 +101,7 @@ pub fn single_target(
             Ok(connection) => connection,
             Err(error) if error.is_no_smartcard() => return Ok(None),
             Err(error) => return Err(format!(
-                "cannot determine whether reader {} contains another CanoKey: {error}; select a reader explicitly with --reader",
+                "cannot determine whether reader {} contains a CanoKey: {error}; select a reader explicitly with --reader",
                 reader.name()
             ).into()),
         };

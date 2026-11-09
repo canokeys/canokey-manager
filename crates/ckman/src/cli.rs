@@ -12,7 +12,8 @@ use crate::commands;
     about = "Configure your CanoKey via the command line"
 )]
 pub struct Cli {
-    /// Specify which CanoKey to interact with by serial number.
+    /// Specify which CanoKey to interact with by serial number (decimal, as
+    /// shown by `ckman list`).
     #[arg(short, long, value_name = "SERIAL", global = true)]
     pub device: Option<u32>,
     /// Specify a CanoKey by smart card reader name (case-insensitive substring).

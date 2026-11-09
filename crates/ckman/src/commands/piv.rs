@@ -77,7 +77,8 @@ pub enum PivCommand {
         /// input) ('-' for stdin).
         input: String,
         /// File to write the signature to ('-' for stdout). ECDSA signatures
-        /// are DER-encoded; RSA/Ed25519 are raw bytes.
+        /// are DER-encoded; RSA, SM2 (raw r||s), Ed25519 and ML-DSA-65 are
+        /// raw bytes.
         output: String,
         /// Hash algorithm for the message (RSA/ECC; default SHA-256). SM2,
         /// Ed25519 and ML-DSA-65 sign the message directly.
@@ -225,7 +226,8 @@ pub enum AccessCommand {
         /// Management key algorithm (default: the card's current algorithm).
         #[arg(short, long, value_enum)]
         algorithm: Option<MgmtAlgorithmArg>,
-        /// Store the new management key protected by PIN and block PUK recovery.
+        /// Store the new management key protected by PIN; the PUK is replaced
+        /// with a random value, so PUK-based unblocking no longer works.
         #[arg(short = 'p', long)]
         protect: bool,
         /// Generate a random management key.
@@ -1371,7 +1373,7 @@ impl PivSession {
                 piv::derive_management_key(pin.as_bytes(), &salt).as_slice(),
             )
             .map_err(|_| "derived management key is invalid")?;
-            let pin = Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 characters")?;
+            let pin = Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 bytes")?;
             return Ok(ResolvedManagement {
                 key,
                 pin: Some(pin),
@@ -1453,7 +1455,7 @@ impl PivSession {
 
     fn resolve_pin(&mut self, pin: Option<&str>, prompt: &str) -> CliResult<Pin> {
         let pin = self.resolve_pin_string(pin, prompt)?;
-        Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 characters".into())
+        Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 bytes".into())
     }
 
     fn resolve_puk(&mut self, puk: Option<&str>) -> CliResult<Puk> {
@@ -1461,7 +1463,7 @@ impl PivSession {
             Some(puk) => super::SecretString::new(puk.to_string()),
             None => super::prompt_password("Enter PUK: ")?,
         };
-        Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters".into())
+        Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 bytes".into())
     }
 }
 
@@ -1554,6 +1556,10 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
             }
         }
     }
+    // pivman is read before the PUK section so the protection flag can be
+    // reflected in the PUK state: with a PIN-protected management key the PUK
+    // has been randomized even though its live retry counter is untouched.
+    let pivman = session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
     let puk_meta = optional_piv(session.run_typed(|profile, exchange| {
         piv::metadata(
             profile,
@@ -1567,6 +1573,10 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
         if let Some((total, remaining)) = fields.retries {
             if remaining == 0 {
                 println!("PUK is blocked");
+            } else if pivman.puk_blocked() {
+                println!(
+                    "PUK recovery is unavailable (PUK randomized for PIN-protected management key)"
+                );
             } else if fields.is_default == Some(piv::KnownOrUnknown::Known(true)) {
                 println!("WARNING: Using default PUK!");
             }
@@ -1598,9 +1608,8 @@ fn info(device: Option<u32>, reader: Option<&str>) -> CliResult<()> {
     };
     println!("Management key algorithm: {algorithm}");
 
-    let pivman = session.run(|profile, exchange| piv::read_pivman_data(profile, exchange))?;
     if puk_meta.is_none() && pivman.puk_blocked() {
-        println!("PUK is blocked");
+        println!("PUK recovery is unavailable (PUK randomized for PIN-protected management key)");
     }
     if pivman.has_derived_key() {
         println!("Management key is derived from PIN.");
@@ -1871,7 +1880,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                     )
                 })?;
             }
-            println!("PIN and PUK retry counters reset; both are now at factory defaults.");
+            println!("Retry counters set; PIN and PUK are now at their factory defaults.");
             Ok(())
         }
         AccessCommand::ChangePin { pin, new_pin } => {
@@ -1902,7 +1911,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
             let old = session.resolve_puk(super::secret_str(puk))?;
             let new = match new_puk {
                 Some(puk) => {
-                    Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 characters")?
+                    Puk::from_bytes(puk.as_bytes()).map_err(|_| "PUK must be 6-8 bytes")?
                 }
                 None => {
                     let entered = super::prompt_password("Enter new PUK: ")?;
@@ -1910,7 +1919,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                     if entered != repeated {
                         return Err("the PUKs do not match".into());
                     }
-                    Puk::from_bytes(entered.as_bytes()).map_err(|_| "PUK must be 6-8 characters")?
+                    Puk::from_bytes(entered.as_bytes()).map_err(|_| "PUK must be 6-8 bytes")?
                 }
             };
             session.run(|profile, exchange| piv::change_puk(profile, old, new, exchange))?;
@@ -2033,7 +2042,7 @@ fn access(device: Option<u32>, reader: Option<&str>, command: &AccessCommand) ->
                     entered
                 }
             };
-            let new = Pin::from_bytes(new.as_bytes()).map_err(|_| "PIN must be 6-8 characters")?;
+            let new = Pin::from_bytes(new.as_bytes()).map_err(|_| "PIN must be 6-8 bytes")?;
             session.run(|profile, exchange| piv::unblock_pin(profile, puk, new, exchange))?;
             println!("PIN unblocked and set.");
             Ok(())
@@ -2840,7 +2849,7 @@ fn objects(device: Option<u32>, reader: Option<&str>, command: &ObjectsCommand) 
             let mut session = PivSession::connect(device, reader)?;
             let access = match &pin.pin {
                 Some(pin) => canokey::piv::Access::Pin(
-                    Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 characters")?,
+                    Pin::from_bytes(pin.as_bytes()).map_err(|_| "PIN must be 6-8 bytes")?,
                 ),
                 None => canokey::piv::Access::None,
             };
