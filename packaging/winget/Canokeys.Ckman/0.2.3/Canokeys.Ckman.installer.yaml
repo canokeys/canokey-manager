@@ -1,0 +1,20 @@
+# Created with komac v2.17.1
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: Canokeys.Ckman
+PackageVersion: 0.2.3
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+- RelativeFilePath: ckman.exe
+  PortableCommandAlias: ckman
+UpgradeBehavior: install
+Commands:
+- ckman
+ReleaseDate: 2026-11-09
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/canokeys/canokey-manager/releases/download/v0.2.3/ckman-x86_64-pc-windows-msvc.zip
+  InstallerSha256: 5E20C32D892A458214790846BCFE9C3E998CDAF5D72EA12B05BBA3E6D7215819
+ManifestType: installer
+ManifestVersion: 1.12.0
